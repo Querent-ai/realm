@@ -1,12 +1,12 @@
 # Realm
 
-> **Multi-tenant LLM inference runtime with WASM sandboxing and GPU acceleration**
+> **Inference Orchestration Runtime for Multi-Tenant LLM Deployments**
 
 [![CI](https://github.com/querent-ai/realm/workflows/CI/badge.svg)](https://github.com/querent-ai/realm/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue)](LICENSE)
 [![Rust: 1.75+](https://img.shields.io/badge/rust-1.75%2B-orange)](https://www.rust-lang.org)
 
-Realm enables **16x more tenants per GPU** by running each customer in an isolated WASM sandbox while sharing GPU compute through native host functions. Models >4GB work via Memory64, and security is enforced at the WASM boundary.
+Realm is an **inference orchestration system** that enables 16 isolated customers to share a single GPU efficiently. By orchestrating inference through WASM sandboxes and native compute, Realm achieves **16x density** while maintaining security and performance guarantees for each tenant.
 
 ## 🎯 Quick Start
 
@@ -36,9 +36,9 @@ cargo build --release
 ✅ SUCCESS: Model correctly identified Paris as the capital of France!
 ```
 
-## 🏗️ Architecture
+## 🏗️ Inference Orchestration Architecture
 
-### Multi-Tenant GPU Sharing
+### How Realm Orchestrates Inference Across Tenants
 
 ```mermaid
 graph TB
@@ -96,42 +96,71 @@ graph TB
     style CPU fill:#e8f5e9,stroke:#388e3c
 ```
 
-**Key Innovation:**
-- 🔒 **16 isolated WASM tenants** (42KB each) share **1 GPU** via host functions
-- 📦 **Memory64** enables >4GB model storage with on-demand loading
-- ⚡ **GPU utilization:** 95% (vs 60% traditional) = **16x density**
-- 🛡️ **Security:** WASM sandboxing prevents cross-tenant data access
+**Orchestration Benefits:**
+- 🎯 **Efficient Resource Scheduling:** 16 tenants share GPU compute without interference
+- 📊 **Dynamic Memory Management:** On-demand model layer loading via Memory64
+- 🔒 **Isolated Inference Execution:** Each tenant runs in a secure WASM sandbox
+- ⚡ **95% GPU Utilization:** vs 60% traditional = **16x density improvement**
+
+### Why This Architecture?
+
+Traditional LLM inference faces three critical orchestration challenges:
+
+#### 1. **Inefficient Resource Utilization**
+- **Problem:** Each tenant gets a dedicated VM/container with its own model copy (4.3GB)
+- **Realm's Solution:** WASM sandboxes (42KB) orchestrate inference through shared host functions
+- **Impact:** 16 tenants fit in memory that previously held 1 tenant
+
+#### 2. **GPU Under-utilization**
+- **Problem:** Single-tenant inference leaves GPU idle 40% of the time during I/O and memory ops
+- **Realm's Solution:** Orchestrator schedules inference across 16 tenants, keeping GPU busy
+- **Impact:** 95% GPU utilization through intelligent work distribution
+
+#### 3. **Security vs Efficiency Trade-off**
+- **Problem:** VMs provide isolation but waste resources; shared processes risk data leakage
+- **Realm's Solution:** WASM provides lightweight isolation enforced at the instruction level
+- **Impact:** Security guarantees without the overhead of traditional virtualization
+
+**The Result:** An orchestration layer that treats inference as a schedulable, isolated workload—like Kubernetes for inference, but at the WASM sandbox level.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed design.
 
-## 🚀 Features
+## 🚀 Orchestration Capabilities
 
-- ✅ **Multi-tenant isolation** - WASM sandboxes enforce security boundaries
-- ✅ **GPU sharing** - All tenants share one GPU via host functions
-- ✅ **Memory64** - Run models >4GB with on-demand layer loading
-- ✅ **GGUF support** - Load quantized models (Q4_K, Q5_K, Q6_K, Q8_K)
-- ✅ **Multiple backends** - CUDA, Metal, WebGPU, CPU (SIMD)
-- ✅ **Streaming inference** - Token-by-token generation
-- ✅ **KV caching** - Efficient attention computation
+### Inference Workload Management
+- ✅ **Tenant Isolation** - Each inference session runs in a secure WASM sandbox
+- ✅ **Resource Scheduling** - Orchestrates 16 tenants across shared GPU compute
+- ✅ **Dynamic Memory Allocation** - Memory64 enables on-demand model layer loading
+- ✅ **Streaming Generation** - Token-by-token inference with KV cache optimization
+
+### Model & Backend Support
+- ✅ **GGUF Models** - Orchestrate inference for quantized models (Q4_K, Q5_K, Q6_K, Q8_K)
+- ✅ **Multi-Backend Execution** - Schedule workloads across CUDA, Metal, WebGPU, or CPU
+- ✅ **Large Model Support** - Orchestrate models >4GB through Memory64 architecture
+
+### Production Features
+- ✅ **Zero-Copy Model Sharing** - All tenants reference the same model weights
+- ✅ **Fair Scheduling** - No tenant can monopolize GPU resources
+- ✅ **Failure Isolation** - One tenant's crash doesn't affect others
 
 ## 📦 Repository Structure
 
 ```
 realm/
 ├── crates/
-│   ├── realm-core/          # GGUF parsing, tokenization, quantization
-│   ├── realm-models/        # Transformer layers (attention, FFN)
-│   ├── realm-compute-cpu/   # CPU backends (SIMD, Candle)
-│   ├── realm-compute-gpu/   # GPU backends (CUDA, Metal, WebGPU)
-│   ├── realm-runtime/       # Host runtime (Memory64, Wasmtime)
-│   └── realm-wasm/          # WASM orchestrator module
-├── examples/                # Usage examples
-│   ├── paris-generation/    # End-to-end inference demo
-│   ├── simple-realm-test/   # Basic integration test
-│   ├── multi-tenant/        # Multi-tenant example
+│   ├── realm-core/          # Model loading (GGUF), tokenization, quantization
+│   ├── realm-models/        # Inference primitives (attention, FFN, sampling)
+│   ├── realm-compute-cpu/   # CPU execution backends (SIMD, Candle)
+│   ├── realm-compute-gpu/   # GPU execution backends (CUDA, Metal, WebGPU)
+│   ├── realm-runtime/       # Orchestration runtime (Memory64, Wasmtime, host functions)
+│   └── realm-wasm/          # WASM inference orchestrator (tenant-side logic)
+├── examples/                # Orchestration examples
+│   ├── paris-generation/    # End-to-end orchestrated inference demo
+│   ├── simple-realm-test/   # Basic orchestration validation
+│   ├── multi-tenant/        # 16-tenant orchestration example
 │   └── end-to-end-inference/# Complete inference pipeline
-├── models/                  # GGUF model files (symlinks)
-└── docs/                    # Technical documentation
+├── models/                  # GGUF model files (symlinks to model storage)
+└── docs/                    # Orchestration architecture & design docs
 ```
 
 ## 🛠️ Building
@@ -242,39 +271,40 @@ ln -s ~/.ollama/models/tinyllama-1.1b.Q4_K_M.gguf .
 
 See [models/README.md](models/README.md) for full model documentation.
 
-## 🔧 Crates
+## 🔧 Orchestration Components
 
-| Crate | Description | Status |
-|-------|-------------|--------|
-| `realm-core` | GGUF parsing, tokenization, quantization | ✅ Production |
-| `realm-models` | Transformer architecture implementation | ✅ Production |
-| `realm-compute-cpu` | CPU backends (SIMD, Candle) | ✅ Production |
-| `realm-compute-gpu` | GPU backends (CUDA, Metal, WebGPU) | ⚠️ Needs validation |
-| `realm-runtime` | Memory64 host, Wasmtime integration | ✅ Production |
-| `realm-wasm` | WASM orchestrator module | ✅ Production |
+| Crate | Role in Orchestration | Status |
+|-------|----------------------|--------|
+| `realm-core` | Model format support for orchestrated workloads | ✅ Production |
+| `realm-models` | Inference execution primitives | ✅ Production |
+| `realm-compute-cpu` | CPU execution backend for scheduled work | ✅ Production |
+| `realm-compute-gpu` | GPU execution backend for scheduled work | ⚠️ Needs validation |
+| `realm-runtime` | **Core orchestration runtime** - schedules & isolates inference | ✅ Production |
+| `realm-wasm` | Tenant-side orchestration client | ✅ Production |
 
-## 📊 Performance
+## 📊 Orchestration Performance
 
 See [PRODUCT_AND_ECONOMICS.md](PRODUCT_AND_ECONOMICS.md) for detailed benchmarks and cost analysis.
 
-**Quick comparison (7B model, A100 GPU):**
+**Orchestration efficiency (7B model, A100 GPU):**
 
-| Metric | Traditional | Realm | Improvement |
-|--------|-------------|-------|-------------|
-| Tenants per GPU | 1 | 16 | **16x** |
-| Memory per tenant | 4.3GB | 52KB + shared model | **~84x** |
-| GPU utilization | ~60% | ~95% | **16x throughput** |
+| Metric | Traditional (1:1) | Realm Orchestration | Improvement |
+|--------|-------------------|---------------------|-------------|
+| Concurrent tenants | 1 | 16 | **16x density** |
+| Memory per tenant | 4.3GB | 52KB + shared model | **~84x reduction** |
+| GPU utilization | ~60% (idle time) | ~95% (scheduled) | **58% more work** |
+| Orchestration overhead | N/A | <5% per tenant | Minimal impact |
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions to improve Realm's orchestration capabilities! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-**Areas we'd appreciate help:**
-- GPU backend validation (CUDA, Metal, WebGPU)
-- Performance optimization and benchmarking
-- Documentation and examples
-- Additional model architectures
-- Testing on diverse hardware
+**High-impact areas:**
+- **Orchestration Algorithms** - Improve scheduling, resource allocation, and fairness
+- **Backend Optimization** - Validate and optimize GPU backends (CUDA, Metal, WebGPU)
+- **Orchestration Metrics** - Add observability, performance tracking, and tenant analytics
+- **Model Support** - Extend orchestration to additional model architectures
+- **Production Hardening** - Testing, benchmarking, and real-world deployment validation
 
 ## 📄 License
 
@@ -299,4 +329,4 @@ Built on excellent work from:
 
 ---
 
-**🌐 Developed for production multi-tenant LLM inference**
+**🌐 Production-grade inference orchestration for multi-tenant LLM deployments**
