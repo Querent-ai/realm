@@ -1,0 +1,23 @@
+[package]
+name = "realm-compute-cpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "CPU compute backends for Realm.ai"
+
+[features]
+default = []
+simd = []
+
+[dependencies]
+realm-core = { workspace = true }
+bytemuck = { workspace = true }
+half = { workspace = true }
+rayon = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+ndarray = { workspace = true }
+candle-core = { workspace = true }
+candle-nn = { workspace = true }

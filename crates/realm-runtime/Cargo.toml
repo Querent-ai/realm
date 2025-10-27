@@ -1,0 +1,31 @@
+[package]
+name = "realm-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Host runtime with Memory64 and Candle acceleration for Realm.ai"
+
+[features]
+default = []
+memory64 = []
+cuda = ["realm-compute-gpu/cuda", "candle-core/cuda"]
+metal = ["realm-compute-gpu/metal", "candle-core/metal"]
+
+[dependencies]
+realm-core = { workspace = true }
+realm-models = { workspace = true }
+realm-compute-cpu = { workspace = true }
+realm-compute-gpu = { workspace = true }
+wasmtime = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+candle-core = { workspace = true }
+candle-nn = { workspace = true }
+parking_lot = "0.12"
+memmap2 = "0.9"

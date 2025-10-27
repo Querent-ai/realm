@@ -1,0 +1,32 @@
+[package]
+name = "realm-compute-gpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "GPU compute backends for Realm.ai (CUDA, Metal, WebGPU)"
+
+[features]
+default = []
+cuda = ["candle-core/cuda"]
+metal = ["candle-core/metal"]
+webgpu = []
+
+[dependencies]
+realm-core = { workspace = true }
+bytemuck = { workspace = true }
+half = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+candle-core = { workspace = true }
+candle-nn = { workspace = true }
+wgpu = { version = "0.19", features = ["wgsl"] }
+futures = "0.3"
+pollster = "0.3"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = "0.4"
+web-sys = { workspace = true, features = ["Gpu", "GpuAdapter", "GpuDevice", "Window", "Navigator"] }
+js-sys = { workspace = true }

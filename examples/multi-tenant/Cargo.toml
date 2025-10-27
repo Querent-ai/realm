@@ -1,0 +1,16 @@
+[package]
+name = "multi-tenant"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "multi-tenant"
+path = "src/main.rs"
+
+[dependencies]
+realm-runtime = { workspace = true }
+wasmtime = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }

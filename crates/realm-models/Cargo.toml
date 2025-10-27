@@ -1,0 +1,17 @@
+[package]
+name = "realm-models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Model architectures for Realm.ai (Transformer, Attention, FFN)"
+
+[dependencies]
+realm-core = { workspace = true }
+realm-compute-cpu = { workspace = true }
+realm-compute-gpu = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+rand = "0.9"

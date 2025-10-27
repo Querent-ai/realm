@@ -1,0 +1,17 @@
+[package]
+name = "paris-generation"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+realm-runtime = { path = "../../crates/realm-runtime" }
+realm-core = { path = "../../crates/realm-core" }
+realm-models = { path = "../../crates/realm-models" }
+wasmtime = "38.0.3"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[[bin]]
+name = "paris-generation"
+path = "src/main.rs"

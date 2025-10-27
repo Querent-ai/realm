@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  realm-server:
+    build: .
+    image: realm:latest
+    container_name: realm-server
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/models:ro
+      - realm-cache:/home/realm/.realm
+    environment:
+      - RUST_LOG=info
+      - REALM_MODEL_DIR=/models
+    command: serve --host 0.0.0.0 --port 8080 --model /models/model.gguf
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "realm", "info"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Multi-tenant example with multiple instances
+  realm-tenant-1:
+    image: realm:latest
+    container_name: realm-tenant-1
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./models:/models:ro
+    environment:
+      - RUST_LOG=info
+      - TENANT_ID=tenant-1
+    command: serve --host 0.0.0.0 --port 8080 --model /models/model.gguf --max-tenants 4
+    restart: unless-stopped
+    profiles:
+      - multi-tenant
+
+  realm-tenant-2:
+    image: realm:latest
+    container_name: realm-tenant-2
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./models:/models:ro
+    environment:
+      - RUST_LOG=info
+      - TENANT_ID=tenant-2
+    command: serve --host 0.0.0.0 --port 8080 --model /models/model.gguf --max-tenants 4
+    restart: unless-stopped
+    profiles:
+      - multi-tenant
+
+  # Nginx load balancer (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: realm-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - realm-server
+    restart: unless-stopped
+    profiles:
+      - load-balancer
+
+volumes:
+  realm-cache:
+    driver: local

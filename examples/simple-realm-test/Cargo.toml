@@ -1,0 +1,15 @@
+[package]
+name = "simple-realm-test"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "simple-realm-test"
+path = "src/main.rs"
+
+[dependencies]
+realm-runtime = { workspace = true }
+wasmtime = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

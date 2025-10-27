@@ -1,0 +1,39 @@
+{
+  "name": "@realm-ai/sdk",
+  "version": "0.1.0",
+  "description": "JavaScript/TypeScript SDK for Realm multi-tenant LLM inference",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "llm",
+    "inference",
+    "wasm",
+    "multi-tenant",
+    "ai"
+  ],
+  "author": "Realm Contributors",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/realm-ai/realm.git",
+    "directory": "sdks/js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "typescript": "5.9.3",
+    "jest": "30.2.0",
+    "@types/jest": "30.0.0"
+  },
+  "peerDependencies": {
+    "node": ">=18.0.0"
+  }
+}

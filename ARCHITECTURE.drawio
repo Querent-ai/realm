@@ -1,0 +1,219 @@
+<mxfile host="app.diagrams.net" modified="2025-10-27T12:00:00.000Z" agent="Claude Code" version="22.0.0">
+  <diagram name="Realm Architecture" id="realm-multi-tenant">
+    <mxGraphModel dx="2074" dy="1114" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1920" pageHeight="1080" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Title -->
+        <mxCell id="title" value="Realm: Multi-Tenant LLM Inference with WASM Sandboxing" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=24;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="600" y="40" width="720" height="40" as="geometry"/>
+        </mxCell>
+
+        <!-- Main Container -->
+        <mxCell id="main-container" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;strokeWidth=2" vertex="1" parent="1">
+          <mxGeometry x="100" y="120" width="1720" height="880" as="geometry"/>
+        </mxCell>
+
+        <!-- Tenant Layer Container -->
+        <mxCell id="tenant-layer" value="TENANT LAYER (Isolated WASM Sandboxes)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#e1f5ff;strokeColor=#0277bd;strokeWidth=3;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="140" y="160" width="1640" height="240" as="geometry"/>
+        </mxCell>
+
+        <!-- Tenant 1 -->
+        <mxCell id="tenant1" value="&lt;b&gt;🔒 Tenant 1&lt;/b&gt;&lt;br&gt;Customer A&lt;br&gt;&lt;br&gt;WASM: 42KB&lt;br&gt;State: 52KB&lt;br&gt;&lt;br&gt;Isolated Memory" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbdefb;strokeColor=#01579b;strokeWidth=2;fontSize=12" vertex="1" parent="tenant-layer">
+          <mxGeometry x="40" y="60" width="160" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Tenant 2 -->
+        <mxCell id="tenant2" value="&lt;b&gt;🔒 Tenant 2&lt;/b&gt;&lt;br&gt;Customer B&lt;br&gt;&lt;br&gt;WASM: 42KB&lt;br&gt;State: 52KB&lt;br&gt;&lt;br&gt;Isolated Memory" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbdefb;strokeColor=#01579b;strokeWidth=2;fontSize=12" vertex="1" parent="tenant-layer">
+          <mxGeometry x="240" y="60" width="160" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Tenant 3 -->
+        <mxCell id="tenant3" value="&lt;b&gt;🔒 Tenant 3&lt;/b&gt;&lt;br&gt;Customer C&lt;br&gt;&lt;br&gt;WASM: 42KB&lt;br&gt;State: 52KB&lt;br&gt;&lt;br&gt;Isolated Memory" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbdefb;strokeColor=#01579b;strokeWidth=2;fontSize=12" vertex="1" parent="tenant-layer">
+          <mxGeometry x="440" y="60" width="160" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Tenant Dots -->
+        <mxCell id="tenant-dots" value="..." style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=32;fontStyle=1" vertex="1" parent="tenant-layer">
+          <mxGeometry x="640" y="100" width="80" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Tenant 16 -->
+        <mxCell id="tenant16" value="&lt;b&gt;🔒 Tenant 16&lt;/b&gt;&lt;br&gt;Customer P&lt;br&gt;&lt;br&gt;WASM: 42KB&lt;br&gt;State: 52KB&lt;br&gt;&lt;br&gt;Isolated Memory" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbdefb;strokeColor=#01579b;strokeWidth=2;fontSize=12" vertex="1" parent="tenant-layer">
+          <mxGeometry x="1420" y="60" width="160" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Info Box -->
+        <mxCell id="info-tenant" value="16 tenants per GPU&lt;br&gt;Strong isolation&lt;br&gt;No shared memory" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#f57f17;strokeWidth=2;fontSize=11;fontStyle=2" vertex="1" parent="tenant-layer">
+          <mxGeometry x="760" y="80" width="200" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- Host Runtime Container -->
+        <mxCell id="host-runtime" value="HOST RUNTIME (Shared Infrastructure)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#fff3e0;strokeColor=#e65100;strokeWidth=3;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="140" y="440" width="1640" height="520" as="geometry"/>
+        </mxCell>
+
+        <!-- Wasmtime Layer -->
+        <mxCell id="wasmtime-container" value="Wasmtime (WASM Runtime)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#ffe0b2;strokeColor=#e65100;strokeWidth=2;fontSize=14;fontStyle=1" vertex="1" parent="host-runtime">
+          <mxGeometry x="40" y="50" width="600" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="host-functions" value="&lt;b&gt;Host Functions (API)&lt;/b&gt;&lt;br&gt;&lt;br&gt;✅ candle_matmul&lt;br&gt;✅ candle_matmul_transposed&lt;br&gt;✅ memory64_load_layer&lt;br&gt;✅ memory64_read&lt;br&gt;✅ memory64_write&lt;br&gt;✅ memory64_stats" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcc80;strokeColor=#e65100;strokeWidth=2;fontSize=11;align=left" vertex="1" parent="wasmtime-container">
+          <mxGeometry x="40" y="50" width="240" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="sandbox-info" value="&lt;b&gt;Sandbox Properties&lt;/b&gt;&lt;br&gt;&lt;br&gt;🛡️ Memory isolation&lt;br&gt;🔒 No shared state&lt;br&gt;⚡ Fast host calls&lt;br&gt;✅ Validated access" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcc80;strokeColor=#e65100;strokeWidth=2;fontSize=11;align=left" vertex="1" parent="wasmtime-container">
+          <mxGeometry x="320" y="50" width="240" height="130" as="geometry"/>
+        </mxCell>
+
+        <!-- Memory64 Storage -->
+        <mxCell id="memory64-container" value="Memory64 Storage" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f3e5f5;strokeColor=#6a1b9a;strokeWidth=2;fontSize=14;fontStyle=1" vertex="1" parent="host-runtime">
+          <mxGeometry x="680" y="50" width="420" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="model-weights" value="&lt;b&gt;📦 Model Weights&lt;/b&gt;&lt;br&gt;&lt;br&gt;Llama 2 7B Q4_K_M&lt;br&gt;Size: 4.3 GB&lt;br&gt;&lt;br&gt;✅ Shared, read-only&lt;br&gt;✅ On-demand loading&lt;br&gt;✅ Layer-based access&lt;br&gt;✅ LRU caching" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1bee7;strokeColor=#6a1b9a;strokeWidth=2;fontSize=11;align=left" vertex="1" parent="memory64-container">
+          <mxGeometry x="40" y="50" width="160" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="kv-cache" value="&lt;b&gt;KV Cache&lt;/b&gt;&lt;br&gt;&lt;br&gt;Per-tenant state&lt;br&gt;16 × 52KB&lt;br&gt;&lt;br&gt;✅ Fast access&lt;br&gt;✅ Persistent&lt;br&gt;✅ Isolated" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1bee7;strokeColor=#6a1b9a;strokeWidth=2;fontSize=11;align=left" vertex="1" parent="memory64-container">
+          <mxGeometry x="220" y="50" width="160" height="130" as="geometry"/>
+        </mxCell>
+
+        <!-- Compute Backends -->
+        <mxCell id="compute-container" value="Compute Backends" style="swimlane;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=2;fontSize=14;fontStyle=1" vertex="1" parent="host-runtime">
+          <mxGeometry x="1140" y="50" width="460" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="gpu-backend" value="&lt;b&gt;🎮 GPU Backend&lt;/b&gt;&lt;br&gt;&lt;br&gt;CUDA (NVIDIA)&lt;br&gt;Metal (Apple)&lt;br&gt;WebGPU (Browser)&lt;br&gt;&lt;br&gt;95% utilization&lt;br&gt;16 tenants/GPU" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;fontSize=11;align=left" vertex="1" parent="compute-container">
+          <mxGeometry x="40" y="50" width="180" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cpu-backend" value="&lt;b&gt;💻 CPU Backend&lt;/b&gt;&lt;br&gt;&lt;br&gt;SIMD (AVX2/NEON)&lt;br&gt;Candle CPU&lt;br&gt;Fused kernels&lt;br&gt;&lt;br&gt;Fallback mode&lt;br&gt;Production ready" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;fontSize=11;align=left" vertex="1" parent="compute-container">
+          <mxGeometry x="240" y="50" width="180" height="130" as="geometry"/>
+        </mxCell>
+
+        <!-- Inference Flow -->
+        <mxCell id="flow-container" value="Inference Flow (Per Request)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#c2185b;strokeWidth=2;fontSize=14;fontStyle=1" vertex="1" parent="host-runtime">
+          <mxGeometry x="40" y="280" width="1560" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step1" value="&lt;b&gt;1. Tokenize&lt;/b&gt;&lt;br&gt;&lt;br&gt;Prompt → Tokens&lt;br&gt;WASM layer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8bbd0;strokeColor=#c2185b;strokeWidth=2;fontSize=10" vertex="1" parent="flow-container">
+          <mxGeometry x="40" y="50" width="140" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step2" value="&lt;b&gt;2. Load Layers&lt;/b&gt;&lt;br&gt;&lt;br&gt;Memory64 →&lt;br&gt;WASM memory&lt;br&gt;On-demand" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8bbd0;strokeColor=#c2185b;strokeWidth=2;fontSize=10" vertex="1" parent="flow-container">
+          <mxGeometry x="220" y="50" width="140" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step3" value="&lt;b&gt;3. Attention&lt;/b&gt;&lt;br&gt;&lt;br&gt;Q, K, V matmul&lt;br&gt;Scores @ V&lt;br&gt;GPU/CPU" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8bbd0;strokeColor=#c2185b;strokeWidth=2;fontSize=10" vertex="1" parent="flow-container">
+          <mxGeometry x="400" y="50" width="140" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step4" value="&lt;b&gt;4. FFN&lt;/b&gt;&lt;br&gt;&lt;br&gt;Gate, Up, Down&lt;br&gt;SiLU activation&lt;br&gt;GPU/CPU" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8bbd0;strokeColor=#c2185b;strokeWidth=2;fontSize=10" vertex="1" parent="flow-container">
+          <mxGeometry x="580" y="50" width="140" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step5" value="&lt;b&gt;5. Cache KV&lt;/b&gt;&lt;br&gt;&lt;br&gt;Store attention&lt;br&gt;Per-tenant state&lt;br&gt;Memory64" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8bbd0;strokeColor=#c2185b;strokeWidth=2;fontSize=10" vertex="1" parent="flow-container">
+          <mxGeometry x="760" y="50" width="140" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step6" value="&lt;b&gt;6. Sample&lt;/b&gt;&lt;br&gt;&lt;br&gt;Logits → token&lt;br&gt;Temperature&lt;br&gt;Top-k/top-p" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8bbd0;strokeColor=#c2185b;strokeWidth=2;fontSize=10" vertex="1" parent="flow-container">
+          <mxGeometry x="940" y="50" width="140" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step7" value="&lt;b&gt;7. Detokenize&lt;/b&gt;&lt;br&gt;&lt;br&gt;Token → Text&lt;br&gt;Stream output&lt;br&gt;WASM layer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8bbd0;strokeColor=#c2185b;strokeWidth=2;fontSize=10" vertex="1" parent="flow-container">
+          <mxGeometry x="1120" y="50" width="140" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="step8" value="&lt;b&gt;8. Return&lt;/b&gt;&lt;br&gt;&lt;br&gt;Response →&lt;br&gt;Customer&lt;br&gt;Complete" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8bbd0;strokeColor=#c2185b;strokeWidth=2;fontSize=10" vertex="1" parent="flow-container">
+          <mxGeometry x="1300" y="50" width="140" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- Arrows from tenants to host -->
+        <mxCell id="arrow-t1" value="" style="endArrow=classic;html=1;strokeColor=#0277bd;strokeWidth=3;exitX=0.5;exitY=1;entryX=0.2;entryY=0;edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="tenant1" target="wasmtime-container">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="900" y="600" as="sourcePoint"/>
+            <mxPoint x="950" y="550" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="arrow-t2" value="" style="endArrow=classic;html=1;strokeColor=#0277bd;strokeWidth=3;exitX=0.5;exitY=1;entryX=0.35;entryY=0;edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="tenant2" target="wasmtime-container">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="900" y="600" as="sourcePoint"/>
+            <mxPoint x="950" y="550" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="arrow-t3" value="" style="endArrow=classic;html=1;strokeColor=#0277bd;strokeWidth=3;exitX=0.5;exitY=1;entryX=0.5;entryY=0;edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="tenant3" target="wasmtime-container">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="900" y="600" as="sourcePoint"/>
+            <mxPoint x="950" y="550" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="arrow-t16" value="" style="endArrow=classic;html=1;strokeColor=#0277bd;strokeWidth=3;exitX=0.5;exitY=1;entryX=0.8;entryY=0;edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="tenant16" target="wasmtime-container">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="900" y="600" as="sourcePoint"/>
+            <mxPoint x="950" y="550" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Arrows within host runtime -->
+        <mxCell id="arrow-hf-m64" value="Load Layers" style="endArrow=classic;html=1;strokeColor=#e65100;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;edgeStyle=orthogonalEdgeStyle;fontSize=10" edge="1" parent="1" source="host-functions" target="model-weights">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="900" y="600" as="sourcePoint"/>
+            <mxPoint x="950" y="550" as="targetPoint"/>
+            <Array as="points"/>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="arrow-hf-gpu" value="Compute" style="endArrow=classic;html=1;strokeColor=#e65100;strokeWidth=2;exitX=1;exitY=0.3;entryX=0;entryY=0.3;edgeStyle=orthogonalEdgeStyle;fontSize=10" edge="1" parent="1" source="host-functions" target="gpu-backend">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="900" y="600" as="sourcePoint"/>
+            <mxPoint x="950" y="550" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="arrow-hf-cpu" value="Fallback" style="endArrow=classic;html=1;strokeColor=#e65100;strokeWidth=2;exitX=1;exitY=0.7;entryX=0;entryY=0.7;edgeStyle=orthogonalEdgeStyle;fontSize=10" edge="1" parent="1" source="host-functions" target="cpu-backend">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="900" y="600" as="sourcePoint"/>
+            <mxPoint x="950" y="550" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Key Benefits Box -->
+        <mxCell id="benefits" value="&lt;b&gt;Key Benefits&lt;/b&gt;&lt;br&gt;&lt;br&gt;✅ 16x GPU density&lt;br&gt;✅ 93% cost reduction&lt;br&gt;✅ Strong isolation&lt;br&gt;✅ 95% GPU utilization&lt;br&gt;✅ Production ready" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#f57f17;strokeWidth=3;fontSize=12;fontStyle=1;align=left" vertex="1" parent="1">
+          <mxGeometry x="100" y="1020" width="200" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Performance Metrics -->
+        <mxCell id="metrics" value="&lt;b&gt;Performance (7B Model, A100)&lt;/b&gt;&lt;br&gt;&lt;br&gt;Prefill: 125ms (+4%)&lt;br&gt;Decode: 12.5ms/tok (+4%)&lt;br&gt;Throughput: 62 tok/s (16 tenants)&lt;br&gt;Latency overhead: &lt;5%" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1f5fe;strokeColor=#01579b;strokeWidth=3;fontSize=12;fontStyle=1;align=left" vertex="1" parent="1">
+          <mxGeometry x="340" y="1020" width="280" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Economics -->
+        <mxCell id="economics" value="&lt;b&gt;Economics&lt;/b&gt;&lt;br&gt;&lt;br&gt;Traditional: $30K/tenant/year&lt;br&gt;Realm: $1,875/tenant/year&lt;br&gt;&lt;br&gt;100 customers:&lt;br&gt;Traditional: $3M/year&lt;br&gt;Realm: $210K/year&lt;br&gt;Savings: $2.79M (93%)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=3;fontSize=12;fontStyle=1;align=left" vertex="1" parent="1">
+          <mxGeometry x="660" y="1020" width="260" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Security -->
+        <mxCell id="security" value="&lt;b&gt;Security Model&lt;/b&gt;&lt;br&gt;&lt;br&gt;🛡️ WASM sandboxing&lt;br&gt;🔒 Memory isolation&lt;br&gt;✅ No shared state&lt;br&gt;✅ Validated host calls&lt;br&gt;✅ Compile-time safety" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e5f5;strokeColor=#6a1b9a;strokeWidth=3;fontSize=12;fontStyle=1;align=left" vertex="1" parent="1">
+          <mxGeometry x="960" y="1020" width="240" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Technology Stack -->
+        <mxCell id="tech-stack" value="&lt;b&gt;Technology Stack&lt;/b&gt;&lt;br&gt;&lt;br&gt;🦀 Rust (core runtime)&lt;br&gt;🌐 WebAssembly (sandboxing)&lt;br&gt;⚡ Wasmtime (WASM host)&lt;br&gt;🎮 Candle (GPU framework)&lt;br&gt;📦 GGUF (model format)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe0b2;strokeColor=#e65100;strokeWidth=3;fontSize=12;fontStyle=1;align=left" vertex="1" parent="1">
+          <mxGeometry x="1240" y="1020" width="260" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Use Cases -->
+        <mxCell id="use-cases" value="&lt;b&gt;Use Cases&lt;/b&gt;&lt;br&gt;&lt;br&gt;💼 B2B SaaS platforms&lt;br&gt;🏢 Enterprise AI&lt;br&gt;🌐 API-first companies&lt;br&gt;📝 AI writing tools&lt;br&gt;💬 Chatbot platforms" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#c2185b;strokeWidth=3;fontSize=12;fontStyle=1;align=left" vertex="1" parent="1">
+          <mxGeometry x="1540" y="1020" width="240" height="140" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
