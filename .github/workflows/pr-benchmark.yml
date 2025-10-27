@@ -1,0 +1,214 @@
+name: PR Benchmarks
+
+on:
+  pull_request:
+    branches: [ main, dev ]
+    paths:
+      - 'crates/**/*.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/pr-benchmark.yml'
+      - '.github/benchmark-baselines.json'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  benchmark:
+    name: Performance Regression Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run integration tests with performance checks
+        run: |
+          echo "Running integration tests..."
+          cargo test --workspace --release 2>&1 | tee test-output.txt
+
+          echo ""
+          echo "Performance tests:"
+          grep "✅" test-output.txt || true
+
+      - name: Run CPU benchmarks
+        run: |
+          echo "Running CPU benchmarks (quick mode)..."
+          cargo bench -p realm-compute-cpu --bench gemm -- --quick 2>&1 | tee bench-cpu.txt
+          cargo bench -p realm-compute-cpu --bench fused_kernels -- --quick 2>&1 | tee -a bench-cpu.txt
+
+      - name: Run model benchmarks
+        run: |
+          echo "Running model benchmarks (quick mode)..."
+          cargo bench -p realm-models --bench attention -- --quick 2>&1 | tee bench-models.txt
+
+      - name: Check for performance regressions
+        id: regression-check
+        run: |
+          echo "Checking performance against baselines..."
+          if [ -f scripts/check-benchmark-regression.sh ]; then
+            bash scripts/check-benchmark-regression.sh
+          else
+            echo "No regression check script found (optional)"
+          fi
+        continue-on-error: true
+
+      - name: Extract benchmark summary
+        if: always()
+        run: |
+          echo "## 📊 Benchmark Results" > benchmark-summary.md
+          echo "" >> benchmark-summary.md
+          echo "Realm inference orchestration performance benchmarks on this PR." >> benchmark-summary.md
+          echo "" >> benchmark-summary.md
+
+          if [ -f bench-cpu.txt ]; then
+            echo "### CPU Compute Benchmarks" >> benchmark-summary.md
+            echo "\`\`\`" >> benchmark-summary.md
+            grep -A 2 "time:" bench-cpu.txt | head -20 >> benchmark-summary.md || true
+            echo "\`\`\`" >> benchmark-summary.md
+            echo "" >> benchmark-summary.md
+          fi
+
+          if [ -f bench-models.txt ]; then
+            echo "### Model Inference Benchmarks" >> benchmark-summary.md
+            echo "\`\`\`" >> benchmark-summary.md
+            grep -A 2 "time:" bench-models.txt | head -20 >> benchmark-summary.md || true
+            echo "\`\`\`" >> benchmark-summary.md
+            echo "" >> benchmark-summary.md
+          fi
+
+          if [ -f test-output.txt ]; then
+            echo "### Integration Test Performance" >> benchmark-summary.md
+            echo "\`\`\`" >> benchmark-summary.md
+            grep "✅.*µs\|✅.*ms" test-output.txt >> benchmark-summary.md || echo "No performance data" >> benchmark-summary.md
+            echo "\`\`\`" >> benchmark-summary.md
+          fi
+
+          echo "" >> benchmark-summary.md
+          echo "---" >> benchmark-summary.md
+          echo "*Thresholds defined in [benchmark-baselines.json](.github/benchmark-baselines.json) (if available)*" >> benchmark-summary.md
+          echo "" >> benchmark-summary.md
+          echo "**Note:** These benchmarks measure orchestration overhead and compute efficiency." >> benchmark-summary.md
+
+      - name: Comment PR with results
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('benchmark-summary.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            bench-*.txt
+            test-output.txt
+            benchmark-summary.md
+
+      - name: Fail if regressions detected
+        if: steps.regression-check.outcome == 'failure'
+        run: |
+          echo "❌ Performance regressions detected!"
+          echo "Please review the benchmark results above."
+          echo ""
+          echo "If the regression is expected (e.g., adding features),"
+          echo "update the baselines in .github/benchmark-baselines.json"
+          exit 1
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-integration-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run core integration tests
+        run: |
+          echo "Running realm-core integration tests..."
+          cargo test -p realm-core --release
+
+      - name: Test orchestration examples
+        run: |
+          echo "Testing inference orchestration examples..."
+
+          echo "Testing simple-realm-test..."
+          timeout 60 cargo run --release --bin simple-realm-test 2>&1 | tee simple-test.txt
+
+          echo "Testing multi-tenant orchestration..."
+          timeout 60 cargo run --release --bin multi-tenant 2>&1 | tee multi-tenant-test.txt
+
+          echo "Testing paris-generation..."
+          timeout 60 cargo run --release --bin paris-generation 2>&1 | tee paris-test.txt
+
+      - name: Verify orchestration performance
+        run: |
+          echo "Checking orchestration performance baselines..."
+
+          # Check that examples completed successfully
+          if grep -q "SUCCESS\|✅" simple-test.txt; then
+            echo "✅ simple-realm-test passed"
+          else
+            echo "❌ simple-realm-test failed"
+            exit 1
+          fi
+
+          if grep -q "Tenant #1\|Tenant #2" multi-tenant-test.txt; then
+            echo "✅ multi-tenant orchestration passed"
+          else
+            echo "❌ multi-tenant orchestration failed"
+            exit 1
+          fi
+
+          if grep -q "Paris\|Complete inference" paris-test.txt; then
+            echo "✅ paris-generation passed"
+          else
+            echo "❌ paris-generation failed"
+            exit 1
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            *-test.txt
