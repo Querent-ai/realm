@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use wasm_chord_cpu::{matmul_f32, matmul_transposed};
+use realm_compute_cpu::{matmul_f32, matmul_transposed};
 
 fn bench_gemm_small(criterion: &mut Criterion) {
     let m = 128;

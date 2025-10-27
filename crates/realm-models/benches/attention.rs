@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use wasm_chord_runtime::{attention::AttentionBackend, MultiHeadAttention, TransformerConfig};
+use realm_models::{AttentionBackend, MultiHeadAttention, TransformerConfig};
 
 fn bench_attention_computation(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("attention_computation");

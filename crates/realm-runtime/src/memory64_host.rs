@@ -251,9 +251,8 @@ impl Memory64State {
 
             self.memories.push(memory);
 
-            // ✅ FIX 4: Use log crate instead of println
-            #[cfg(feature = "log")]
-            log::info!(
+            // ✅ FIX 4: Use tracing instead of println
+            tracing::debug!(
                 "Memory64 region '{}' ({}): {:.2}GB",
                 region.name,
                 region.purpose,

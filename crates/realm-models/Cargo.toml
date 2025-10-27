@@ -7,6 +7,13 @@ repository.workspace = true
 authors.workspace = true
 description = "Model architectures for Realm.ai (Transformer, Attention, FFN)"
 
+[features]
+default = []
+cuda = ["realm-compute-gpu/cuda"]
+metal = ["realm-compute-gpu/metal"]
+webgpu = ["realm-compute-gpu/webgpu"]
+memory64 = []
+
 [dependencies]
 realm-core = { workspace = true }
 realm-compute-cpu = { workspace = true }
@@ -15,3 +22,10 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 rand = "0.9"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "attention"
+harness = false

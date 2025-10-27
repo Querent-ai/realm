@@ -11,6 +11,13 @@ description = "Command-line interface for Realm.ai"
 name = "realm"
 path = "src/main.rs"
 
+[features]
+default = []
+memory64 = ["realm-runtime/memory64"]
+cuda = ["realm-runtime/cuda", "realm-models/cuda"]
+metal = ["realm-runtime/metal", "realm-models/metal"]
+webgpu = ["realm-runtime/webgpu", "realm-models/webgpu"]
+
 [dependencies]
 realm-core = { workspace = true }
 realm-models = { workspace = true }

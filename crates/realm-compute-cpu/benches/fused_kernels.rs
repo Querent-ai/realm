@@ -1,6 +1,8 @@
+#![allow(clippy::manual_div_ceil)]
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use wasm_chord_core::quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K};
-use wasm_chord_cpu::fused::{
+use realm_core::quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K};
+use realm_compute_cpu::fused::{
     fused_attention_score, fused_dequant_matmul_q4k, fused_dequant_matmul_q5k,
     fused_dequant_matmul_q6k, fused_dequant_matmul_q8k,
 };

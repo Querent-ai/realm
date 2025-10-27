@@ -10,8 +10,9 @@ description = "Host runtime with Memory64 and Candle acceleration for Realm.ai"
 [features]
 default = []
 memory64 = []
-cuda = ["realm-compute-gpu/cuda", "candle-core/cuda"]
-metal = ["realm-compute-gpu/metal", "candle-core/metal"]
+cuda = ["realm-compute-gpu/cuda", "realm-models/cuda", "candle-core/cuda"]
+metal = ["realm-compute-gpu/metal", "realm-models/metal", "candle-core/metal"]
+webgpu = ["realm-compute-gpu/webgpu", "realm-models/webgpu"]
 
 [dependencies]
 realm-core = { workspace = true }

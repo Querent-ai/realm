@@ -8,7 +8,7 @@
 
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::{debug, trace};
+use tracing::debug;
 use wasmtime::{Linker, Store};
 
 use crate::memory64_host::{Memory64Runtime, MemoryLayout};
@@ -152,7 +152,6 @@ impl Default for HostContext {
 /// All host functions are thread-safe and can be called from multiple WASM
 /// instances concurrently. Memory64 state uses `parking_lot::Mutex` for
 /// fast, poison-free locking.
-
 #[cfg(test)]
 mod tests {
     use super::*;

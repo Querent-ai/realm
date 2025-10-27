@@ -10,7 +10,6 @@
 use anyhow::{Context, Result};
 use realm_core::formats::gguf::GGUFParser;
 use realm_runtime::{HostContext, MemoryLayout};
-use std::path::Path;
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 use wasmtime::*;

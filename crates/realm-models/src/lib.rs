@@ -13,7 +13,7 @@ mod sampling;
 mod weight_format;
 
 pub use attention::{AttentionWeights, MultiHeadAttention};
-pub use config::{GenerationConfig, TransformerConfig};
+pub use config::{AttentionBackend, GenerationConfig, TransformerConfig};
 pub use ffn::{FFNWeights, FeedForward};
 pub use kv_cache::KVCache;
 pub use layer::TransformerLayer;

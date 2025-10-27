@@ -7,6 +7,13 @@ edition.workspace = true
 name = "simple-realm-test"
 path = "src/main.rs"
 
+[features]
+default = []
+memory64 = ["realm-runtime/memory64"]
+cuda = ["realm-runtime/cuda"]
+metal = ["realm-runtime/metal"]
+webgpu = ["realm-runtime/webgpu"]
+
 [dependencies]
 realm-runtime = { workspace = true }
 wasmtime = { workspace = true }

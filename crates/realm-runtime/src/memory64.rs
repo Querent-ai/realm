@@ -57,13 +57,13 @@
 use realm_core::error::{Error, Result};
 
 // Re-export the production-hardened host runtime
-#[cfg(feature = "memory64-host")]
+#[cfg(feature = "memory64")]
 pub use crate::memory64_host::{
     LayerInfo, Memory64Runtime, Memory64State, MemoryLayout, MemoryRegion, MemoryStats,
 };
 
 // Re-export WASM FFI bindings
-#[cfg(all(feature = "memory64-wasm", target_arch = "wasm32"))]
+#[cfg(all(feature = "memory64", target_arch = "wasm32"))]
 pub use crate::memory64_ffi::{
     get_memory64_stats, is_memory64_enabled, load_layer, read_memory64, Memory64LayerLoader,
 };
@@ -73,11 +73,7 @@ pub use crate::memory64_ffi::{
 /// This checks if the `memory64` feature flags are enabled at compile time.
 /// At runtime, the host can additionally check browser/engine support.
 pub fn supports_memory64() -> bool {
-    cfg!(any(
-        feature = "memory64",
-        feature = "memory64-host",
-        feature = "memory64-wasm"
-    ))
+    cfg!(feature = "memory64")
 }
 
 /// Get the maximum memory size based on Memory64 support
@@ -105,11 +101,7 @@ pub struct WasmMemory64Allocator {
 impl WasmMemory64Allocator {
     /// Create a new Memory64 allocator tracker
     pub fn new(_initial_bytes: u64, max_bytes: u64) -> Result<Self> {
-        #[cfg(any(
-            feature = "memory64",
-            feature = "memory64-host",
-            feature = "memory64-wasm"
-        ))]
+        #[cfg(feature = "memory64")]
         {
             Ok(Self {
                 max_bytes,
@@ -117,11 +109,7 @@ impl WasmMemory64Allocator {
             })
         }
 
-        #[cfg(not(any(
-            feature = "memory64",
-            feature = "memory64-host",
-            feature = "memory64-wasm"
-        )))]
+        #[cfg(not(feature = "memory64"))]
         {
             let _ = (_initial_bytes, max_bytes);
             Err(Error::AllocationFailed(
@@ -197,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "memory64", feature = "memory64-wasm"))]
+    #[cfg(feature = "memory64")]
     fn test_allocator_basic() {
         let allocator = WasmMemory64Allocator::new(0, 1024 * 1024).unwrap();
         assert!(allocator.can_allocate(1000));
@@ -205,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "memory64", feature = "memory64-wasm"))]
+    #[cfg(feature = "memory64")]
     fn test_allocator_overflow_check() {
         let mut allocator = WasmMemory64Allocator::new(0, 1000).unwrap();
 

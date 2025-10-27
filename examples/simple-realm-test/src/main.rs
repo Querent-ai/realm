@@ -82,7 +82,7 @@ fn main() -> Result<()> {
     info!("✅ WASM module loaded successfully");
 
     // Instantiate the module with the host functions
-    let instance = linker.instantiate(&mut store, &module)?;
+    let _instance = linker.instantiate(&mut store, &module)?;
     info!("✅ WASM module instantiated with host functions");
 
     info!("🎯 Realm architecture test successful!");

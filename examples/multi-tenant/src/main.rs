@@ -9,7 +9,7 @@ use wasmtime::*;
 struct Tenant {
     id: String,
     store: Store<TenantState>,
-    instance: Instance,
+    _instance: Instance,
 }
 
 /// Per-tenant state
@@ -130,7 +130,7 @@ fn create_tenant(tenant_id: String, engine: Arc<Engine>, module: Arc<Module>) ->
     let mut linker = Linker::new(&engine);
 
     // Add wasm-bindgen stubs (minimal)
-    let tenant_id_clone = tenant_id.clone();
+    let _tenant_id_clone = tenant_id.clone();
     linker.func_wrap(
         "wbg",
         "__wbindgen_object_drop_ref",
@@ -180,11 +180,11 @@ fn create_tenant(tenant_id: String, engine: Arc<Engine>, module: Arc<Module>) ->
     )?;
 
     // Host functions - these would be shared across all tenants
-    let tenant_id_for_matmul = tenant_id.clone();
+    let _tenant_id_for_matmul = tenant_id.clone();
     linker.func_wrap(
         "realm_host",
         "candle_matmul",
-        move |mut caller: Caller<'_, TenantState>,
+        move |caller: Caller<'_, TenantState>,
               _a_ptr: i32,
               _a_len: i32,
               _b_ptr: i32,
@@ -204,11 +204,11 @@ fn create_tenant(tenant_id: String, engine: Arc<Engine>, module: Arc<Module>) ->
         },
     )?;
 
-    let tenant_id_for_load = tenant_id.clone();
+    let _tenant_id_for_load = tenant_id.clone();
     linker.func_wrap(
         "realm_host",
         "memory64_load_layer",
-        move |mut caller: Caller<'_, TenantState>,
+        move |caller: Caller<'_, TenantState>,
               model_id: i32,
               layer_id: i32,
               _buffer_ptr: i32,
@@ -223,11 +223,11 @@ fn create_tenant(tenant_id: String, engine: Arc<Engine>, module: Arc<Module>) ->
         },
     )?;
 
-    let tenant_id_for_store = tenant_id.clone();
+    let _tenant_id_for_store = tenant_id.clone();
     linker.func_wrap(
         "realm_host",
         "memory64_store_layer",
-        move |mut caller: Caller<'_, TenantState>,
+        move |caller: Caller<'_, TenantState>,
               model_id: i32,
               layer_id: i32,
               _buffer_ptr: i32,
@@ -248,6 +248,6 @@ fn create_tenant(tenant_id: String, engine: Arc<Engine>, module: Arc<Module>) ->
     Ok(Tenant {
         id: tenant_id,
         store,
-        instance,
+        _instance: instance,
     })
 }
