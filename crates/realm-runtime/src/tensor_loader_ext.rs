@@ -1,7 +1,7 @@
 //! Extended tensor loading with optimal weight format selection
 
 use crate::weight_format::WeightFormat;
-use wasm_chord_core::{
+use realm_core::{
     error::Result,
     quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K},
     tensor::DataType,

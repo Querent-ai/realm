@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use wasm_chord_core::error::Result;
+use realm_core::error::Result;
 
 /// Runtime configuration
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ impl Default for RuntimeConfig {
 impl RuntimeConfig {
     pub fn from_json(json: &str) -> Result<Self> {
         serde_json::from_str(json).map_err(|e| {
-            wasm_chord_core::error::Error::ParseError(format!("Invalid config JSON: {}", e))
+            realm_core::error::Error::ParseError(format!("Invalid config JSON: {}", e))
         })
     }
 }
@@ -103,7 +103,7 @@ impl RuntimeContext {
 /// Handle to a loaded model
 pub struct ModelHandle {
     pub name: String,
-    pub meta: wasm_chord_core::formats::gguf::ModelMeta,
+    pub meta: realm_core::formats::gguf::ModelMeta,
     // Model weights would be stored here
     // For now, just metadata
 }

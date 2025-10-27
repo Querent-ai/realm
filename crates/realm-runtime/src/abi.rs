@@ -67,7 +67,7 @@ pub unsafe extern "C" fn wasmchord_load_model(
 
     // Parse GGUF (simplified - just create placeholder)
     use std::io::Cursor;
-    use wasm_chord_core::formats::gguf::GGUFParser;
+    use realm_core::formats::gguf::GGUFParser;
 
     let cursor = Cursor::new(bytes);
     let mut parser = GGUFParser::new(cursor);

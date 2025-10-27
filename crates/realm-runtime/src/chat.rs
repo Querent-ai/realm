@@ -1,5 +1,5 @@
 /// Chat template support for different model formats
-use wasm_chord_core::error::Result;
+use realm_core::error::Result;
 
 #[derive(Debug, Clone)]
 pub enum ChatRole {

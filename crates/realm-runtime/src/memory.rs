@@ -1,6 +1,6 @@
 //! Memory management with Memory64 support for large models
 
-use wasm_chord_core::error::{Error, Result};
+use realm_core::error::{Error, Result};
 
 /// Memory allocator configuration
 pub struct MemoryConfig {

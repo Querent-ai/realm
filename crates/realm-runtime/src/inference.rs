@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 /// Inference session management with token streaming
-use wasm_chord_core::error::Result;
+use realm_core::error::Result;
 
 /// Generation options
 #[repr(C)]
@@ -192,7 +192,7 @@ impl InferenceSession {
         let token_id = self
             .logits_processor
             .sample(&mut last_logits)
-            .map_err(wasm_chord_core::error::Error::ParseError)?;
+            .map_err(realm_core::error::Error::ParseError)?;
 
         // Check stop tokens
         if self.stop_tokens.contains(&token_id) {

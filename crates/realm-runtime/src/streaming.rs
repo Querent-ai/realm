@@ -4,8 +4,8 @@
 //! text incrementally, providing real-time output as tokens are generated.
 
 use crate::{GenerationConfig, Model};
-use wasm_chord_core::error::Result;
-use wasm_chord_core::tokenizer::Tokenizer;
+use realm_core::error::Result;
+use realm_core::tokenizer::Tokenizer;
 
 /// Type alias for token callback function
 #[allow(dead_code)]
@@ -251,7 +251,7 @@ mod tests {
         let tokenizer = Tokenizer::new(
             std::collections::HashMap::new(),
             Vec::new(),
-            wasm_chord_core::tokenizer::SpecialTokens::default(),
+            realm_core::tokenizer::SpecialTokens::default(),
         );
         let gen_config = GenerationConfig::default();
 

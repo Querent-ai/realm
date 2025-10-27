@@ -2,7 +2,7 @@
 //!
 //! Implements the core transformer components for LLM inference.
 
-mod attention;
+mod attention_standard;
 mod config;
 mod ffn;
 mod kv_cache;
@@ -12,7 +12,7 @@ mod model;
 mod sampling;
 mod weight_format;
 
-pub use attention::{AttentionWeights, MultiHeadAttention};
+pub use attention_standard::{AttentionWeights, MultiHeadAttention};
 pub use config::{AttentionBackend, GenerationConfig, TransformerConfig};
 pub use ffn::{FFNWeights, FeedForward};
 pub use kv_cache::KVCache;
