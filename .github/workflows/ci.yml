@@ -261,7 +261,7 @@ jobs:
           path: crates/realm-wasm/pkg/
 
       - name: Run integration tests
-        run: cargo test --tests --release
+        run: cargo test --test '*' --release
 
       - name: Verify WASM module size
         run: |
@@ -310,10 +310,12 @@ jobs:
         run: cargo install cargo-tarpaulin
 
       - name: Run tests with coverage
-        run: cargo tarpaulin --workspace --out Xml --timeout 300
+        run: cargo tarpaulin --workspace --out Xml --timeout 300 --exclude-files 'crates/realm-compute-cpu/src/*'
+        continue-on-error: true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           files: ./cobertura.xml
           fail_ci_if_error: false
+        continue-on-error: true

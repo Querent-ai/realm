@@ -58,22 +58,6 @@ fn transpose_matrix(matrix: &[f32], rows: usize, cols: usize) -> Vec<f32> {
     transposed
 }
 
-/// Naive matmul reference (row-major)
-#[allow(dead_code)]
-fn matmul_naive(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
-    let mut r = vec![0.0f32; m * n];
-    for i in 0..m {
-        for j in 0..n {
-            let mut sum = 0.0f32;
-            for t in 0..k {
-                sum += a[i * k + t] * b[t * n + j];
-            }
-            r[i * n + j] = sum;
-        }
-    }
-    r
-}
-
 impl Model {
     /// Create a new model with initialized (zero) weights
     pub fn new(config: TransformerConfig) -> Self {
@@ -297,6 +281,8 @@ impl Model {
         if let Ok(norm_data) = tensor_loader.load_tensor("output_norm.weight", parser) {
             // Load raw weights without arbitrary scaling
             self.output_norm.copy_from_slice(norm_data);
+        } else {
+            eprintln!("WARN: Failed to load output_norm.weight");
         }
 
         // Load LM head - try different tensor names
@@ -358,86 +344,29 @@ impl Model {
                 // Use GGUF weights directly - no transpose needed
                 // matmul_transposed will handle the orientation efficiently
                 layer.attention_weights.wq = crate::weight_format::WeightFormat::F32(wq.to_vec());
-                if layer_idx == 0 {
-                    // eprintln!("LOADED '{}' raw.len={}", wq_name, wq.len());
-                    // tensor_stats(&format!("{} (model)", wq_name), &layer.attention_weights.wq);
-                }
             } else if layer_idx == 0 {
-                eprintln!("WARN: Failed to load {}", wq_name);
+                warn!("Failed to load {}", wq_name);
             }
             if let Ok(wk) = tensor_loader.load_tensor(&wk_name, parser) {
                 // Use GGUF weights directly - no transpose needed
                 // matmul_transposed will handle the orientation efficiently
                 layer.attention_weights.wk = crate::weight_format::WeightFormat::F32(wk.to_vec());
-                if layer_idx == 0 {
-                    // eprintln!("LOADED '{}' raw.len={}", wk_name, wk.len());
-                    // tensor_stats(&format!("{} (model)", wk_name), &layer.attention_weights.wk);
-                }
             } else if layer_idx == 0 {
-                eprintln!("WARN: Failed to load {}", wk_name);
+                warn!("Failed to load {}", wk_name);
             }
             if let Ok(wv) = tensor_loader.load_tensor(&wv_name, parser) {
                 // Use GGUF weights directly - no transpose needed
                 // matmul_transposed will handle the orientation efficiently
                 layer.attention_weights.wv = crate::weight_format::WeightFormat::F32(wv.to_vec());
-                if layer_idx == 0 {
-                    // eprintln!("LOADED '{}' raw.len={}", wv_name, wv.len());
-                    // tensor_stats(&format!("{} (model)", wv_name), &layer.attention_weights.wv);
-                }
             } else if layer_idx == 0 {
-                eprintln!("WARN: Failed to load {}", wv_name);
+                warn!("Failed to load {}", wv_name);
             }
             if let Ok(wo) = tensor_loader.load_tensor(&wo_name, parser) {
-                if layer_idx == 0 {
-                    // eprintln!("LOADED '{}' raw.len={}", wo_name, wo.len());
-                    // tensor_stats(&format!("{} (raw)", wo_name), wo);
-                }
                 layer.attention_weights.wo = crate::weight_format::WeightFormat::F32(wo.to_vec());
-                if layer_idx == 0 {
-                    // tensor_stats(&format!("{} (model)", wo_name), &layer.attention_weights.wo);
-                }
             } else if layer_idx == 0 {
-                eprintln!("WARN: Failed to load {}", wo_name);
+                warn!("Failed to load {}", wo_name);
             }
-
-            // Debug attention weight orientation for first layer after all weights are loaded
-            if layer_idx == 0 {
-                // eprintln!("🔍 Debugging attention weight orientation for layer 0...");
-                // super::debug_weights::check_attention_weight_orientation(
-                //     &layer.attention_weights.wq,
-                //     &layer.attention_weights.wk,
-                //     &layer.attention_weights.wv,
-                //     &layer.attention_weights.wo,
-                //     self.config.hidden_size,
-                // )?;
-
-                // Check if we need to transpose weights
-                // let wq_sum = layer.attention_weights.wq.iter().sum::<f32>();
-                // let wq_mean = wq_sum / layer.attention_weights.wq.len() as f32;
-                // let wq_variance =
-                //     layer.attention_weights.wq.iter().map(|x| (x - wq_mean).powi(2)).sum::<f32>()
-                //         / layer.attention_weights.wq.len() as f32;
-
-                // eprintln!(
-                //     "WQ stats: sum={:.6}, mean={:.6}, variance={:.6}",
-                //     wq_sum, wq_mean, wq_variance
-                // );
-
-                // DISABLED: Variance check is fundamentally flawed
-                // Low variance doesn't indicate wrong orientation!
-                // if wq_variance < 0.001 {
-                //     eprintln!("⚠️  WQ has very low variance - may need transposing!");
-                //     eprintln!("🔧 Attempting to transpose attention weights...");
-                //     super::debug_weights::transpose_attention_weights(
-                //         &mut layer.attention_weights.wq,
-                //         &mut layer.attention_weights.wk,
-                //         &mut layer.attention_weights.wv,
-                //         &mut layer.attention_weights.wo,
-                //         self.config.hidden_size,
-                //     )?;
-                //     eprintln!("✅ Attention weights transposed!");
-                // }
-            }
+            // Attention norm
 
             // Attention norm
             let attn_norm_name = format!("blk.{}.attn_norm.weight", layer_idx);
@@ -567,6 +496,7 @@ impl Model {
                 if emb_idx < self.token_embeddings.len() {
                     hidden_states[out_start + dim_idx] = self.token_embeddings[emb_idx];
                 } else {
+                    eprintln!("WARN: Token {} dim {} out of bounds", token_id, dim_idx);
                     break;
                 }
             }
