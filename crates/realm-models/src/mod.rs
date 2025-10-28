@@ -8,20 +8,19 @@ mod config;
 mod ffn;
 mod kv_cache;
 mod layer;
-mod matmul_dispatch;
 mod model;
+mod matmul_dispatch;
 mod sampling;
 mod weight_format;
 
 pub use attention::{AttentionWeights, MultiHeadAttention};
-pub use attention_stub::AttentionBackend;
 pub use config::{GenerationConfig, TransformerConfig};
 pub use ffn::{FFNWeights, FeedForward};
 pub use kv_cache::KVCache;
 pub use layer::TransformerLayer;
-pub use matmul_dispatch::*;
+pub use matmul_dispatch::dispatch_matmul;
 pub use model::Model;
-pub use sampling::*;
+pub use sampling::LogitsProcessor;
 pub use weight_format::*;
 
 #[cfg(test)]
@@ -59,14 +58,8 @@ mod tests {
         let config = TransformerConfig::default();
         let weights = FFNWeights::new(&config);
 
-        assert_eq!(
-            weights.w_gate.len(),
-            config.hidden_size * config.intermediate_size
-        );
-        assert_eq!(
-            weights.w_down.len(),
-            config.intermediate_size * config.hidden_size
-        );
+        assert_eq!(weights.w_gate.len(), config.hidden_size * config.intermediate_size);
+        assert_eq!(weights.w_down.len(), config.intermediate_size * config.hidden_size);
     }
 
     #[test]
@@ -76,15 +69,11 @@ mod tests {
 
         assert_eq!(model.layers.len(), config.num_layers);
         assert_eq!(model.kv_caches.len(), config.num_layers);
-        assert_eq!(
-            model.token_embeddings.len(),
-            config.vocab_size * config.hidden_size
-        );
+        assert_eq!(model.token_embeddings.len(), config.vocab_size * config.hidden_size);
         assert_eq!(model.lm_head.len(), config.hidden_size * config.vocab_size);
     }
 
     #[test]
-    #[ignore] // TODO: Fix attention implementation
     fn test_model_forward_pass() {
         // Create a tiny config for testing
         let config = TransformerConfig {
@@ -97,7 +86,7 @@ mod tests {
             max_seq_len: 128,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
-            attention_backend: crate::AttentionBackend::Auto,
+            attention_backend: crate::attention::AttentionBackend::Auto,
         };
 
         let mut model = Model::new(config);
@@ -127,7 +116,7 @@ mod tests {
             max_seq_len: 32,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
-            attention_backend: crate::AttentionBackend::Auto,
+            attention_backend: crate::attention::AttentionBackend::Auto,
         };
 
         let model = Model::new(config);
@@ -157,7 +146,7 @@ mod tests {
             max_seq_len: 32,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
-            attention_backend: crate::AttentionBackend::Auto,
+            attention_backend: crate::attention::AttentionBackend::Auto,
         };
 
         let model = Model::new(config);
@@ -182,7 +171,7 @@ mod tests {
             max_seq_len: 32,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
-            attention_backend: crate::AttentionBackend::Auto,
+            attention_backend: crate::attention::AttentionBackend::Auto,
         };
 
         let model = Model::new(config);
@@ -212,7 +201,7 @@ mod tests {
             max_seq_len: 32,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
-            attention_backend: crate::AttentionBackend::Auto,
+            attention_backend: crate::attention::AttentionBackend::Auto,
         };
 
         let model = Model::new(config);
@@ -231,7 +220,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix attention implementation
     fn test_attention_computation() {
         // Small config for testing
         let config = TransformerConfig {
@@ -244,7 +232,7 @@ mod tests {
             max_seq_len: 128,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
-            attention_backend: crate::AttentionBackend::Auto,
+            attention_backend: crate::attention::AttentionBackend::Auto,
         };
 
         let attention = MultiHeadAttention::new(config.clone());
@@ -271,7 +259,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix stack overflow
     fn test_attention_causal_masking() {
         // Test that causal masking works correctly
         let config = TransformerConfig {
@@ -284,7 +271,7 @@ mod tests {
             max_seq_len: 128,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
-            attention_backend: crate::AttentionBackend::Auto,
+            attention_backend: crate::attention::AttentionBackend::Auto,
         };
 
         let attention = MultiHeadAttention::new(config.clone());
@@ -324,7 +311,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix attention implementation
     fn test_attention_with_gqa() {
         // Test Grouped Query Attention
         let config = TransformerConfig {
@@ -337,7 +323,7 @@ mod tests {
             max_seq_len: 128,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
-            attention_backend: crate::AttentionBackend::Auto,
+            attention_backend: crate::attention::AttentionBackend::Auto,
         };
 
         let attention = MultiHeadAttention::new(config.clone());

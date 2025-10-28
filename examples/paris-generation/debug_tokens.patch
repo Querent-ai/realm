@@ -1,0 +1,15 @@
+--- a/main.rs
++++ b/main.rs
+@@ -86,6 +86,12 @@ fn main() -> Result<()> {
+     };
+ 
+     println!("🤖 Generating response...\n");
++    
++    // Debug: Show tokenized prompt
++    let prompt_tokens = tokenizer.encode(&prompt, true)?;
++    println!("🔍 Prompt tokens ({} tokens): {:?}", prompt_tokens.len(), &prompt_tokens[..prompt_tokens.len().min(20)]);
++    println!("🔍 Last 5 prompt tokens: {:?}", &prompt_tokens[prompt_tokens.len().saturating_sub(5)..]);
++    
+     let response = model.generate(&prompt, &tokenizer, &gen_config)?;
+ 
+     println!("✨ Response: {}\n", response);

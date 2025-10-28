@@ -1,5 +1,6 @@
 //! Transformer layer implementation
 
+use realm_compute_cpu::CandleNeuralOpsBackend;
 use realm_core::error::Result;
 
 #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
@@ -38,6 +39,7 @@ impl TransformerLayer {
         hidden_states: &[f32],
         kv_cache: &mut KVCache,
         position: usize,
+        candle_backend: &CandleNeuralOpsBackend,
         cpu_backend: Option<&dyn realm_compute_cpu::CpuBackendTrait>,
         #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))] gpu: Option<
             &dyn GpuBackendTrait,
@@ -45,11 +47,17 @@ impl TransformerLayer {
     ) -> Result<Vec<f32>> {
         // Pre-norm architecture (like LLaMA)
 
-        // Calculate sequence length from input dimensions (unused but kept for clarity)
-        let _seq_len = hidden_states.len() / self.attention_norm.len();
+        // Calculate sequence length from input dimensions
+        let seq_len = hidden_states.len() / self.attention_norm.len();
 
         // 1. Attention block with residual
-        let normed = self.rms_norm(hidden_states, &self.attention_norm)?;
+        let normed = candle_backend.rms_norm(
+            hidden_states,
+            &self.attention_norm,
+            1e-6,    // RMS norm epsilon
+            seq_len, // Use calculated seq_len
+            self.attention_norm.len(),
+        )?;
         let attn_output = self.attention.forward(
             &normed,
             &self.attention_weights,
@@ -60,15 +68,17 @@ impl TransformerLayer {
             gpu,
         )?;
 
-        // Add residual connection
-        let hidden: Vec<f32> = hidden_states
-            .iter()
-            .zip(attn_output.iter())
-            .map(|(a, b)| a + b)
-            .collect();
+        // Add residual connection using Candle
+        let hidden = candle_backend.add(hidden_states, &attn_output, hidden_states.len())?;
 
         // 2. FFN block with residual
-        let normed = self.rms_norm(&hidden, &self.ffn_norm)?;
+        let normed = candle_backend.rms_norm(
+            &hidden,
+            &self.ffn_norm,
+            1e-6,    // RMS norm epsilon
+            seq_len, // Use calculated seq_len
+            self.ffn_norm.len(),
+        )?;
         let ffn_output = self.ffn.forward(
             &normed,
             &self.ffn_weights,
@@ -77,12 +87,8 @@ impl TransformerLayer {
             gpu,
         )?;
 
-        // Add residual connection
-        let final_hidden: Vec<f32> = hidden
-            .iter()
-            .zip(ffn_output.iter())
-            .map(|(a, b)| a + b)
-            .collect();
+        // Add residual connection using Candle
+        let final_hidden = candle_backend.add(&hidden, &ffn_output, hidden.len())?;
 
         Ok(final_hidden)
     }

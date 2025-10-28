@@ -6,14 +6,14 @@
 use crate::memory64::{Memory64Runtime, MemoryLayout};
 use crate::memory64_layer_manager::{Memory64LayerManager, Memory64Model};
 use crate::transformer::TransformerConfig;
-use std::collections::HashMap;
-use std::io::{Read, Seek};
-use std::sync::Arc;
 use realm_core::{
     error::{Error, Result},
     formats::gguf::{GGUFParser, ModelMeta},
     tensor_loader::TensorLoader,
 };
+use std::collections::HashMap;
+use std::io::{Read, Seek};
+use std::sync::Arc;
 
 /// Memory64-aware GGUF model loader
 pub struct Memory64GGUFLoader {
@@ -119,7 +119,10 @@ impl Memory64GGUFLoader {
         let total_size = self.estimate_model_size(&meta)?;
         self.use_memory64 = total_size > 3_000_000_000; // 3GB threshold
 
-        println!("📊 Model size estimate: {:.2} GB", total_size as f64 / 1_000_000_000.0);
+        println!(
+            "📊 Model size estimate: {:.2} GB",
+            total_size as f64 / 1_000_000_000.0
+        );
         println!("🎯 Using Memory64: {}", self.use_memory64);
 
         if self.use_memory64 {
@@ -145,7 +148,11 @@ impl Memory64GGUFLoader {
 
     /// Estimate total model size from GGUF metadata
     fn estimate_model_size(&self, meta: &ModelMeta) -> Result<u64> {
-        let total_bytes: u64 = meta.tensors.iter().map(|tensor| tensor.size_bytes as u64).sum();
+        let total_bytes: u64 = meta
+            .tensors
+            .iter()
+            .map(|tensor| tensor.size_bytes as u64)
+            .sum();
 
         Ok(total_bytes)
     }
@@ -227,7 +234,10 @@ impl Memory64GGUFLoader {
                     }
                 }
             }
-            Err(Error::ParseError(format!("Could not determine layer for tensor: {}", tensor_name)))
+            Err(Error::ParseError(format!(
+                "Could not determine layer for tensor: {}",
+                tensor_name
+            )))
         } else {
             // Default to layer 1 for other tensors
             Ok(1)
@@ -273,7 +283,10 @@ impl Memory64GGUFLoader {
 
         // Store tensor loader for later use (in production, this would be stored in the loader)
         println!("✅ Lazy loading infrastructure ready");
-        println!("   📊 {} tensors registered for on-demand loading", self.tensor_metadata.len());
+        println!(
+            "   📊 {} tensors registered for on-demand loading",
+            self.tensor_metadata.len()
+        );
         println!("   💡 Weights will be loaded only when layers are accessed");
 
         Ok(())
@@ -290,7 +303,10 @@ impl Memory64GGUFLoader {
             .get(tensor_name)
             .ok_or_else(|| Error::ParseError(format!("Tensor not found: {}", tensor_name)))?;
 
-        println!("   🔄 Lazy loading {} ({} bytes)...", tensor_name, layer_info.size_bytes);
+        println!(
+            "   🔄 Lazy loading {} ({} bytes)...",
+            tensor_name, layer_info.size_bytes
+        );
 
         // Create tensor loader for this specific request
         let data_offset = parser.tensor_data_offset()?;
@@ -303,10 +319,17 @@ impl Memory64GGUFLoader {
 
             // Load the tensor data
             let tensor_data = tensor_loader.load_tensor(tensor_name, parser)?;
-            println!("   ✅ Lazy loaded {} bytes for {}", tensor_data.len() * 4, tensor_name);
+            println!(
+                "   ✅ Lazy loaded {} bytes for {}",
+                tensor_data.len() * 4,
+                tensor_name
+            );
             Ok(tensor_data.to_vec())
         } else {
-            Err(Error::ParseError(format!("Tensor metadata not found: {}", tensor_name)))
+            Err(Error::ParseError(format!(
+                "Tensor metadata not found: {}",
+                tensor_name
+            )))
         }
     }
 

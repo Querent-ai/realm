@@ -37,7 +37,12 @@ impl ShardConfig {
         region_id: usize,
         memory_bytes: usize,
     ) -> Self {
-        Self { start_layer, end_layer, region_id, memory_bytes }
+        Self {
+            start_layer,
+            end_layer,
+            region_id,
+            memory_bytes,
+        }
     }
 
     /// Number of layers in this shard
@@ -75,7 +80,9 @@ impl ShardingManager {
         memory_per_layer: usize,
     ) -> Result<Self> {
         if num_regions == 0 {
-            return Err(Error::Runtime("Number of regions must be at least 1".to_string()));
+            return Err(Error::Runtime(
+                "Number of regions must be at least 1".to_string(),
+            ));
         }
 
         let layers_per_shard = total_layers.div_ceil(num_regions);
@@ -96,14 +103,20 @@ impl ShardingManager {
             }
         }
 
-        Ok(Self { strategy: ShardingStrategy::Sequential, shards, total_layers })
+        Ok(Self {
+            strategy: ShardingStrategy::Sequential,
+            shards,
+            total_layers,
+        })
     }
 
     /// Create with custom shard boundaries
     pub fn with_custom_sharding(total_layers: usize, shards: Vec<ShardConfig>) -> Result<Self> {
         // Validate shards
         if shards.is_empty() {
-            return Err(Error::Runtime("At least one shard must be specified".to_string()));
+            return Err(Error::Runtime(
+                "At least one shard must be specified".to_string(),
+            ));
         }
 
         // Check all layers are covered
@@ -129,8 +142,11 @@ impl ShardingManager {
             }
 
             // Mark layers as covered
-            for (layer_idx, is_covered) in
-                covered.iter_mut().enumerate().take(shard.end_layer).skip(shard.start_layer)
+            for (layer_idx, is_covered) in covered
+                .iter_mut()
+                .enumerate()
+                .take(shard.end_layer)
+                .skip(shard.start_layer)
             {
                 if *is_covered {
                     return Err(Error::Runtime(format!(
@@ -144,10 +160,16 @@ impl ShardingManager {
 
         // Ensure all layers are covered
         if !covered.iter().all(|&c| c) {
-            return Err(Error::Runtime("Not all layers are covered by shards".to_string()));
+            return Err(Error::Runtime(
+                "Not all layers are covered by shards".to_string(),
+            ));
         }
 
-        Ok(Self { strategy: ShardingStrategy::Custom, shards, total_layers })
+        Ok(Self {
+            strategy: ShardingStrategy::Custom,
+            shards,
+            total_layers,
+        })
     }
 
     /// Get the shard containing a specific layer
@@ -155,7 +177,9 @@ impl ShardingManager {
         if layer_idx >= self.total_layers {
             return None;
         }
-        self.shards.iter().find(|shard| shard.contains_layer(layer_idx))
+        self.shards
+            .iter()
+            .find(|shard| shard.contains_layer(layer_idx))
     }
 
     /// Get all shards
@@ -299,17 +323,26 @@ mod tests {
     #[test]
     fn test_custom_sharding_validation() {
         // Gap in coverage (layers 10-19 missing)
-        let shards = vec![ShardConfig::new(0, 10, 0, 1024), ShardConfig::new(20, 32, 1, 1024)];
+        let shards = vec![
+            ShardConfig::new(0, 10, 0, 1024),
+            ShardConfig::new(20, 32, 1, 1024),
+        ];
         let result = ShardingManager::with_custom_sharding(32, shards);
         assert!(result.is_err());
 
         // Overlapping shards
-        let shards = vec![ShardConfig::new(0, 15, 0, 1024), ShardConfig::new(10, 32, 1, 1024)];
+        let shards = vec![
+            ShardConfig::new(0, 15, 0, 1024),
+            ShardConfig::new(10, 32, 1, 1024),
+        ];
         let result = ShardingManager::with_custom_sharding(32, shards);
         assert!(result.is_err());
 
         // Invalid range (start >= end)
-        let shards = vec![ShardConfig::new(10, 10, 0, 1024), ShardConfig::new(10, 32, 1, 1024)];
+        let shards = vec![
+            ShardConfig::new(10, 10, 0, 1024),
+            ShardConfig::new(10, 32, 1, 1024),
+        ];
         let result = ShardingManager::with_custom_sharding(32, shards);
         assert!(result.is_err());
     }

@@ -116,7 +116,9 @@ pub fn load_layer(layer_id: u32, buffer: &mut [u8]) -> Result<usize> {
     #[cfg(not(feature = "memory64-wasm"))]
     {
         let _ = (layer_id, buffer);
-        Err(anyhow!("Memory64 feature not enabled. Rebuild with --features memory64-wasm"))
+        Err(anyhow!(
+            "Memory64 feature not enabled. Rebuild with --features memory64-wasm"
+        ))
     }
 }
 
@@ -148,7 +150,11 @@ pub fn read_memory64(offset: u64, buffer: &mut [u8]) -> Result<usize> {
                     -2 => anyhow!("Failed to read from Memory64 at offset {}", offset),
                     -3 => anyhow!("No WASM memory export available"),
                     -4 => anyhow!("Failed to write to WASM memory"),
-                    _ => anyhow!("Unknown error reading from offset {}: code {}", offset, result),
+                    _ => anyhow!(
+                        "Unknown error reading from offset {}: code {}",
+                        offset,
+                        result
+                    ),
                 });
             }
 
@@ -159,7 +165,9 @@ pub fn read_memory64(offset: u64, buffer: &mut [u8]) -> Result<usize> {
     #[cfg(not(feature = "memory64-wasm"))]
     {
         let _ = (offset, buffer);
-        Err(anyhow!("Memory64 feature not enabled. Rebuild with --features memory64-wasm"))
+        Err(anyhow!(
+            "Memory64 feature not enabled. Rebuild with --features memory64-wasm"
+        ))
     }
 }
 
@@ -216,7 +224,9 @@ pub fn get_memory64_stats() -> Result<u64> {
 
     #[cfg(not(feature = "memory64-wasm"))]
     {
-        Err(anyhow!("Memory64 feature not enabled. Rebuild with --features memory64-wasm"))
+        Err(anyhow!(
+            "Memory64 feature not enabled. Rebuild with --features memory64-wasm"
+        ))
     }
 }
 
@@ -234,7 +244,9 @@ impl Memory64LayerLoader {
     ///
     /// Checks at runtime whether Memory64 is available.
     pub fn new() -> Self {
-        Self { enabled: is_memory64_enabled() }
+        Self {
+            enabled: is_memory64_enabled(),
+        }
     }
 
     /// Check if Memory64 is available
@@ -253,7 +265,10 @@ impl Memory64LayerLoader {
     /// - `Err`: If Memory64 not available or load failed
     pub fn load_layer(&self, layer_id: u32, buffer: &mut [u8]) -> Result<usize> {
         if !self.enabled {
-            return Err(anyhow!("Memory64 not available - cannot load layer {}", layer_id));
+            return Err(anyhow!(
+                "Memory64 not available - cannot load layer {}",
+                layer_id
+            ));
         }
 
         load_layer(layer_id, buffer)
@@ -268,7 +283,10 @@ impl Memory64LayerLoader {
     /// - `buffer`: Buffer to read into
     pub fn read_at_offset(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
         if !self.enabled {
-            return Err(anyhow!("Memory64 not available - cannot read at offset {}", offset));
+            return Err(anyhow!(
+                "Memory64 not available - cannot read at offset {}",
+                offset
+            ));
         }
 
         read_memory64(offset, buffer)

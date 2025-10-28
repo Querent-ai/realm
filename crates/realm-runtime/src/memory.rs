@@ -40,7 +40,10 @@ pub struct MemoryAllocator {
 impl MemoryAllocator {
     /// Create a new memory allocator
     pub fn new(config: MemoryConfig) -> Self {
-        Self { config, allocated_bytes: 0 }
+        Self {
+            config,
+            allocated_bytes: 0,
+        }
     }
 
     /// Check if allocation would exceed memory limit
@@ -150,8 +153,11 @@ mod tests {
 
     #[test]
     fn test_memory_allocator_limit() {
-        let config =
-            MemoryConfig { use_memory64: false, max_memory_bytes: 1000, initial_memory_bytes: 100 };
+        let config = MemoryConfig {
+            use_memory64: false,
+            max_memory_bytes: 1000,
+            initial_memory_bytes: 100,
+        };
         let mut allocator = MemoryAllocator::new(config);
 
         // Try to allocate more than limit
@@ -161,8 +167,11 @@ mod tests {
 
     #[test]
     fn test_memory_usage_percent() -> Result<()> {
-        let config =
-            MemoryConfig { use_memory64: false, max_memory_bytes: 1000, initial_memory_bytes: 100 };
+        let config = MemoryConfig {
+            use_memory64: false,
+            max_memory_bytes: 1000,
+            initial_memory_bytes: 100,
+        };
         let mut allocator = MemoryAllocator::new(config);
 
         // Allocate 25% of memory

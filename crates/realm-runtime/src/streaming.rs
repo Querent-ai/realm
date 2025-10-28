@@ -3,9 +3,9 @@
 //! This module provides streaming capabilities that allow the model to generate
 //! text incrementally, providing real-time output as tokens are generated.
 
-use crate::{GenerationConfig, Model};
 use realm_core::error::Result;
 use realm_core::tokenizer::Tokenizer;
+use realm_models::Model;
 
 /// Type alias for token callback function
 #[allow(dead_code)]
@@ -19,7 +19,7 @@ pub type CompleteCallback = Box<dyn Fn() + Send + Sync>;
 pub struct StreamingInference {
     model: Model,
     tokenizer: Tokenizer,
-    config: GenerationConfig,
+    config: realm_models::GenerationConfig,
     /// Current sequence of tokens
     tokens: Vec<u32>,
     /// Maximum sequence length to prevent memory issues
@@ -31,7 +31,7 @@ impl StreamingInference {
     pub fn new(
         model: Model,
         tokenizer: Tokenizer,
-        config: GenerationConfig,
+        config: realm_models::GenerationConfig,
         max_sequence_length: Option<usize>,
     ) -> Self {
         Self {
@@ -79,7 +79,9 @@ impl StreamingInference {
         streaming_config.max_tokens = 1;
 
         // Generate the next token
-        let output = self.model.generate(&current_text, &self.tokenizer, &streaming_config)?;
+        let output = self
+            .model
+            .generate(&current_text, &self.tokenizer, &streaming_config)?;
 
         // Extract the new token by comparing lengths
         if output.len() > current_text.len() {
@@ -138,7 +140,7 @@ impl StreamingInference {
 
     /// Update generation configuration
     #[allow(dead_code)]
-    pub fn update_config(&mut self, config: GenerationConfig) {
+    pub fn update_config(&mut self, config: realm_models::GenerationConfig) {
         self.config = config;
     }
 }
@@ -159,7 +161,7 @@ impl CallbackStreamingInference {
     pub fn new(
         model: Model,
         tokenizer: Tokenizer,
-        config: GenerationConfig,
+        config: realm_models::GenerationConfig,
         max_sequence_length: Option<usize>,
     ) -> Self {
         Self {
@@ -240,7 +242,7 @@ impl CallbackStreamingInference {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GenerationConfig, TransformerConfig};
+    use realm_models::{GenerationConfig, TransformerConfig};
 
     #[test]
     fn test_streaming_inference_creation() {
@@ -253,7 +255,7 @@ mod tests {
             Vec::new(),
             realm_core::tokenizer::SpecialTokens::default(),
         );
-        let gen_config = GenerationConfig::default();
+        let gen_config = realm_models::GenerationConfig::default();
 
         let streaming = StreamingInference::new(model, tokenizer, gen_config, None);
         assert_eq!(streaming.token_count(), 0);

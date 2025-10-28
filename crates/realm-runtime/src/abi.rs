@@ -66,8 +66,8 @@ pub unsafe extern "C" fn wasmchord_load_model(
     let bytes = slice::from_raw_parts(model_bytes_ptr, model_bytes_len);
 
     // Parse GGUF (simplified - just create placeholder)
-    use std::io::Cursor;
     use realm_core::formats::gguf::GGUFParser;
+    use std::io::Cursor;
 
     let cursor = Cursor::new(bytes);
     let mut parser = GGUFParser::new(cursor);
@@ -80,7 +80,10 @@ pub unsafe extern "C" fn wasmchord_load_model(
         }
     };
 
-    let model = ModelHandle { name: "loaded_model".to_string(), meta };
+    let model = ModelHandle {
+        name: "loaded_model".to_string(),
+        meta,
+    };
 
     let mut runtime = RUNTIME.lock().unwrap();
     if let Some(ref mut rt) = *runtime {
@@ -136,7 +139,11 @@ pub unsafe extern "C" fn wasmchord_infer(
         }
     };
 
-    let options = if opts_ptr.is_null() { GenOptions::default() } else { *opts_ptr };
+    let options = if opts_ptr.is_null() {
+        GenOptions::default()
+    } else {
+        *opts_ptr
+    };
 
     // TODO: Tokenize prompt (_prompt) before creating session
     // For now, use empty token vector as placeholder

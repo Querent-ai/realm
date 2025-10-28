@@ -9,13 +9,15 @@
 
 use crate::memory64::Memory64Runtime;
 use crate::transformer::{TransformerConfig, TransformerLayer};
+use realm_core::error::{Error, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use realm_core::error::{Error, Result};
 
 #[cfg(feature = "async-prefetch")]
 use parking_lot::RwLock;
+#[cfg(feature = "async-prefetch")]
+use realm_core::{GGUFParser, TensorDesc, TensorLoader};
 #[cfg(feature = "async-prefetch")]
 use std::fs::File;
 #[cfg(feature = "async-prefetch")]
@@ -26,8 +28,6 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 #[cfg(feature = "async-prefetch")]
 use std::thread;
-#[cfg(feature = "async-prefetch")]
-use realm_core::{GGUFParser, TensorDesc, TensorLoader};
 
 #[cfg(feature = "async-prefetch")]
 type LayerData = (u32, Result<(Vec<f32>, TransformerLayer)>);
@@ -102,7 +102,10 @@ impl Memory64LayerManager {
             config,
             layer_cache: HashMap::new(),
             max_cache_size,
-            stats: CacheStats { max_cache_size, ..Default::default() },
+            stats: CacheStats {
+                max_cache_size,
+                ..Default::default()
+            },
             tensor_loader: None,
             prefetch_protected: std::collections::HashSet::new(),
             prefetch_distance: 1,
@@ -290,7 +293,10 @@ impl Memory64LayerManager {
         }
 
         if all_data.is_empty() {
-            return Err(Error::ParseError(format!("No data loaded for layer {}", layer_id)));
+            return Err(Error::ParseError(format!(
+                "No data loaded for layer {}",
+                layer_id
+            )));
         }
 
         Ok(all_data)
@@ -349,9 +355,13 @@ impl Memory64LayerManager {
 
         // Parse normalization layers
         if offset + norm_size <= data.len() {
-            layer.attention_norm.copy_from_slice(&data[offset..offset + hidden_size]);
+            layer
+                .attention_norm
+                .copy_from_slice(&data[offset..offset + hidden_size]);
             offset += hidden_size;
-            layer.ffn_norm.copy_from_slice(&data[offset..offset + hidden_size]);
+            layer
+                .ffn_norm
+                .copy_from_slice(&data[offset..offset + hidden_size]);
         }
 
         Ok(layer)
@@ -473,14 +483,22 @@ impl Memory64LayerManager {
         // Normalization layers
         if offset + norm_size <= data.len() {
             // attention_norm
-            layer.attention_norm.copy_from_slice(&data[offset..offset + hidden_size]);
+            layer
+                .attention_norm
+                .copy_from_slice(&data[offset..offset + hidden_size]);
             offset += hidden_size;
 
             // ffn_norm
-            layer.ffn_norm.copy_from_slice(&data[offset..offset + hidden_size]);
+            layer
+                .ffn_norm
+                .copy_from_slice(&data[offset..offset + hidden_size]);
         }
 
-        println!("✅ Layer {} loaded successfully ({} bytes)", layer_id, data.len());
+        println!(
+            "✅ Layer {} loaded successfully ({} bytes)",
+            layer_id,
+            data.len()
+        );
         Ok(layer)
     }
 
@@ -516,7 +534,10 @@ impl Memory64LayerManager {
             return unprotected_candidates
                 .iter()
                 .min_by_key(|&&layer_id| {
-                    self.layer_cache.get(&layer_id).map(|(_, time)| time).unwrap()
+                    self.layer_cache
+                        .get(&layer_id)
+                        .map(|(_, time)| time)
+                        .unwrap()
                 })
                 .copied();
         }

@@ -5,12 +5,13 @@
 #![allow(clippy::arc_with_non_send_sync)]
 
 use crate::{
-    ChatMessage, ChatRole, ChatTemplate, GenerationConfig, Model as RustModel, TransformerConfig,
+    realm_models::GenerationConfig, ChatMessage, ChatRole, ChatTemplate, Model as RustModel,
+    TransformerConfig,
 };
+use realm_core::{GGUFParser, TensorLoader, Tokenizer};
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::prelude::*;
-use realm_core::{GGUFParser, TensorLoader, Tokenizer};
 
 /// JavaScript-compatible Model wrapper
 ///
@@ -20,7 +21,7 @@ use realm_core::{GGUFParser, TensorLoader, Tokenizer};
 pub struct WasmModel {
     model: Arc<Mutex<RustModel>>,
     tokenizer: Arc<Tokenizer>,
-    config: Arc<Mutex<GenerationConfig>>,
+    config: Arc<Mutex<realm_models::GenerationConfig>>,
 }
 
 #[wasm_bindgen]
@@ -40,8 +41,9 @@ impl WasmModel {
             .parse_header()
             .map_err(|e| JsValue::from_str(&format!("Failed to parse GGUF: {}", e)))?;
 
-        let config_data =
-            parser.extract_config().ok_or_else(|| JsValue::from_str("Failed to extract config"))?;
+        let config_data = parser
+            .extract_config()
+            .ok_or_else(|| JsValue::from_str("Failed to extract config"))?;
         let config: TransformerConfig = config_data.into();
 
         // Check model size
@@ -95,7 +97,7 @@ impl WasmModel {
         Ok(WasmModel {
             model: Arc::new(Mutex::new(model)),
             tokenizer: Arc::new(tokenizer),
-            config: Arc::new(Mutex::new(GenerationConfig::default())),
+            config: Arc::new(Mutex::new(realm_models::GenerationConfig::default())),
         })
     }
 
@@ -109,7 +111,7 @@ impl WasmModel {
         repetition_penalty: f32,
     ) {
         let mut config = self.config.lock().unwrap();
-        *config = GenerationConfig {
+        *config = realm_models::GenerationConfig {
             max_tokens,
             temperature,
             top_p,
@@ -148,14 +150,19 @@ impl WasmModel {
         let this = JsValue::null();
 
         model_guard
-            .generate_stream(prompt, &tokenizer, &config_guard, |_token_id, token_text| {
-                let token_js = JsValue::from_str(token_text);
-                if let Ok(result) = callback.call1(&this, &token_js) {
-                    result.as_bool().unwrap_or(true)
-                } else {
-                    false
-                }
-            })
+            .generate_stream(
+                prompt,
+                &tokenizer,
+                &config_guard,
+                |_token_id, token_text| {
+                    let token_js = JsValue::from_str(token_text);
+                    if let Ok(result) = callback.call1(&this, &token_js) {
+                        result.as_bool().unwrap_or(true)
+                    } else {
+                        false
+                    }
+                },
+            )
             .map_err(|e| JsValue::from_str(&format!("Streaming generation failed: {}", e)))
     }
 
@@ -205,7 +212,7 @@ impl WasmModel {
     /// Check if GPU is available
     #[cfg(feature = "webgpu")]
     pub fn is_gpu_available() -> bool {
-        wasm_chord_gpu::GpuBackend::is_available()
+        realm_compute_gpu::GpuBackend::is_available()
     }
 
     /// Get model info
@@ -213,11 +220,31 @@ impl WasmModel {
         let model_guard = self.model.lock().unwrap();
         let info = js_sys::Object::new();
 
-        js_sys::Reflect::set(&info, &"vocab_size".into(), &model_guard.config.vocab_size.into())?;
-        js_sys::Reflect::set(&info, &"hidden_size".into(), &model_guard.config.hidden_size.into())?;
-        js_sys::Reflect::set(&info, &"num_layers".into(), &model_guard.config.num_layers.into())?;
-        js_sys::Reflect::set(&info, &"num_heads".into(), &model_guard.config.num_heads.into())?;
-        js_sys::Reflect::set(&info, &"max_seq_len".into(), &model_guard.config.max_seq_len.into())?;
+        js_sys::Reflect::set(
+            &info,
+            &"vocab_size".into(),
+            &model_guard.config.vocab_size.into(),
+        )?;
+        js_sys::Reflect::set(
+            &info,
+            &"hidden_size".into(),
+            &model_guard.config.hidden_size.into(),
+        )?;
+        js_sys::Reflect::set(
+            &info,
+            &"num_layers".into(),
+            &model_guard.config.num_layers.into(),
+        )?;
+        js_sys::Reflect::set(
+            &info,
+            &"num_heads".into(),
+            &model_guard.config.num_heads.into(),
+        )?;
+        js_sys::Reflect::set(
+            &info,
+            &"max_seq_len".into(),
+            &model_guard.config.max_seq_len.into(),
+        )?;
         js_sys::Reflect::set(&info, &"is_browser_model".into(), &true.into())?;
 
         Ok(info.into())
@@ -230,7 +257,7 @@ pub struct AsyncTokenStream {
     prompt: String,
     model: Arc<Mutex<RustModel>>,
     tokenizer: Arc<Tokenizer>,
-    config: Arc<Mutex<GenerationConfig>>,
+    config: Arc<Mutex<realm_models::GenerationConfig>>,
     tokens: Vec<String>,
     current_index: usize,
     is_complete: bool,
@@ -258,7 +285,10 @@ impl AsyncTokenStream {
 
             match model_guard.generate(&prompt, &tokenizer, &config_guard) {
                 Ok(result) => {
-                    self.tokens = result.chars().map(|c| c.to_string()).collect::<Vec<String>>();
+                    self.tokens = result
+                        .chars()
+                        .map(|c| c.to_string())
+                        .collect::<Vec<String>>();
                 }
                 Err(_) => {
                     self.tokens = vec!["Error generating tokens".to_string()];
@@ -319,10 +349,16 @@ pub fn format_chat(
     let mut messages = Vec::new();
 
     if let Some(sys) = system {
-        messages.push(ChatMessage { role: ChatRole::System, content: sys });
+        messages.push(ChatMessage {
+            role: ChatRole::System,
+            content: sys,
+        });
     }
 
-    messages.push(ChatMessage { role: ChatRole::User, content: user });
+    messages.push(ChatMessage {
+        role: ChatRole::User,
+        content: user,
+    });
 
     let template = match template_type {
         "chatml" => ChatTemplate::ChatML,

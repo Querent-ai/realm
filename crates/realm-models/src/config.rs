@@ -1,15 +1,6 @@
 //! Transformer configuration structs
 
-/// Attention implementation backend
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AttentionBackend {
-    /// Standard attention implementation
-    Standard,
-    /// Flash attention (optimized)
-    Flash,
-    /// Auto-select best available
-    Auto,
-}
+use crate::attention_stub::AttentionBackend;
 
 /// Transformer configuration
 #[derive(Debug, Clone)]

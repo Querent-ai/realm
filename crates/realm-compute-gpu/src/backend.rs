@@ -52,7 +52,7 @@ pub enum BackendType {
 
 impl BackendType {
     pub fn select() -> Self {
-        #[cfg(any(feature = "cuda", feature = "metal", feature = "webgpu"))]
+        #[cfg(feature = "gpu")]
         {
             if crate::GpuBackend::is_available() {
                 return Self::GPU;

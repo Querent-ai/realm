@@ -1,9 +1,12 @@
 //! Complete transformer model implementation
 
+use log::{debug, info, warn};
 use rand::distr::weighted::WeightedIndex;
 use rand::distr::Distribution;
 use rand::rng;
-use realm_compute_cpu::{matmul_f32_candle, CandleCpuBackend, CpuBackendTrait, NaiveCpuBackend};
+use realm_compute_cpu::{
+    CandleCpuBackend, CandleNeuralOpsBackend, CpuBackendTrait, NaiveCpuBackend,
+};
 #[cfg(any(feature = "cuda", feature = "metal"))]
 use realm_compute_gpu::CandleGpuBackend;
 #[cfg(feature = "webgpu")]
@@ -33,35 +36,13 @@ pub struct Model {
     /// Unified GPU backend for all GPU backends (WebGPU, CUDA, Metal)
     #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
     gpu: Option<Box<dyn GpuBackendTrait>>,
+    /// Candle neural network operations backend for optimized neural network operations
+    candle_backend: CandleNeuralOpsBackend,
     /// CPU backend for optimized CPU operations
     cpu_backend: Box<dyn realm_compute_cpu::CpuBackendTrait>,
     /// Memory64 model for large models (>4GB) with on-demand layer loading
     #[cfg(feature = "memory64")]
     pub memory64_model: Option<crate::memory64_layer_manager::Memory64Model>,
-}
-
-/// RMS Normalization
-/// Input: [seq_len, hidden_size] flattened
-fn rms_norm(input: &[f32], weight: &[f32], eps: f32, hidden_size: usize) -> Vec<f32> {
-    let seq_len = input.len() / hidden_size;
-    let mut output = vec![0.0; input.len()];
-
-    for seq in 0..seq_len {
-        let offset = seq * hidden_size;
-        let slice = &input[offset..offset + hidden_size];
-
-        // Compute RMS: sqrt(mean(x^2) + eps)
-        let sum_sq: f32 = slice.iter().map(|&x| x * x).sum();
-        let mean = sum_sq / hidden_size as f32;
-        let rms = (mean + eps).sqrt();
-
-        // Normalize and scale by weight
-        for i in 0..hidden_size {
-            output[offset + i] = (slice[i] / rms) * weight[i];
-        }
-    }
-
-    output
 }
 
 /// Transpose a matrix stored in row-major order
@@ -75,57 +56,6 @@ fn transpose_matrix(matrix: &[f32], rows: usize, cols: usize) -> Vec<f32> {
         }
     }
     transposed
-}
-
-/// Compute basic stats for a slice of f32s
-fn tensor_stats(name: &str, data: &[f32]) {
-    let len = data.len();
-    let mut sum = 0.0f64;
-    let mut sum_sq = 0.0f64;
-    let mut nan_count = 0usize;
-    let mut inf_count = 0usize;
-    let mut zero_count = 0usize;
-
-    for &v in data {
-        if v.is_nan() {
-            nan_count += 1;
-            continue;
-        }
-        if v.is_infinite() {
-            inf_count += 1;
-            continue;
-        }
-        if v == 0.0 {
-            zero_count += 1;
-        }
-        sum += v as f64;
-        sum_sq += (v as f64) * (v as f64);
-    }
-
-    let mean = if len > 0 { sum / (len as f64) } else { 0.0 };
-    let variance = if len > 0 {
-        (sum_sq / (len as f64)) - (mean * mean)
-    } else {
-        0.0
-    };
-    let std = variance.max(0.0).sqrt();
-
-    eprintln!(
-        "STATS '{}' len={} nan={} inf={} zeros={} mean={:.6} std={:.6} min={:.6} max={:.6}",
-        name,
-        len,
-        nan_count,
-        inf_count,
-        zero_count,
-        mean,
-        std,
-        data.iter().copied().fold(f32::INFINITY, f32::min),
-        data.iter().copied().fold(f32::NEG_INFINITY, f32::max)
-    );
-
-    // Print a small preview
-    let preview: Vec<String> = data.iter().take(8).map(|v| format!("{:.6}", v)).collect();
-    eprintln!("  preview: {:?}", preview);
 }
 
 /// Naive matmul reference (row-major)
@@ -142,48 +72,6 @@ fn matmul_naive(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> 
         }
     }
     r
-}
-
-/// Test matmul implementation for small sizes and random values
-#[allow(dead_code)]
-fn matmul_self_test() -> Result<()> {
-    use rand::Rng;
-    let mut rng = rand::rng();
-
-    let tests = vec![(2, 3, 4), (4, 4, 4), (3, 5, 2)];
-    for (m, k, n) in tests {
-        let mut a = vec![0.0f32; m * k];
-        let mut b = vec![0.0f32; k * n];
-        for v in &mut a {
-            *v = rng.random_range(-1.0..1.0);
-        }
-        for v in &mut b {
-            *v = rng.random_range(-1.0..1.0);
-        }
-
-        let mut out = vec![0.0f32; m * n];
-        matmul_f32_candle(&a, &b, &mut out, m, k, n)?;
-
-        let expected = matmul_naive(&a, &b, m, k, n);
-
-        // compute max absolute diff
-        let mut max_diff = 0.0f32;
-        for idx in 0..(m * n) {
-            let d = (out[idx] - expected[idx]).abs();
-            if d > max_diff {
-                max_diff = d;
-            }
-        }
-        eprintln!("MATMUL TEST {}x{}x{} max_diff={:.6}", m, k, n, max_diff);
-        if max_diff > 1e-3 {
-            // tolerance for float rounding
-            return Err(realm_core::error::Error::Runtime(format!(
-                "Matmul mismatch max_diff={:.6}",
-                max_diff
-            )));
-        }
-    }
-    Ok(())
 }
 
 // Helper function to manually compute a single logit for verification
@@ -233,6 +121,7 @@ impl Model {
             config,
             #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
             gpu: Self::create_gpu_backend(),
+            candle_backend: CandleNeuralOpsBackend::new(),
             cpu_backend: Self::create_cpu_backend(),
             #[cfg(feature = "memory64")]
             memory64_model: None,
@@ -245,7 +134,7 @@ impl Model {
         {
             // In WASM environment, use Naive CPU backend directly
             // Candle CPU backend may not work in WASM
-            eprintln!("ℹ️  WASM: Using Naive CPU backend");
+            info!("WASM: Using Naive CPU backend");
             return Box::new(NaiveCpuBackend);
         }
 
@@ -254,11 +143,11 @@ impl Model {
             // On non-WASM platforms, try Candle first
             match CandleCpuBackend::new() {
                 Ok(candle_backend) => {
-                    eprintln!("✅ Candle CPU backend initialized successfully");
+                    info!("Candle CPU backend initialized successfully");
                     Box::new(candle_backend)
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Candle CPU backend initialization failed: {}, falling back to Naive CPU backend", e);
+                    warn!("Candle CPU backend initialization failed: {}, falling back to Naive CPU backend", e);
                     Box::new(NaiveCpuBackend)
                 }
             }
@@ -274,11 +163,11 @@ impl Model {
         {
             match CandleGpuBackend::new() {
                 Ok(candle_gpu) => {
-                    eprintln!("✅ Candle GPU backend (CUDA/Metal) initialized successfully");
+                    info!("Candle GPU backend (CUDA/Metal) initialized successfully");
                     return Some(Box::new(candle_gpu));
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Candle GPU backend initialization failed: {}", e);
+                    warn!("Candle GPU backend initialization failed: {}", e);
                 }
             }
         }
@@ -289,19 +178,19 @@ impl Model {
             if GpuBackend::is_available() {
                 match pollster::FutureExt::block_on(GpuBackend::new()) {
                     Ok(gpu) => {
-                        eprintln!("✅ WebGPU backend initialized successfully");
+                        info!("WebGPU backend initialized successfully");
                         return Some(Box::new(gpu));
                     }
                     Err(e) => {
-                        eprintln!("⚠️  WebGPU initialization failed: {}", e);
+                        warn!("WebGPU initialization failed: {}", e);
                     }
                 }
             } else {
-                eprintln!("ℹ️  WebGPU not available");
+                info!("WebGPU not available");
             }
         }
 
-        eprintln!("⚠️  No GPU backend available, using CPU");
+        warn!("No GPU backend available, using CPU");
         None
     }
 
@@ -347,11 +236,6 @@ impl Model {
     ) -> Result<()> {
         use realm_core::error::Error;
 
-        // Run focused debugging (disabled for performance)
-        // eprintln!("🧪 Running focused debugging...");
-        // super::focused_debug::run_focused_debugging()?;
-        // eprintln!("✅ All focused debugging tests passed!");
-
         // Check if we should use Memory64 for large models
         #[cfg(feature = "memory64")]
         {
@@ -360,15 +244,15 @@ impl Model {
                 let total_size: usize = meta.tensors.iter().map(|t| t.size_bytes).sum();
                 let size_gb = total_size as f64 / 1_000_000_000.0;
 
-                println!(
-                    "📊 Model size estimate: {:.2} GB ({} bytes)",
+                info!(
+                    "Model size estimate: {:.2} GB ({} bytes)",
                     size_gb, total_size
                 );
 
                 // Use Memory64 for models >3GB
                 if total_size > 3_000_000_000 {
-                    println!(
-                        "🎯 Large model detected - using Memory64 for on-demand layer loading"
+                    info!(
+                        "Large model detected - using Memory64 for on-demand layer loading"
                     );
 
                     // Create Memory64 loader and load the model
@@ -382,8 +266,8 @@ impl Model {
                     self.output_norm.copy_from_slice(&mem64_model.output_norm);
                     self.lm_head.copy_from_slice(&mem64_model.lm_head);
 
-                    println!(
-                        "✅ Embeddings and norms loaded ({:.2} MB)",
+                    info!(
+                        "Embeddings and norms loaded ({:.2} MB)",
                         (self.token_embeddings.len() * 4
                             + self.output_norm.len() * 4
                             + self.lm_head.len() * 4) as f64
@@ -393,9 +277,9 @@ impl Model {
                     // Store Memory64Model for on-demand layer access
                     self.memory64_model = Some(mem64_model);
 
-                    println!("✅ Memory64 model loaded - layers will be accessed on-demand");
-                    println!(
-                        "💾 Memory savings: ~{:.2} GB (layers not loaded into RAM)",
+                    info!("Memory64 model loaded - layers will be accessed on-demand");
+                    info!(
+                        "Memory savings: ~{:.2} GB (layers not loaded into RAM)",
                         (total_size
                             - (self.token_embeddings.len() * 4
                                 + self.output_norm.len() * 4
@@ -410,13 +294,13 @@ impl Model {
         }
 
         // Standard loading path for smaller models
-        println!("📦 Using standard loading (all weights in RAM)");
+        info!("Using standard loading (all weights in RAM)");
 
         // Load token embeddings - try different tensor names
         let embedding_data = if let Ok(data) =
             tensor_loader.load_tensor("token_embd.weight", parser)
         {
-            println!("✅ Found 'token_embd.weight'");
+            debug!("Found 'token_embd.weight'");
             data
         } else if let Ok(data) = tensor_loader.load_tensor("model.embed_tokens.weight", parser) {
             println!("✅ Found 'model.embed_tokens.weight'");
@@ -429,37 +313,20 @@ impl Model {
         };
 
         {
-            // eprintln!("LOADED 'token_embd.weight' raw.len={}", embedding_data.len());
-            // tensor_stats("token_embd.weight (raw)", embedding_data);
-            // eprintln!(
-            //     "  Raw preview (first 20): {:?}",
-            //     &embedding_data[..20.min(embedding_data.len())]
-            // );
-
             println!(
                 "🔍 Loading token embeddings as-is: [vocab_size={}, hidden_size={}]",
                 self.config.vocab_size, self.config.hidden_size
             );
             // GGUF stores token_embd.weight as [vocab_size, hidden_size]
-            // Our embedding lookup (line 1342) correctly handles this format
+            // Our embedding lookup correctly handles this format
             // by gathering row token_id from the matrix
             self.token_embeddings.copy_from_slice(embedding_data);
-            // eprintln!(
-            //     "  Embeddings preview (first 20): {:?}",
-            //     &self.token_embeddings[..20.min(self.token_embeddings.len())]
-            // );
-            // tensor_stats("token_embd.weight (model)", &self.token_embeddings);
         }
 
         // Load output norm
         if let Ok(norm_data) = tensor_loader.load_tensor("output_norm.weight", parser) {
-            // eprintln!("LOADED 'output_norm.weight' raw.len={}", norm_data.len());
-            // tensor_stats("output_norm.weight (raw)", norm_data);
-
             // Load raw weights without arbitrary scaling
             self.output_norm.copy_from_slice(norm_data);
-
-            // tensor_stats("output_norm.weight (model)", &self.output_norm);
             println!("✅ Output norm loaded");
         } else {
             eprintln!("WARN: Failed to load output_norm.weight");
@@ -468,8 +335,6 @@ impl Model {
         // Load LM head - try different tensor names
         if let Ok(lm_head_data) = tensor_loader.load_tensor("output.weight", parser) {
             println!("✅ Found 'output.weight'");
-            // eprintln!("LOADED 'output.weight' raw.len={}", lm_head_data.len());
-            // tensor_stats("output.weight (raw)", lm_head_data);
 
             // DEBUG: Check raw bytes for token 29892 before dequantization
             if std::env::var("DEBUG_TRACE").is_ok() {
@@ -492,7 +357,6 @@ impl Model {
             // GGUF stores output.weight as [vocab_size, hidden_size]
             // Store as-is for matmul_transposed
             self.lm_head.copy_from_slice(lm_head_data);
-            // tensor_stats("output.weight (model)", &self.lm_head);
             println!(
                 "✅ LM head loaded (shape: [vocab_size={}, hidden_size={}]) for transposed matmul",
                 self.config.vocab_size, self.config.hidden_size
@@ -532,12 +396,9 @@ impl Model {
             }
         } else if let Ok(lm_head_data) = tensor_loader.load_tensor("lm_head.weight", parser) {
             println!("✅ Found 'lm_head.weight'");
-            eprintln!("LOADED 'lm_head.weight' raw.len={}", lm_head_data.len());
-            tensor_stats("lm_head.weight (raw)", lm_head_data);
             // GGUF stores lm_head.weight as [vocab_size, hidden_size]
             // Store as-is for matmul_transposed
             self.lm_head.copy_from_slice(lm_head_data);
-            tensor_stats("lm_head.weight (model)", &self.lm_head);
             println!("✅ LM head loaded for transposed matmul");
 
             // DEBUG: Print LM head weights for token 29892 (the problematic token)
@@ -556,15 +417,9 @@ impl Model {
             }
         } else if let Ok(lm_head_data) = tensor_loader.load_tensor("model.lm_head.weight", parser) {
             println!("✅ Found 'model.lm_head.weight'");
-            eprintln!(
-                "LOADED 'model.lm_head.weight' raw.len={}",
-                lm_head_data.len()
-            );
-            tensor_stats("model.lm_head.weight (raw)", lm_head_data);
             // GGUF stores model.lm_head.weight as [vocab_size, hidden_size]
             // Store as-is for matmul_transposed
             self.lm_head.copy_from_slice(lm_head_data);
-            tensor_stats("model.lm_head.weight (model)", &self.lm_head);
             println!("✅ LM head loaded for transposed matmul");
 
             // DEBUG: Print LM head weights for token 29892 (the problematic token)
@@ -590,7 +445,6 @@ impl Model {
                 self.config.vocab_size,
             );
             self.lm_head.copy_from_slice(&lm_head_transposed);
-            tensor_stats("lm_head (from embeddings, transposed)", &self.lm_head);
             println!("✅ LM head loaded from token embeddings (weight tying)");
         }
 
@@ -793,6 +647,7 @@ impl Model {
                     hidden_states,
                     kv_cache,
                     position,
+                    &self.candle_backend,
                     Some(self.cpu_backend.as_ref()),
                     #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
                     gpu,
@@ -812,6 +667,7 @@ impl Model {
             hidden_states,
             kv_cache,
             position,
+            &self.candle_backend,
             Some(self.cpu_backend.as_ref()),
             #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
             gpu,
@@ -933,13 +789,14 @@ impl Model {
             }
         }
 
-        // 3. Final normalization
-        hidden_states = rms_norm(
+        // 3. Final normalization using Candle
+        hidden_states = self.candle_backend.rms_norm(
             &hidden_states,
             &self.output_norm,
             self.config.rms_norm_eps,
+            seq_len,
             self.config.hidden_size,
-        );
+        )?;
 
         // DEBUG: Validate hidden states after final RMSNorm
         if debug {
@@ -1372,7 +1229,7 @@ impl Model {
         use realm_core::error::Error;
 
         // Create logits processor with configured sampling strategy
-        let mut logits_processor = crate::sampling::LogitsProcessor::with_params(
+        let mut logits_processor = crate::LogitsProcessor::with_params(
             42, // seed - could be made configurable
             temperature as f64,
             top_p as f64,
@@ -1405,12 +1262,26 @@ impl Model {
 
         // Get logits for the last prompt token
         let logits = prefill_logits[(prefill_logits.len() - self.config.vocab_size)..].to_vec();
+        
+        // Debug: show top 10 logits before sampling
+        let mut indexed_logits: Vec<(usize, f32)> = logits.iter().copied().enumerate().collect();
+        indexed_logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        eprintln!("🔍 Top 10 logits before sampling:");
+        for (idx, (token_id, logit)) in indexed_logits.iter().take(10).enumerate() {
+            let token_text = tokenizer.decode(&[*token_id as u32], false).unwrap_or_default();
+            eprintln!("  {}: token_id={} logit={:.4} text='{}'", idx, token_id, logit, token_text);
+        }
 
         // Sample first generated token
         let mut last_logits = logits.clone();
         let next = logits_processor
             .sample(&mut last_logits)
             .map_err(Error::ParseError)?;
+        
+        // Debug: show first sampled token
+        eprintln!("🔍 First token sampled: {} (text: '{}')", next, 
+                 tokenizer.decode(&[next], false).unwrap_or_default());
+        
         tokens.push(next);
 
         // DECODE PHASE: Generate tokens one at a time
@@ -1479,7 +1350,7 @@ impl Model {
         use realm_core::error::Error;
 
         // Create logits processor with configured sampling strategy
-        let mut logits_processor = crate::sampling::LogitsProcessor::with_params(
+        let mut logits_processor = crate::LogitsProcessor::with_params(
             42, // seed - could be made configurable
             temperature as f64,
             top_p as f64,

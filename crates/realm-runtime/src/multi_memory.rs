@@ -29,7 +29,12 @@ pub struct MemoryRegionConfig {
 
 impl MemoryRegionConfig {
     pub fn new(region: MemoryRegion, initial_size: usize, max_size: usize, growable: bool) -> Self {
-        Self { region, initial_size, max_size, growable }
+        Self {
+            region,
+            initial_size,
+            max_size,
+            growable,
+        }
     }
 }
 
@@ -42,7 +47,11 @@ struct MemoryRegionData {
 
 impl MemoryRegionData {
     fn new(config: MemoryRegionConfig) -> Self {
-        Self { config, allocated: 0, used: 0 }
+        Self {
+            config,
+            allocated: 0,
+            used: 0,
+        }
     }
 
     fn can_allocate(&self, size: usize) -> bool {
@@ -150,7 +159,9 @@ impl MultiMemoryLayout {
 
     /// Check if allocation is possible in a region
     pub fn can_allocate(&self, region: MemoryRegion, size: usize) -> bool {
-        self.region_index(region).map(|idx| self.regions[idx].can_allocate(size)).unwrap_or(false)
+        self.region_index(region)
+            .map(|idx| self.regions[idx].can_allocate(size))
+            .unwrap_or(false)
     }
 
     /// Get memory usage for a region
@@ -165,8 +176,11 @@ impl MultiMemoryLayout {
     pub fn total_usage(&self) -> (usize, usize, f32) {
         let total_used: usize = self.regions.iter().map(|r| r.used).sum();
         let total_max: usize = self.regions.iter().map(|r| r.config.max_size).sum();
-        let usage_percent =
-            if total_max > 0 { (total_used as f32 / total_max as f32) * 100.0 } else { 0.0 };
+        let usage_percent = if total_max > 0 {
+            (total_used as f32 / total_max as f32) * 100.0
+        } else {
+            0.0
+        };
         (total_used, total_max, usage_percent)
     }
 
@@ -182,7 +196,14 @@ impl MultiMemoryLayout {
     pub fn stats(&self) -> Vec<(MemoryRegion, usize, usize, f32)> {
         self.regions
             .iter()
-            .map(|r| (r.config.region, r.used, r.config.max_size, r.usage_percent()))
+            .map(|r| {
+                (
+                    r.config.region,
+                    r.used,
+                    r.config.max_size,
+                    r.usage_percent(),
+                )
+            })
             .collect()
     }
 }
@@ -269,7 +290,10 @@ mod tests {
         layout.allocate(MemoryRegion::KVCache, 256 * 1024 * 1024)?; // 256MB
 
         let (total_used, total_max, _) = layout.total_usage();
-        assert_eq!(total_used, 1024 * 1024 * 1024 + 512 * 1024 * 1024 + 256 * 1024 * 1024);
+        assert_eq!(
+            total_used,
+            1024 * 1024 * 1024 + 512 * 1024 * 1024 + 256 * 1024 * 1024
+        );
         assert!(total_max > 0);
 
         Ok(())
@@ -303,8 +327,10 @@ mod tests {
         assert_eq!(stats.len(), 4);
 
         // Find weights stat
-        let weights_stat =
-            stats.iter().find(|(region, _, _, _)| *region == MemoryRegion::Weights).unwrap();
+        let weights_stat = stats
+            .iter()
+            .find(|(region, _, _, _)| *region == MemoryRegion::Weights)
+            .unwrap();
 
         assert_eq!(weights_stat.1, 1024 * 1024 * 1024); // used
         assert!(weights_stat.3 > 0.0); // percentage

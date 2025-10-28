@@ -10,6 +10,7 @@ description = "CPU compute backends for Realm.ai"
 [features]
 default = []
 simd = []
+gpu = []
 
 [dependencies]
 realm-core = { workspace = true }
@@ -23,12 +24,4 @@ candle-core = { workspace = true }
 candle-nn = { workspace = true }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
-
-[[bench]]
-name = "gemm"
-harness = false
-
-[[bench]]
-name = "fused_kernels"
-harness = false
+criterion = { workspace = true }

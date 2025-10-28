@@ -5,12 +5,12 @@
 
 use crate::memory64::{Memory64Runtime, MemoryLayout};
 use crate::transformer::{Model, TransformerConfig};
-use std::io::{Read, Seek};
 use realm_core::{
     error::{Error, Result},
     formats::gguf::GGUFParser,
     tensor_loader::TensorLoader,
 };
+use std::io::{Read, Seek};
 
 /// Memory64-aware model loader
 pub struct Memory64ModelLoader {
@@ -30,7 +30,12 @@ impl Memory64ModelLoader {
         // Use Memory64 for models >3GB
         let use_memory64 = total_size > 3_000_000_000;
 
-        Self { runtime: None, config, total_size, use_memory64 }
+        Self {
+            runtime: None,
+            config,
+            total_size,
+            use_memory64,
+        }
     }
 
     /// Initialize Memory64 runtime if needed
@@ -134,6 +139,8 @@ impl Memory64ModelExt for Model {
     fn get_layer_weights(&self, _layer_id: u32) -> Result<Vec<f32>> {
         // This would be implemented to use Memory64LayerLoader
         // when Memory64 is enabled
-        Err(Error::ParseError("Memory64 layer loading not yet implemented".to_string()))
+        Err(Error::ParseError(
+            "Memory64 layer loading not yet implemented".to_string(),
+        ))
     }
 }

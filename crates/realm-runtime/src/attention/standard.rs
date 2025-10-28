@@ -24,7 +24,9 @@ pub struct StandardAttention {
 impl StandardAttention {
     /// Create a new standard attention instance
     pub fn new() -> Self {
-        Self { config: StandardAttentionConfig::default() }
+        Self {
+            config: StandardAttentionConfig::default(),
+        }
     }
 
     /// Create with custom configuration
@@ -109,8 +111,9 @@ impl StandardAttention {
                     }
 
                     // Find max for numerical stability
-                    let max_score =
-                        scores[row_start..row_end].iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                    let max_score = scores[row_start..row_end]
+                        .iter()
+                        .fold(f32::NEG_INFINITY, |a, &b| a.max(b));
 
                     // Compute exp and sum
                     let mut sum = 0.0f32;
@@ -190,11 +193,19 @@ impl Attention for StandardAttention {
         let scale = self.config.get_softmax_scale(head_dim);
 
         // 1. Compute Q @ K^T / sqrt(d)
-        let mut scores =
-            self.compute_scores(q, k, batch_size, num_heads, seq_len_q, seq_len_k, head_dim, scale);
+        let mut scores = self.compute_scores(
+            q, k, batch_size, num_heads, seq_len_q, seq_len_k, head_dim, scale,
+        );
 
         // 2. Apply softmax (with optional mask)
-        self.apply_softmax(&mut scores, mask, batch_size, num_heads, seq_len_q, seq_len_k);
+        self.apply_softmax(
+            &mut scores,
+            mask,
+            batch_size,
+            num_heads,
+            seq_len_q,
+            seq_len_k,
+        );
 
         // 3. Multiply by V
         let output = self.apply_attention_to_values(
@@ -248,7 +259,9 @@ mod tests {
         let v = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]; // 2x4
 
         let output = attn
-            .forward(&q, &k, &v, None, batch_size, num_heads, seq_len, seq_len, head_dim)
+            .forward(
+                &q, &k, &v, None, batch_size, num_heads, seq_len, seq_len, head_dim,
+            )
             .unwrap();
 
         assert_eq!(output.len(), batch_size * num_heads * seq_len * head_dim);
@@ -278,7 +291,17 @@ mod tests {
         ];
 
         let output = attn
-            .forward(&q, &k, &v, Some(&mask), batch_size, num_heads, seq_len, seq_len, head_dim)
+            .forward(
+                &q,
+                &k,
+                &v,
+                Some(&mask),
+                batch_size,
+                num_heads,
+                seq_len,
+                seq_len,
+                head_dim,
+            )
             .unwrap();
 
         assert_eq!(output.len(), batch_size * num_heads * seq_len * head_dim);

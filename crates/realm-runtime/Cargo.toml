@@ -10,6 +10,9 @@ description = "Host runtime with Memory64 and Candle acceleration for Realm.ai"
 [features]
 default = []
 memory64 = []
+memory64-wasm = []
+memory64-host = []
+async-prefetch = []
 cuda = ["realm-compute-gpu/cuda", "realm-models/cuda", "candle-core/cuda"]
 metal = ["realm-compute-gpu/metal", "realm-models/metal", "candle-core/metal"]
 webgpu = ["realm-compute-gpu/webgpu", "realm-models/webgpu"]
@@ -30,3 +33,4 @@ candle-core = { workspace = true }
 candle-nn = { workspace = true }
 parking_lot = "0.12"
 memmap2 = "0.9"
+rand = { workspace = true }

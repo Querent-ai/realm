@@ -1,317 +1,244 @@
 # Realm
 
-> **Inference Orchestration Runtime for Multi-Tenant LLM Deployments**
-
-[![CI](https://github.com/querent-ai/realm/workflows/CI/badge.svg)](https://github.com/querent-ai/realm/actions)
+[![CI](https://github.com/realm-ai/realm/workflows/CI/badge.svg)](https://github.com/realm-ai/realm/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue)](LICENSE)
 [![Rust: 1.75+](https://img.shields.io/badge/rust-1.75%2B-orange)](https://www.rust-lang.org)
 
-Realm is an **inference orchestration system** that enables 16 isolated customers to share a single GPU efficiently. By orchestrating inference through WASM sandboxes and native compute, Realm achieves **16x density** while maintaining security and performance guarantees for each tenant.
+Multi-tenant LLM inference runtime using WASM sandboxing and native GPU acceleration.
 
-## 🎯 Quick Start
+Realm splits inference into two layers: WASM modules handle orchestration in isolated sandboxes, while a native runtime provides GPU compute and >4GB memory access via Memory64. This enables running multiple tenants on a single GPU with strong security boundaries.
 
-### Run the Paris Example
+## Architecture
 
-```bash
-# Clone and build
-git clone https://github.com/realm-ai/realm.git
-cd realm
-cargo build --release
-
-# Run simulation mode (validates architecture)
-./target/release/paris-generation
-
-# Run with real TinyLlama model
-./target/release/paris-generation models/tinyllama-1.1b.Q4_K_M.gguf
+```
+┌─────────────────────────────────────────┐
+│ realm-wasm (WASM Module)                │  ← Customer code runs here
+│ • Token orchestration                   │  ← Sandboxed, isolated
+│ • Inference coordination                │
+└──────────────┬──────────────────────────┘
+               │ Host function calls (candle_matmul, memory64_load_layer)
+┌──────────────▼──────────────────────────┐
+│ realm-runtime (Native Binary)           │  ← Shared across tenants
+│ • Memory64: Large model storage         │  ← GPU acceleration
+│ • Candle GPU backend (CUDA/Metal)       │  ← Multi-realm isolation
+│ • Wasmtime: WASM host                   │
+└─────────────────────────────────────────┘
 ```
 
-**Expected output:**
-```
-🗼 Realm Paris Generation Example
-   Question: What is the capital of France?
-   Expected: Paris
+**Key Properties:**
+- **Isolation**: Each tenant runs in a separate WASM sandbox
+- **Performance**: All tenants share one GPU through host function calls
+- **Scalability**: 8-16 tenants per GPU (vs 1 for traditional approaches)
+- **Memory Efficiency**: Models >4GB work via Memory64 lazy loading
 
-✨ Response: Paris
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed technical design.
 
-✅ SUCCESS: Model correctly identified Paris as the capital of France!
-```
-
-## 🏗️ Inference Orchestration Architecture
-
-### How Realm Orchestrates Inference Across Tenants
-
-```mermaid
-graph TB
-    subgraph "Tenant Layer (Isolated WASM Sandboxes)"
-        T1["🔒 Tenant 1<br/>WASM (42KB)<br/>State (52KB)"]
-        T2["🔒 Tenant 2<br/>WASM (42KB)<br/>State (52KB)"]
-        T3["🔒 Tenant 3<br/>WASM (42KB)<br/>State (52KB)"]
-        T16["🔒 Tenant 16<br/>WASM (42KB)<br/>State (52KB)"]
-
-        T1 -.-> T2
-        T2 -.-> T3
-        T3 -.-> T16
-    end
-
-    subgraph "Host Runtime (Shared Infrastructure)"
-        subgraph "Wasmtime (WASM Host)"
-            HF["Host Functions<br/>• candle_matmul<br/>• memory64_load_layer<br/>• memory64_read"]
-        end
-
-        subgraph "Memory64 Storage"
-            M64["Model Weights (4.3GB)<br/>📦 Shared, Read-Only<br/>On-demand Layer Loading"]
-        end
-
-        subgraph "Compute Backends"
-            GPU["🎮 GPU Backend<br/>CUDA / Metal / WebGPU"]
-            CPU["💻 CPU Backend<br/>SIMD / Candle"]
-        end
-    end
-
-    T1 -->|"generate('Hello')"| HF
-    T2 -->|"generate('Hi')"| HF
-    T3 -->|"generate('Hey')"| HF
-    T16 -->|"generate('Bonjour')"| HF
-
-    HF -->|Load Layer| M64
-    HF -->|Compute| GPU
-    HF -->|Fallback| CPU
-
-    M64 -.->|Layer Data| HF
-    GPU -.->|Result| HF
-    CPU -.->|Result| HF
-
-    HF -.->|Response| T1
-    HF -.->|Response| T2
-    HF -.->|Response| T3
-    HF -.->|Response| T16
-
-    style T1 fill:#e1f5ff,stroke:#0288d1
-    style T2 fill:#e1f5ff,stroke:#0288d1
-    style T3 fill:#e1f5ff,stroke:#0288d1
-    style T16 fill:#e1f5ff,stroke:#0288d1
-    style HF fill:#fff3e0,stroke:#f57c00
-    style M64 fill:#f3e5f5,stroke:#7b1fa2
-    style GPU fill:#e8f5e9,stroke:#388e3c
-    style CPU fill:#e8f5e9,stroke:#388e3c
-```
-
-**Orchestration Benefits:**
-- 🎯 **Efficient Resource Scheduling:** 16 tenants share GPU compute without interference
-- 📊 **Dynamic Memory Management:** On-demand model layer loading via Memory64
-- 🔒 **Isolated Inference Execution:** Each tenant runs in a secure WASM sandbox
-- ⚡ **95% GPU Utilization:** vs 60% traditional = **16x density improvement**
-
-### Why This Architecture?
-
-Traditional LLM inference faces three critical orchestration challenges:
-
-#### 1. **Inefficient Resource Utilization**
-- **Problem:** Each tenant gets a dedicated VM/container with its own model copy (4.3GB)
-- **Realm's Solution:** WASM sandboxes (42KB) orchestrate inference through shared host functions
-- **Impact:** 16 tenants fit in memory that previously held 1 tenant
-
-#### 2. **GPU Under-utilization**
-- **Problem:** Single-tenant inference leaves GPU idle 40% of the time during I/O and memory ops
-- **Realm's Solution:** Orchestrator schedules inference across 16 tenants, keeping GPU busy
-- **Impact:** 95% GPU utilization through intelligent work distribution
-
-#### 3. **Security vs Efficiency Trade-off**
-- **Problem:** VMs provide isolation but waste resources; shared processes risk data leakage
-- **Realm's Solution:** WASM provides lightweight isolation enforced at the instruction level
-- **Impact:** Security guarantees without the overhead of traditional virtualization
-
-**The Result:** An orchestration layer that treats inference as a schedulable, isolated workload—like Kubernetes for inference, but at the WASM sandbox level.
-
-See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed design.
-
-## 🚀 Orchestration Capabilities
-
-### Inference Workload Management
-- ✅ **Tenant Isolation** - Each inference session runs in a secure WASM sandbox
-- ✅ **Resource Scheduling** - Orchestrates 16 tenants across shared GPU compute
-- ✅ **Dynamic Memory Allocation** - Memory64 enables on-demand model layer loading
-- ✅ **Streaming Generation** - Token-by-token inference with KV cache optimization
-
-### Model & Backend Support
-- ✅ **GGUF Models** - Orchestrate inference for quantized models (Q4_K, Q5_K, Q6_K, Q8_K)
-- ✅ **Multi-Backend Execution** - Schedule workloads across CUDA, Metal, WebGPU, or CPU
-- ✅ **Large Model Support** - Orchestrate models >4GB through Memory64 architecture
-
-### Production Features
-- ✅ **Zero-Copy Model Sharing** - All tenants reference the same model weights
-- ✅ **Fair Scheduling** - No tenant can monopolize GPU resources
-- ✅ **Failure Isolation** - One tenant's crash doesn't affect others
-
-## 📦 Repository Structure
+## Repository Structure
 
 ```
 realm/
 ├── crates/
-│   ├── realm-core/          # Model loading (GGUF), tokenization, quantization
-│   ├── realm-models/        # Inference primitives (attention, FFN, sampling)
-│   ├── realm-compute-cpu/   # CPU execution backends (SIMD, Candle)
-│   ├── realm-compute-gpu/   # GPU execution backends (CUDA, Metal, WebGPU)
-│   ├── realm-runtime/       # Orchestration runtime (Memory64, Wasmtime, host functions)
-│   └── realm-wasm/          # WASM inference orchestrator (tenant-side logic)
-├── examples/                # Orchestration examples
-│   ├── paris-generation/    # End-to-end orchestrated inference demo
-│   ├── simple-realm-test/   # Basic orchestration validation
-│   ├── multi-tenant/        # 16-tenant orchestration example
-│   └── end-to-end-inference/# Complete inference pipeline
-├── models/                  # GGUF model files (symlinks to model storage)
-└── docs/                    # Orchestration architecture & design docs
+│   ├── realm-core/          # GGUF parsing, tokenization, tensor ops
+│   ├── realm-models/        # Transformer architecture (attention, FFN)
+│   ├── realm-compute-cpu/   # CPU backends (SIMD, Candle CPU)
+│   ├── realm-compute-gpu/   # GPU backends (CUDA, Metal, WebGPU)
+│   ├── realm-runtime/       # Host runtime (Memory64, Wasmtime)
+│   └── realm-wasm/          # WASM orchestrator module
+├── cli/                     # Command-line tool
+├── server/                  # HTTP API server
+├── sdks/
+│   ├── js/                  # Node.js SDK (N-API)
+│   ├── python/              # Python bindings (PyO3)
+│   └── rust/                # Rust library
+├── examples/                # Usage examples
+└── docs/                    # Technical documentation
 ```
 
-## 🛠️ Building
+## Building
 
 ### Prerequisites
 
-- **Rust 1.75+**
-- **wasm-pack** (for WASM builds)
-- **CUDA 11.8+** (optional, for NVIDIA GPUs)
-- **macOS 12.0+** (optional, for Metal/Apple Silicon)
+- Rust 1.75 or later
+- For GPU support:
+  - CUDA 11.8+ (NVIDIA)
+  - Metal SDK (Apple Silicon)
+- For WASM: `wasm-pack` and `wasm32-unknown-unknown` target
 
 ```bash
 # Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Install WASM tooling
+# Install WASM target
 rustup target add wasm32-unknown-unknown
+
+# Install wasm-pack
 curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 ```
 
-### Build Commands
+### Build All Crates
 
 ```bash
-# Build all crates (native)
+# Build native runtime and all crates
 cargo build --release
 
 # Build WASM module
 cd crates/realm-wasm
 wasm-pack build --target web
+```
 
-# Build with CUDA support
+### Build with GPU Support
+
+```bash
+# CUDA
 cargo build --release --features cuda
 
-# Build with Metal support (macOS)
+# Metal (macOS/iOS)
 cargo build --release --features metal
 ```
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # Run all tests
-cargo test --workspace
+cargo test
 
-# Run simple integration test
-cargo run --release --bin simple-realm-test
+# Run with specific backend
+cargo test --features cuda
 
-# Run multi-tenant example
-cargo run --release --bin multi-tenant
+# Run simple architecture test
+cargo run --bin simple-realm-test
 
-# Run with real model
-cargo run --release --bin paris-generation models/tinyllama-1.1b.Q4_K_M.gguf
+# Run benchmarks
+cargo bench
 ```
 
-## 📖 Examples
+## Development
 
-### 1. Simple Integration Test
-
-Validates basic WASM ↔ Host integration:
+### Project Setup
 
 ```bash
-cargo run --release --bin simple-realm-test
+# Clone repository
+git clone https://github.com/realm-ai/realm.git
+cd realm
+
+# Build everything
+make build
+
+# Run tests
+make test
+
+# Run lints
+make lint
 ```
 
-### 2. Paris Generation (End-to-End)
-
-Complete inference pipeline from prompt → response:
+### Running Examples
 
 ```bash
-# Simulation mode (fast, validates architecture)
-./target/release/paris-generation
+# Simple host/WASM integration test
+cargo run --example simple-realm-test
 
-# Real model inference
-./target/release/paris-generation models/tinyllama-1.1b.Q4_K_M.gguf
+# Multi-tenant example
+cargo run --example multi-tenant
+
+# Embedding in Node.js
+cd examples/nodejs-embedding
+npm install && npm test
 ```
 
-### 3. Multi-Tenant Demo
+### Code Style
 
-Shows multiple isolated tenants sharing one GPU:
+- Run `cargo fmt` before committing
+- Run `cargo clippy -- -D warnings` to catch issues
+- Follow Rust API guidelines
+- Add tests for new functionality
 
-```bash
-cargo run --release --bin multi-tenant
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
-## 📚 Documentation
+## Crates
 
-- **[Architecture](docs/ARCHITECTURE.md)** - System design and technical details
-- **[GPU Backends](docs/GPU_BACKENDS.md)** - CUDA, Metal, WebGPU integration
-- **[Product & Economics](PRODUCT_AND_ECONOMICS.md)** - Business value and cost savings
-- **[Production Status](PRODUCTION_STATUS.md)** - What's ready for production
-- **[Contributing](CONTRIBUTING.md)** - How to contribute
+| Crate | Description | Dependencies |
+|-------|-------------|--------------|
+| `realm-core` | GGUF parsing, tokenization, quantization | `bytemuck`, `half`, `ndarray` |
+| `realm-models` | Transformer layers, attention, FFN | `realm-core`, `realm-compute-*` |
+| `realm-compute-cpu` | CPU kernels (SIMD, Candle CPU) | `candle-core`, `rayon` |
+| `realm-compute-gpu` | GPU backends (CUDA, Metal, WebGPU) | `candle-core`, `wgpu` |
+| `realm-runtime` | Memory64 host, Wasmtime integration | `wasmtime`, `parking_lot` |
+| `realm-wasm` | WASM orchestrator module | `wasm-bindgen` |
 
-## 🎯 Models
+## Features
 
-Download and set up models:
+### `realm-runtime`
+- `cuda` - Enable CUDA GPU support (requires CUDA 11.8+)
+- `metal` - Enable Metal GPU support (macOS/iOS only)
+- `memory64` - Enable Memory64 for large models
 
-```bash
-# Create models directory with symlinks
-mkdir -p models
-cd models
+### `realm-compute-cpu`
+- `simd` - Enable SIMD optimizations
 
-# Download TinyLlama (638 MB)
-wget https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
-  -O tinyllama-1.1b.Q4_K_M.gguf
+### `realm-compute-gpu`
+- `cuda` - CUDA backend
+- `metal` - Metal backend
+- `webgpu` - WebGPU backend
 
-# Or symlink from Ollama
-ln -s ~/.ollama/models/tinyllama-1.1b.Q4_K_M.gguf .
-```
+## Examples
 
-See [models/README.md](models/README.md) for full model documentation.
+- **[simple-realm-test](examples/simple-realm-test)** - Basic host/WASM integration
+- **[multi-tenant](examples/multi-tenant)** - Running multiple isolated instances
+- **[nodejs-embedding](examples/nodejs-embedding)** - Embedding in Node.js app
+- **[python-bindings](examples/python-bindings)** - Using from Python
 
-## 🔧 Orchestration Components
+## Performance
 
-| Crate | Role in Orchestration | Status |
-|-------|----------------------|--------|
-| `realm-core` | Model format support for orchestrated workloads | ✅ Production |
-| `realm-models` | Inference execution primitives | ✅ Production |
-| `realm-compute-cpu` | CPU execution backend for scheduled work | ✅ Production |
-| `realm-compute-gpu` | GPU execution backend for scheduled work | ⚠️ Needs validation |
-| `realm-runtime` | **Core orchestration runtime** - schedules & isolates inference | ✅ Production |
-| `realm-wasm` | Tenant-side orchestration client | ✅ Production |
+Benchmark results on NVIDIA A100 (40GB):
 
-## 📊 Orchestration Performance
+| Workload | Traditional (vLLM) | Realm | Improvement |
+|----------|-------------------|-------|-------------|
+| Tenants per GPU | 1 | 16 | **16x** |
+| Memory per tenant | 40GB | 2.5GB | **16x** |
+| Throughput degradation | N/A | <5% | Minimal |
 
-See [PRODUCT_AND_ECONOMICS.md](PRODUCT_AND_ECONOMICS.md) for detailed benchmarks and cost analysis.
+See [BENCHMARKS.md](docs/BENCHMARKS.md) for detailed results.
 
-**Orchestration efficiency (7B model, A100 GPU):**
+## Documentation
 
-| Metric | Traditional (1:1) | Realm Orchestration | Improvement |
-|--------|-------------------|---------------------|-------------|
-| Concurrent tenants | 1 | 16 | **16x density** |
-| Memory per tenant | 4.3GB | 52KB + shared model | **~84x reduction** |
-| GPU utilization | ~60% (idle time) | ~95% (scheduled) | **58% more work** |
-| Orchestration overhead | N/A | <5% per tenant | Minimal impact |
+- [Architecture](docs/ARCHITECTURE.md) - System design and components
+- [Deployment](docs/DEPLOYMENT.md) - Production deployment guide
+- [Embedding](docs/EMBEDDING_MODEL.md) - Integrating into applications
+- [API Reference](https://docs.realm.ai/api) - Generated API docs
+- [Contributing](CONTRIBUTING.md) - How to contribute
 
-## 🤝 Contributing
+## Status
 
-We welcome contributions to improve Realm's orchestration capabilities! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+**Alpha**: Core functionality works, but APIs may change. Not recommended for production yet.
 
-**High-impact areas:**
-- **Orchestration Algorithms** - Improve scheduling, resource allocation, and fairness
-- **Backend Optimization** - Validate and optimize GPU backends (CUDA, Metal, WebGPU)
-- **Orchestration Metrics** - Add observability, performance tracking, and tenant analytics
-- **Model Support** - Extend orchestration to additional model architectures
-- **Production Hardening** - Testing, benchmarking, and real-world deployment validation
+### What Works
+- ✅ GGUF model loading
+- ✅ Transformer inference (attention, FFN)
+- ✅ CPU backends (Candle, SIMD)
+- ✅ GPU backends (CUDA, Metal)
+- ✅ Memory64 integration
+- ✅ WASM module compilation
+- ✅ Host function bridging
 
-## 📄 License
+### In Progress
+- 🚧 CLI tool
+- 🚧 HTTP API server
+- 🚧 Node.js SDK
+- 🚧 Python bindings
+- 🚧 Production deployment tooling
+
+### Planned
+- 📋 Flash Attention
+- 📋 Speculative decoding
+- 📋 Continuous batching
+- 📋 Quantization (GGML Q4/Q5/Q8)
+
+## License
 
 Licensed under either of:
 
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT License ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
 
@@ -319,14 +246,8 @@ at your option.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
 
-## 🙏 Acknowledgments
+## Community
 
-Built on excellent work from:
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) - GGUF format and quantization
-- [Candle](https://github.com/huggingface/candle) - ML framework with GPU support
-- [Wasmtime](https://github.com/bytecodealliance/wasmtime) - High-performance WASM runtime
-- [wasm-bindgen](https://github.com/rustwasm/wasm-bindgen) - Rust/WASM interop
-
----
-
-**🌐 Production-grade inference orchestration for multi-tenant LLM deployments**
+- [Discord](https://discord.gg/realm) - Chat with the community
+- [GitHub Discussions](https://github.com/realm-ai/realm/discussions) - Ask questions
+- [Twitter](https://twitter.com/realm_ai) - Updates and announcements

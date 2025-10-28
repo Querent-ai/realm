@@ -579,7 +579,11 @@ impl FlashAttention {
             }
 
             // 4. Rescale previous output
-            let scale_o = if m[i].is_finite() { (m[i] - m_new).exp() } else { 0.0 };
+            let scale_o = if m[i].is_finite() {
+                (m[i] - m_new).exp()
+            } else {
+                0.0
+            };
 
             for d in 0..head_dim {
                 o[i * head_dim + d] *= scale_o;
@@ -621,8 +625,9 @@ impl Attention for FlashAttention {
         head_dim: usize,
     ) -> Result<Vec<f32>> {
         match self.backend {
-            FlashBackend::CPU => self
-                .forward_cpu(q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim),
+            FlashBackend::CPU => self.forward_cpu(
+                q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
+            ),
 
             #[cfg(feature = "cuda")]
             FlashBackend::CUDA => {
@@ -680,7 +685,10 @@ mod tests {
     #[test]
     fn test_flash_attention_creation() {
         let flash = FlashAttention::try_new();
-        assert!(flash.is_some(), "Flash Attention should be available (CPU fallback)");
+        assert!(
+            flash.is_some(),
+            "Flash Attention should be available (CPU fallback)"
+        );
 
         if let Some(attn) = flash {
             assert_eq!(attn.name(), "FlashAttention");
@@ -711,11 +719,15 @@ mod tests {
         }
 
         let flash_out = flash
-            .forward(&q, &k, &v, None, batch_size, num_heads, seq_len, seq_len, head_dim)
+            .forward(
+                &q, &k, &v, None, batch_size, num_heads, seq_len, seq_len, head_dim,
+            )
             .unwrap();
 
         let standard_out = standard
-            .forward(&q, &k, &v, None, batch_size, num_heads, seq_len, seq_len, head_dim)
+            .forward(
+                &q, &k, &v, None, batch_size, num_heads, seq_len, seq_len, head_dim,
+            )
             .unwrap();
 
         // Outputs should be very close (within numerical precision)
@@ -723,7 +735,14 @@ mod tests {
 
         for (i, (&f, &s)) in flash_out.iter().zip(standard_out.iter()).enumerate() {
             let diff = (f - s).abs();
-            assert!(diff < 1e-4, "Position {}: Flash={}, Standard={}, diff={}", i, f, s, diff);
+            assert!(
+                diff < 1e-4,
+                "Position {}: Flash={}, Standard={}, diff={}",
+                i,
+                f,
+                s,
+                diff
+            );
         }
     }
 
@@ -759,13 +778,25 @@ mod tests {
 
         let q = vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0];
         let k = vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0];
-        let v = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+        let v = vec![
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
 
         // Causal mask
         let mask = vec![1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0];
 
         let output = flash
-            .forward(&q, &k, &v, Some(&mask), batch_size, num_heads, seq_len, seq_len, head_dim)
+            .forward(
+                &q,
+                &k,
+                &v,
+                Some(&mask),
+                batch_size,
+                num_heads,
+                seq_len,
+                seq_len,
+                head_dim,
+            )
             .unwrap();
 
         assert_eq!(output.len(), batch_size * num_heads * seq_len * head_dim);

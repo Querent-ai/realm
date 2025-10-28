@@ -16,15 +16,24 @@ pub struct ChatMessage {
 
 impl ChatMessage {
     pub fn system(content: impl Into<String>) -> Self {
-        Self { role: ChatRole::System, content: content.into() }
+        Self {
+            role: ChatRole::System,
+            content: content.into(),
+        }
     }
 
     pub fn user(content: impl Into<String>) -> Self {
-        Self { role: ChatRole::User, content: content.into() }
+        Self {
+            role: ChatRole::User,
+            content: content.into(),
+        }
     }
 
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: ChatRole::Assistant, content: content.into() }
+        Self {
+            role: ChatRole::Assistant,
+            content: content.into(),
+        }
     }
 }
 
@@ -173,8 +182,10 @@ mod tests {
 
     #[test]
     fn test_chatml_format() {
-        let messages =
-            vec![ChatMessage::system("You are a helpful assistant."), ChatMessage::user("Hello!")];
+        let messages = vec![
+            ChatMessage::system("You are a helpful assistant."),
+            ChatMessage::user("Hello!"),
+        ];
 
         let template = ChatTemplate::ChatML;
         let formatted = template.format(&messages).unwrap();
@@ -186,8 +197,10 @@ mod tests {
 
     #[test]
     fn test_llama2_format() {
-        let messages =
-            vec![ChatMessage::system("You are a helpful assistant."), ChatMessage::user("Hello!")];
+        let messages = vec![
+            ChatMessage::system("You are a helpful assistant."),
+            ChatMessage::user("Hello!"),
+        ];
 
         let template = ChatTemplate::Llama2;
         let formatted = template.format(&messages).unwrap();

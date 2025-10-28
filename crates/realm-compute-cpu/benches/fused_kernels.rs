@@ -1,11 +1,11 @@
 #![allow(clippy::manual_div_ceil)]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use realm_core::quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use realm_compute_cpu::fused::{
     fused_attention_score, fused_dequant_matmul_q4k, fused_dequant_matmul_q5k,
     fused_dequant_matmul_q6k, fused_dequant_matmul_q8k,
 };
+use realm_core::quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K};
 
 /// Benchmark traditional fused attention score (for comparison)
 fn bench_traditional_attention(criterion: &mut Criterion) {
@@ -26,9 +26,9 @@ fn bench_traditional_attention(criterion: &mut Criterion) {
             |bencher, _| {
                 bencher.iter(|| {
                     fused_attention_score(
-                        black_box(&q),
-                        black_box(&k),
-                        black_box(&empty_output),
+                        std::hint::black_box(&q),
+                        std::hint::black_box(&k),
+                        std::hint::black_box(&empty_output),
                         seq_len,
                         head_dim,
                         scale,
@@ -118,9 +118,9 @@ fn bench_q4k_fused_kernel(criterion: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("workload", name), name, |bencher, _| {
             bencher.iter(|| {
                 fused_dequant_matmul_q4k(
-                    black_box(&blocks),
-                    black_box(&input),
-                    black_box(&mut output),
+                    std::hint::black_box(&blocks),
+                    std::hint::black_box(&input),
+                    std::hint::black_box(&mut output),
                     batch_size,
                     num_features,
                     k_aligned,
@@ -154,9 +154,9 @@ fn bench_q4k_batch_sizes(criterion: &mut Criterion) {
             |bencher, _| {
                 bencher.iter(|| {
                     fused_dequant_matmul_q4k(
-                        black_box(&blocks),
-                        black_box(&input),
-                        black_box(&mut output),
+                        std::hint::black_box(&blocks),
+                        std::hint::black_box(&input),
+                        std::hint::black_box(&mut output),
                         batch_size,
                         num_features,
                         k,
@@ -186,9 +186,9 @@ fn bench_q4k_matrix_sizes(criterion: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("size", size), &size, |bencher, _| {
             bencher.iter(|| {
                 fused_dequant_matmul_q4k(
-                    black_box(&blocks),
-                    black_box(&input),
-                    black_box(&mut output),
+                    std::hint::black_box(&blocks),
+                    std::hint::black_box(&input),
+                    std::hint::black_box(&mut output),
                     1,
                     size,
                     size,
@@ -224,9 +224,9 @@ fn bench_memory_patterns(criterion: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("pattern", name), name, |bencher, _| {
             bencher.iter(|| {
                 fused_dequant_matmul_q4k(
-                    black_box(&blocks),
-                    black_box(&input),
-                    black_box(&mut output),
+                    std::hint::black_box(&blocks),
+                    std::hint::black_box(&input),
+                    std::hint::black_box(&mut output),
                     1,
                     size,
                     size,
@@ -265,9 +265,9 @@ fn bench_q5k_fused_kernel(criterion: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("workload", name), name, |bencher, _| {
             bencher.iter(|| {
                 fused_dequant_matmul_q5k(
-                    black_box(&blocks),
-                    black_box(&input),
-                    black_box(&mut output),
+                    std::hint::black_box(&blocks),
+                    std::hint::black_box(&input),
+                    std::hint::black_box(&mut output),
                     batch_size,
                     num_features,
                     k_aligned,
@@ -306,9 +306,9 @@ fn bench_q6k_fused_kernel(criterion: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("workload", name), name, |bencher, _| {
             bencher.iter(|| {
                 fused_dequant_matmul_q6k(
-                    black_box(&blocks),
-                    black_box(&input),
-                    black_box(&mut output),
+                    std::hint::black_box(&blocks),
+                    std::hint::black_box(&input),
+                    std::hint::black_box(&mut output),
                     batch_size,
                     num_features,
                     k_aligned,
@@ -346,9 +346,9 @@ fn bench_q8k_fused_kernel(criterion: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("workload", name), name, |bencher, _| {
             bencher.iter(|| {
                 fused_dequant_matmul_q8k(
-                    black_box(&blocks),
-                    black_box(&input),
-                    black_box(&mut output),
+                    std::hint::black_box(&blocks),
+                    std::hint::black_box(&input),
+                    std::hint::black_box(&mut output),
                     batch_size,
                     num_features,
                     k_aligned,
@@ -384,9 +384,9 @@ fn bench_quantization_comparison(criterion: &mut Criterion) {
     group.bench_function("Q4_K", |bencher| {
         bencher.iter(|| {
             fused_dequant_matmul_q4k(
-                black_box(&q4k_blocks),
-                black_box(&input),
-                black_box(&mut output),
+                std::hint::black_box(&q4k_blocks),
+                std::hint::black_box(&input),
+                std::hint::black_box(&mut output),
                 batch_size,
                 num_features,
                 k,
@@ -399,9 +399,9 @@ fn bench_quantization_comparison(criterion: &mut Criterion) {
     group.bench_function("Q5_K", |bencher| {
         bencher.iter(|| {
             fused_dequant_matmul_q5k(
-                black_box(&q5k_blocks),
-                black_box(&input),
-                black_box(&mut output),
+                std::hint::black_box(&q5k_blocks),
+                std::hint::black_box(&input),
+                std::hint::black_box(&mut output),
                 batch_size,
                 num_features,
                 k,
@@ -414,9 +414,9 @@ fn bench_quantization_comparison(criterion: &mut Criterion) {
     group.bench_function("Q6_K", |bencher| {
         bencher.iter(|| {
             fused_dequant_matmul_q6k(
-                black_box(&q6k_blocks),
-                black_box(&input),
-                black_box(&mut output),
+                std::hint::black_box(&q6k_blocks),
+                std::hint::black_box(&input),
+                std::hint::black_box(&mut output),
                 batch_size,
                 num_features,
                 k,
@@ -429,9 +429,9 @@ fn bench_quantization_comparison(criterion: &mut Criterion) {
     group.bench_function("Q8_K", |bencher| {
         bencher.iter(|| {
             fused_dequant_matmul_q8k(
-                black_box(&q8k_blocks),
-                black_box(&input),
-                black_box(&mut output),
+                std::hint::black_box(&q8k_blocks),
+                std::hint::black_box(&input),
+                std::hint::black_box(&mut output),
                 batch_size,
                 num_features,
                 k,

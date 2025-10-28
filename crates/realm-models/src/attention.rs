@@ -1,34 +1,37 @@
-//! Multi-head attention implementation
+use crate::attention_stub::{create_attention, Attention};
 
 use realm_compute_cpu::{matmul_f32, matmul_transposed};
 use realm_core::error::Result;
 
 #[cfg(feature = "webgpu")]
-use realm_compute_gpu::GpuBackend;
+use realm_gpu::GpuBackend;
 
 use super::{KVCache, TransformerConfig};
-// use crate::attention::{create_attention, Attention};
 use crate::matmul_dispatch::dispatch_matmul;
 use crate::weight_format::WeightFormat;
 
 #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
-use realm_compute_gpu::GpuBackendTrait;
+use realm_gpu::GpuBackendTrait;
 
 /// Multi-head attention layer
 #[allow(dead_code)]
 pub struct MultiHeadAttention {
     pub config: TransformerConfig,
     head_dim: usize,
-    //     attention_impl: Box<dyn Attention>,
+    attention_impl: Box<dyn Attention>,
 }
 
 #[allow(dead_code)]
 impl MultiHeadAttention {
     pub fn new(config: TransformerConfig) -> Self {
         let head_dim = config.hidden_size / config.num_heads;
-        //         let attention_impl = create_attention(config.attention_backend);
+        let attention_impl = create_attention(config.attention_backend);
 
-        Self { config, head_dim }
+        Self {
+            config,
+            head_dim,
+            attention_impl,
+        }
     }
 
     /// Helper: matrix multiplication with GPU/CPU fallback
@@ -202,6 +205,14 @@ impl MultiHeadAttention {
         }
 
         // Output projection
+        if std::env::var("DEBUG_WEIGHTS").is_ok() {
+            eprintln!(
+                "  Attention output (before WO, first 10): {:?}",
+                &output[..10.min(output.len())]
+            );
+            eprintln!("  Attention output sum: {:.6}", output.iter().sum::<f32>());
+        }
+
         let result = dispatch_matmul(
             &output,
             &weights.wo,
@@ -212,6 +223,14 @@ impl MultiHeadAttention {
             #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
             gpu,
         )?;
+
+        if std::env::var("DEBUG_WEIGHTS").is_ok() {
+            eprintln!(
+                "  Attention result (after WO, first 10): {:?}",
+                &result[..10.min(result.len())]
+            );
+            eprintln!("  Attention result sum: {:.6}", result.iter().sum::<f32>());
+        }
 
         Ok(result)
     }
@@ -430,13 +449,16 @@ impl MultiHeadAttention {
             self.transpose_for_attention(&v_repeated, kv_seq_len, num_heads, head_dim);
 
         // Call attention (batch_size=1 for single sequence)
-        // Use built-in compute_attention method
-        let output_transposed = self.compute_attention(
+        let output_transposed = self.attention_impl.forward(
             &q_transposed,
             &k_transposed,
             &v_transposed,
+            Some(&mask),
+            1, // batch_size
+            num_heads,
             seq_len,
             kv_seq_len,
+            head_dim,
         )?;
 
         // Transpose back: [num_heads, seq_len, head_dim] -> [seq_len, num_heads, head_dim]

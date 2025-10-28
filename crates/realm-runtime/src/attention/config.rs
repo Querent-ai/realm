@@ -111,7 +111,8 @@ impl FlashAttentionConfig {
 
     /// Get softmax scale factor
     pub fn get_softmax_scale(&self, head_dim: usize) -> f32 {
-        self.softmax_scale.unwrap_or_else(|| 1.0 / (head_dim as f32).sqrt())
+        self.softmax_scale
+            .unwrap_or_else(|| 1.0 / (head_dim as f32).sqrt())
     }
 }
 
@@ -129,7 +130,8 @@ pub struct StandardAttentionConfig {
 impl StandardAttentionConfig {
     /// Get softmax scale factor
     pub fn get_softmax_scale(&self, head_dim: usize) -> f32 {
-        self.softmax_scale.unwrap_or_else(|| 1.0 / (head_dim as f32).sqrt())
+        self.softmax_scale
+            .unwrap_or_else(|| 1.0 / (head_dim as f32).sqrt())
     }
 }
 

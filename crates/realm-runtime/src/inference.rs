@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
 /// Inference session management with token streaming
 use realm_core::error::Result;
+use std::collections::VecDeque;
 
 /// Generation options
 #[repr(C)]
@@ -102,7 +102,10 @@ impl InferenceSession {
 
     /// Check if generation is complete
     pub fn is_complete(&self) -> bool {
-        matches!(self.state, GenerationState::Complete | GenerationState::Stopped)
+        matches!(
+            self.state,
+            GenerationState::Complete | GenerationState::Stopped
+        )
     }
 
     /// Get number of tokens generated
@@ -159,7 +162,7 @@ impl InferenceSession {
     /// Next token ID, or None if generation is complete
     pub fn next_token_with_model(
         &mut self,
-        model: &mut crate::transformer::Model,
+        model: &mut realm_models::Model,
     ) -> Result<Option<u32>> {
         // Check if already complete
         if self.is_complete() {
@@ -268,7 +271,10 @@ mod tests {
 
     #[test]
     fn test_max_tokens_limit() {
-        let options = GenOptions { max_tokens: 5, ..Default::default() };
+        let options = GenOptions {
+            max_tokens: 5,
+            ..Default::default()
+        };
 
         let mut session = InferenceSession::new(1, vec![1, 2, 3], options);
 

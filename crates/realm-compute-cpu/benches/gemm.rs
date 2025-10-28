@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use realm_compute_cpu::{matmul_f32, matmul_transposed};
 
 fn bench_gemm_small(criterion: &mut Criterion) {
@@ -12,7 +12,15 @@ fn bench_gemm_small(criterion: &mut Criterion) {
 
     criterion.bench_function("gemm_128x128x128", |bencher| {
         bencher.iter(|| {
-            matmul_f32(black_box(&a), black_box(&b), black_box(&mut c), m, k, n).unwrap();
+            matmul_f32(
+                std::hint::black_box(&a),
+                std::hint::black_box(&b),
+                std::hint::black_box(&mut c),
+                m,
+                k,
+                n,
+            )
+            .unwrap();
         });
     });
 }
@@ -28,7 +36,15 @@ fn bench_gemm_medium(criterion: &mut Criterion) {
 
     criterion.bench_function("gemm_512x512x512", |bencher| {
         bencher.iter(|| {
-            matmul_f32(black_box(&a), black_box(&b), black_box(&mut c), m, k, n).unwrap();
+            matmul_f32(
+                std::hint::black_box(&a),
+                std::hint::black_box(&b),
+                std::hint::black_box(&mut c),
+                m,
+                k,
+                n,
+            )
+            .unwrap();
         });
     });
 }
@@ -54,8 +70,15 @@ fn bench_gemm_transposed(criterion: &mut Criterion) {
             &(m, k, n),
             |bencher, _| {
                 bencher.iter(|| {
-                    matmul_transposed(black_box(&a), black_box(&b_t), black_box(&mut c), m, k, n)
-                        .unwrap();
+                    matmul_transposed(
+                        std::hint::black_box(&a),
+                        std::hint::black_box(&b_t),
+                        std::hint::black_box(&mut c),
+                        m,
+                        k,
+                        n,
+                    )
+                    .unwrap();
                 });
             },
         );
@@ -83,7 +106,15 @@ fn bench_gemm_transformer_workload(criterion: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("matmul", name), name, |bencher, _| {
             bencher.iter(|| {
-                matmul_f32(black_box(&a), black_box(&b), black_box(&mut c), m, k, n).unwrap();
+                matmul_f32(
+                    std::hint::black_box(&a),
+                    std::hint::black_box(&b),
+                    std::hint::black_box(&mut c),
+                    m,
+                    k,
+                    n,
+                )
+                .unwrap();
             });
         });
     }
@@ -109,9 +140,9 @@ fn bench_gemm_batch_sizes(criterion: &mut Criterion) {
             |bencher, _| {
                 bencher.iter(|| {
                     matmul_f32(
-                        black_box(&a),
-                        black_box(&b),
-                        black_box(&mut c),
+                        std::hint::black_box(&a),
+                        std::hint::black_box(&b),
+                        std::hint::black_box(&mut c),
                         batch_size,
                         hidden,
                         intermediate,
