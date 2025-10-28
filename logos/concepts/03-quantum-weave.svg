@@ -1,0 +1,229 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800">
+  <defs>
+    <!-- Quantum gradient -->
+    <radialGradient id="quantumCore">
+      <stop offset="0%" style="stop-color:#FBBF24;stop-opacity:1" />
+      <stop offset="40%" style="stop-color:#F59E0B;stop-opacity:0.8" />
+      <stop offset="70%" style="stop-color:#7C3AED;stop-opacity:0.5" />
+      <stop offset="100%" style="stop-color:#000000;stop-opacity:0" />
+    </radialGradient>
+
+    <!-- Weave gradient -->
+    <linearGradient id="weaveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00FFFF;stop-opacity:0.8" />
+      <stop offset="50%" style="stop-color:#7C3AED;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:0.8" />
+    </linearGradient>
+
+    <!-- Strong glow -->
+    <filter id="quantumGlow">
+      <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Subtle grid -->
+    <pattern id="quantumGrid" x="0" y="0" width="30" height="30" patternUnits="userSpaceOnUse">
+      <circle cx="15" cy="15" r="1" fill="#00FFFF" opacity="0.1"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="800" fill="#000000"/>
+  <rect width="800" height="800" fill="url(#quantumGrid)"/>
+
+  <!-- Central quantum core -->
+  <circle cx="400" cy="400" r="150" fill="url(#quantumCore)" opacity="0.5"/>
+
+  <!-- Core rings -->
+  <g filter="url(#quantumGlow)">
+    <circle cx="400" cy="400" r="100" fill="none" stroke="#F59E0B" stroke-width="4">
+      <animate attributeName="r" values="100;105;100" dur="3s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="400" cy="400" r="90" fill="none" stroke="#FBBF24" stroke-width="2" opacity="0.8">
+      <animate attributeName="r" values="90;95;90" dur="3s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.8;1;0.8" dur="3s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="400" cy="400" r="80" fill="none" stroke="#F59E0B" stroke-width="1.5" opacity="0.6"/>
+  </g>
+
+  <!-- Weave pattern - Realm nodes -->
+  <g filter="url(#quantumGlow)">
+    <!-- Node 1 (top) -->
+    <g>
+      <circle cx="400" cy="150" r="35" fill="none" stroke="#00FFFF" stroke-width="3"/>
+      <circle cx="400" cy="150" r="30" fill="none" stroke="#00FFFF" stroke-width="1.5" opacity="0.6">
+        <animate attributeName="opacity" values="0.6;1;0.6" dur="2s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="400" cy="150" r="20" fill="#00FFFF" opacity="0.2"/>
+
+      <!-- Orbital particles -->
+      <circle r="5" fill="#00FFFF">
+        <animateMotion path="M 0,-35 A 35,35 0 1,1 0,35 A 35,35 0 1,1 0,-35" dur="4s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="1;0.3;1" dur="4s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Node 2 (top-right) -->
+    <g>
+      <circle cx="577" cy="223" r="35" fill="none" stroke="#3B82F6" stroke-width="3"/>
+      <circle cx="577" cy="223" r="30" fill="none" stroke="#3B82F6" stroke-width="1.5" opacity="0.6">
+        <animate attributeName="opacity" values="0.7;1;0.7" dur="2.2s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="577" cy="223" r="20" fill="#3B82F6" opacity="0.2"/>
+
+      <circle r="5" fill="#3B82F6">
+        <animateMotion path="M 577,188 A 35,35 0 1,1 577,258 A 35,35 0 1,1 577,188" dur="4.2s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="1;0.3;1" dur="4.2s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Node 3 (right) -->
+    <g>
+      <circle cx="650" cy="400" r="35" fill="none" stroke="#6B46C1" stroke-width="3"/>
+      <circle cx="650" cy="400" r="30" fill="none" stroke="#6B46C1" stroke-width="1.5" opacity="0.6">
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="1.8s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="650" cy="400" r="20" fill="#6B46C1" opacity="0.2"/>
+
+      <circle r="5" fill="#6B46C1">
+        <animateMotion path="M 615,400 A 35,35 0 1,1 685,400 A 35,35 0 1,1 615,400" dur="3.8s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="1;0.3;1" dur="3.8s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Node 4 (bottom-right) -->
+    <g>
+      <circle cx="577" cy="577" r="35" fill="none" stroke="#7C3AED" stroke-width="3"/>
+      <circle cx="577" cy="577" r="30" fill="none" stroke="#7C3AED" stroke-width="1.5" opacity="0.6">
+        <animate attributeName="opacity" values="0.9;1;0.9" dur="2.5s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="577" cy="577" r="20" fill="#7C3AED" opacity="0.2"/>
+
+      <circle r="5" fill="#7C3AED">
+        <animateMotion path="M 542,577 A 35,35 0 1,1 612,577 A 35,35 0 1,1 542,577" dur="4.5s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="1;0.3;1" dur="4.5s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Node 5 (bottom) -->
+    <g>
+      <circle cx="400" cy="650" r="35" fill="none" stroke="#3B82F6" stroke-width="3"/>
+      <circle cx="400" cy="650" r="30" fill="none" stroke="#3B82F6" stroke-width="1.5" opacity="0.6">
+        <animate attributeName="opacity" values="0.6;1;0.6" dur="2.3s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="400" cy="650" r="20" fill="#3B82F6" opacity="0.2"/>
+
+      <circle r="5" fill="#3B82F6">
+        <animateMotion path="M 400,615 A 35,35 0 1,1 400,685 A 35,35 0 1,1 400,615" dur="4.3s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="1;0.3;1" dur="4.3s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Node 6 (bottom-left) -->
+    <g>
+      <circle cx="223" cy="577" r="35" fill="none" stroke="#00FFFF" stroke-width="3"/>
+      <circle cx="223" cy="577" r="30" fill="none" stroke="#00FFFF" stroke-width="1.5" opacity="0.6">
+        <animate attributeName="opacity" values="0.7;1;0.7" dur="2.1s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="223" cy="577" r="20" fill="#00FFFF" opacity="0.2"/>
+
+      <circle r="5" fill="#00FFFF">
+        <animateMotion path="M 188,577 A 35,35 0 1,1 258,577 A 35,35 0 1,1 188,577" dur="4.1s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="1;0.3;1" dur="4.1s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Node 7 (left) -->
+    <g>
+      <circle cx="150" cy="400" r="35" fill="none" stroke="#6B46C1" stroke-width="3"/>
+      <circle cx="150" cy="400" r="30" fill="none" stroke="#6B46C1" stroke-width="1.5" opacity="0.6">
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="1.9s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="150" cy="400" r="20" fill="#6B46C1" opacity="0.2"/>
+
+      <circle r="5" fill="#6B46C1">
+        <animateMotion path="M 115,400 A 35,35 0 1,1 185,400 A 35,35 0 1,1 115,400" dur="3.9s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="1;0.3;1" dur="3.9s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Node 8 (top-left) -->
+    <g>
+      <circle cx="223" cy="223" r="35" fill="none" stroke="#7C3AED" stroke-width="3"/>
+      <circle cx="223" cy="223" r="30" fill="none" stroke="#7C3AED" stroke-width="1.5" opacity="0.6">
+        <animate attributeName="opacity" values="0.9;1;0.9" dur="2.4s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="223" cy="223" r="20" fill="#7C3AED" opacity="0.2"/>
+
+      <circle r="5" fill="#7C3AED">
+        <animateMotion path="M 188,223 A 35,35 0 1,1 258,223 A 35,35 0 1,1 188,223" dur="4.4s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="1;0.3;1" dur="4.4s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+  </g>
+
+  <!-- Weave lines (quantum entanglement) -->
+  <g stroke-width="2" opacity="0.4">
+    <path d="M 400,185 Q 400,290 400,300" stroke="url(#weaveGrad)" fill="none" stroke-dasharray="5,5">
+      <animate attributeName="stroke-dashoffset" from="0" to="10" dur="2s" repeatCount="indefinite"/>
+    </path>
+    <path d="M 542,258 Q 470,330 450,350" stroke="url(#weaveGrad)" fill="none" stroke-dasharray="5,5">
+      <animate attributeName="stroke-dashoffset" from="0" to="10" dur="2.2s" repeatCount="indefinite"/>
+    </path>
+    <path d="M 615,400 Q 510,400 500,400" stroke="url(#weaveGrad)" fill="none" stroke-dasharray="5,5">
+      <animate attributeName="stroke-dashoffset" from="0" to="10" dur="1.8s" repeatCount="indefinite"/>
+    </path>
+    <path d="M 542,542 Q 470,470 450,450" stroke="url(#weaveGrad)" fill="none" stroke-dasharray="5,5">
+      <animate attributeName="stroke-dashoffset" from="0" to="10" dur="2.5s" repeatCount="indefinite"/>
+    </path>
+    <path d="M 400,615 Q 400,510 400,500" stroke="url(#weaveGrad)" fill="none" stroke-dasharray="5,5">
+      <animate attributeName="stroke-dashoffset" from="0" to="10" dur="2.3s" repeatCount="indefinite"/>
+    </path>
+    <path d="M 258,542 Q 330,470 350,450" stroke="url(#weaveGrad)" fill="none" stroke-dasharray="5,5">
+      <animate attributeName="stroke-dashoffset" from="0" to="10" dur="2.1s" repeatCount="indefinite"/>
+    </path>
+    <path d="M 185,400 Q 290,400 300,400" stroke="url(#weaveGrad)" fill="none" stroke-dasharray="5,5">
+      <animate attributeName="stroke-dashoffset" from="0" to="10" dur="1.9s" repeatCount="indefinite"/>
+    </path>
+    <path d="M 258,258 Q 330,330 350,350" stroke="url(#weaveGrad)" fill="none" stroke-dasharray="5,5">
+      <animate attributeName="stroke-dashoffset" from="0" to="10" dur="2.4s" repeatCount="indefinite"/>
+    </path>
+  </g>
+
+  <!-- Expansion waves -->
+  <circle cx="400" cy="400" r="100" fill="none" stroke="#F59E0B" stroke-width="2" opacity="0">
+    <animate attributeName="r" values="100;250" dur="5s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.8;0" dur="5s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="400" cy="400" r="100" fill="none" stroke="#7C3AED" stroke-width="2" opacity="0">
+    <animate attributeName="r" values="100;250" dur="5s" begin="1s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.6;0" dur="5s" begin="1s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="400" cy="400" r="100" fill="none" stroke="#00FFFF" stroke-width="2" opacity="0">
+    <animate attributeName="r" values="100;250" dur="5s" begin="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.8;0" dur="5s" begin="2s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Center label -->
+  <text x="400" y="410" font-family="monospace" font-size="18" fill="#FBBF24" text-anchor="middle" filter="url(#quantumGlow)">
+    GPU
+  </text>
+
+  <!-- Corner ornaments -->
+  <g stroke="#00FFFF" stroke-width="2" fill="none" opacity="0.5">
+    <circle cx="60" cy="60" r="30" stroke-dasharray="10,5"/>
+    <circle cx="740" cy="60" r="30" stroke-dasharray="10,5"/>
+    <circle cx="60" cy="740" r="30" stroke-dasharray="10,5"/>
+    <circle cx="740" cy="740" r="30" stroke-dasharray="10,5"/>
+  </g>
+
+  <!-- Tech labels -->
+  <g font-family="monospace" fill="#00FFFF" opacity="0.6">
+    <text x="400" y="50" font-size="16" text-anchor="middle">QUANTUM WEAVE</text>
+    <text x="400" y="770" font-size="14" text-anchor="middle">ENTANGLED ORCHESTRATION</text>
+  </g>
+</svg>
