@@ -251,9 +251,7 @@ impl Model {
 
                 // Use Memory64 for models >3GB
                 if total_size > 3_000_000_000 {
-                    info!(
-                        "Large model detected - using Memory64 for on-demand layer loading"
-                    );
+                    info!("Large model detected - using Memory64 for on-demand layer loading");
 
                     // Create Memory64 loader and load the model
                     let mut mem64_loader = crate::memory64_gguf::Memory64GGUFLoader::new();
@@ -1262,14 +1260,19 @@ impl Model {
 
         // Get logits for the last prompt token
         let logits = prefill_logits[(prefill_logits.len() - self.config.vocab_size)..].to_vec();
-        
+
         // Debug: show top 10 logits before sampling
         let mut indexed_logits: Vec<(usize, f32)> = logits.iter().copied().enumerate().collect();
         indexed_logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         eprintln!("🔍 Top 10 logits before sampling:");
         for (idx, (token_id, logit)) in indexed_logits.iter().take(10).enumerate() {
-            let token_text = tokenizer.decode(&[*token_id as u32], false).unwrap_or_default();
-            eprintln!("  {}: token_id={} logit={:.4} text='{}'", idx, token_id, logit, token_text);
+            let token_text = tokenizer
+                .decode(&[*token_id as u32], false)
+                .unwrap_or_default();
+            eprintln!(
+                "  {}: token_id={} logit={:.4} text='{}'",
+                idx, token_id, logit, token_text
+            );
         }
 
         // Sample first generated token
@@ -1277,11 +1280,14 @@ impl Model {
         let next = logits_processor
             .sample(&mut last_logits)
             .map_err(Error::ParseError)?;
-        
+
         // Debug: show first sampled token
-        eprintln!("🔍 First token sampled: {} (text: '{}')", next, 
-                 tokenizer.decode(&[next], false).unwrap_or_default());
-        
+        eprintln!(
+            "🔍 First token sampled: {} (text: '{}')",
+            next,
+            tokenizer.decode(&[next], false).unwrap_or_default()
+        );
+
         tokens.push(next);
 
         // DECODE PHASE: Generate tokens one at a time
