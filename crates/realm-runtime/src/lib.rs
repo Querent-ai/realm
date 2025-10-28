@@ -18,6 +18,10 @@ pub mod weight_format;
 #[cfg(feature = "memory64-host")]
 pub mod memory64_host;
 
+// Host function context API
+#[cfg(feature = "memory64-host")]
+pub mod host_functions;
+
 // WASM-side Memory64 FFI bindings
 #[cfg(all(feature = "memory64-wasm", target_arch = "wasm32"))]
 pub mod memory64_ffi;
@@ -62,6 +66,9 @@ pub use memory64::{
     LayerInfo, Memory64Runtime, Memory64State, MemoryLayout, MemoryRegion as Memory64Region,
     MemoryStats,
 };
+
+#[cfg(feature = "memory64-host")]
+pub use host_functions::HostContext;
 
 #[cfg(all(feature = "memory64-wasm", target_arch = "wasm32"))]
 pub use memory64::{

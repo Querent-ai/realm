@@ -15,7 +15,7 @@ metal = ["realm-runtime/metal"]
 webgpu = ["realm-runtime/webgpu"]
 
 [dependencies]
-realm-runtime = { workspace = true }
+realm-runtime = { workspace = true, features = ["memory64-host"] }
 wasmtime = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

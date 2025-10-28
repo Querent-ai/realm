@@ -242,7 +242,7 @@ impl CallbackStreamingInference {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use realm_models::{GenerationConfig, TransformerConfig};
+    use realm_models::TransformerConfig;
 
     #[test]
     fn test_streaming_inference_creation() {

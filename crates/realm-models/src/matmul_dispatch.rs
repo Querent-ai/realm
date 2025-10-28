@@ -52,17 +52,6 @@ pub fn dispatch_matmul(
         &dyn GpuBackendTrait,
     >,
 ) -> Result<Vec<f32>> {
-    // Debug: Log which path is taken
-    if std::env::var("DEBUG_DISPATCH").is_ok() {
-        eprintln!(
-            "[dispatch_matmul] format={}, shape=[{}, {}, {}]",
-            weights.format_name(),
-            batch_size,
-            k,
-            n
-        );
-    }
-
     match weights {
         WeightFormat::F32(w) => {
             // Try CPU backend first, fallback to direct implementation

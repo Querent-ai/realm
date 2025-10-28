@@ -9,7 +9,7 @@ members = [
     "cli",
     "examples/simple-realm-test",
     "examples/multi-tenant",
-    "examples/end-to-end-inference",
+    # "examples/end-to-end-inference",  # TODO: Fix HostContext imports
     "examples/paris-generation",
 ]
 

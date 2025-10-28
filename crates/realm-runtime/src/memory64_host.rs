@@ -250,15 +250,6 @@ impl Memory64State {
                 .with_context(|| format!("Failed to create Memory64 for region {}", region.name))?;
 
             self.memories.push(memory);
-
-            // ✅ FIX 4: Use log crate instead of println
-            #[cfg(feature = "log")]
-            log::info!(
-                "Memory64 region '{}' ({}): {:.2}GB",
-                region.name,
-                region.purpose,
-                region.size as f64 / 1024.0 / 1024.0 / 1024.0
-            );
         }
 
         Ok(())

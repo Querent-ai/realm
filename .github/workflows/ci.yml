@@ -261,7 +261,7 @@ jobs:
           path: crates/realm-wasm/pkg/
 
       - name: Run integration tests
-        run: cargo test --test '*' --release
+        run: cargo test --tests --release
 
       - name: Verify WASM module size
         run: |

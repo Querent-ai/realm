@@ -103,30 +103,6 @@ impl MultiHeadAttention {
             gpu,
         )?;
 
-        // Debug Q weights and projection
-        if std::env::var("DEBUG_WEIGHTS").is_ok() {
-            match &weights.wq {
-                WeightFormat::F32(wq_data) => {
-                    eprintln!(
-                        "  WQ weights (first 10): {:?}",
-                        &wq_data[..10.min(wq_data.len())]
-                    );
-                    eprintln!(
-                        "  WQ weights sum: {:.6}, mean: {:.6}",
-                        wq_data.iter().sum::<f32>(),
-                        wq_data.iter().sum::<f32>() / wq_data.len() as f32
-                    );
-                }
-                _ => eprintln!("  WQ weights: {:?}", weights.wq.format_name()),
-            }
-            eprintln!("  Q projection (first 10): {:?}", &q[..10.min(q.len())]);
-            eprintln!(
-                "  Q projection sum: {:.6}, mean: {:.6}",
-                q.iter().sum::<f32>(),
-                q.iter().sum::<f32>() / q.len() as f32
-            );
-        }
-
         // K projection: [seq_len, hidden_size] x [hidden_size, num_kv_heads * head_dim]
         let k = dispatch_matmul(
             hidden_states,
@@ -151,13 +127,6 @@ impl MultiHeadAttention {
             gpu,
         )?;
 
-        // DEBUG: Dump Q, K, V for layer 0
-        if std::env::var("DUMP_LAYER0").is_ok() {
-            eprintln!("LAYER0 Q preview: {:?}", &q[..q.len().min(16)]);
-            eprintln!("LAYER0 K preview: {:?}", &k[..k.len().min(16)]);
-            eprintln!("LAYER0 V preview: {:?}", &v[..v.len().min(16)]);
-        }
-
         // Apply RoPE (Rotary Position Embedding)
         // Apply different positions for each token in the sequence
         let mut q = q;
@@ -168,51 +137,16 @@ impl MultiHeadAttention {
         // MINIMAL KV CACHE: Use a very simple approach that's guaranteed to work
         let output = if std::env::var("DISABLE_KV").is_ok() {
             // Bypass cache: attend only to current K/V (useful for isolating KV issues)
-            if std::env::var("DEBUG_KV").is_ok() {
-                eprintln!(
-                    "  DISABLE_KV active: skipping cache append; using in-batch K/V (len={})",
-                    k.len()
-                );
-            }
             self.compute_attention(&q, &k, &v, seq_len, position)?
         } else {
             // Use KV cache properly - this is the key fix!
-            if std::env::var("DEBUG_KV").is_ok() {
-                eprintln!("  Using KV cache - appending new K/V to cache");
-            }
-
             // Append new K/V to cache and get all cached K/V for attention
             let (cached_k, cached_v) = kv_cache.append(&k, &v)?;
-
-            if std::env::var("DEBUG_KV").is_ok() {
-                eprintln!(
-                    "  After append: kv_cache.current_seq_len={}, cached_k.len()={}",
-                    kv_cache.current_seq_len,
-                    cached_k.len()
-                );
-            }
-
             // Use cached K/V for attention computation
             self.compute_attention(&q, &cached_k, &cached_v, seq_len, position)?
         };
 
-        // DEBUG: Dump attention output for layer 0
-        if std::env::var("DUMP_LAYER0").is_ok() {
-            eprintln!(
-                "LAYER0 attn_output preview: {:?}",
-                &output[..output.len().min(16)]
-            );
-        }
-
         // Output projection
-        if std::env::var("DEBUG_WEIGHTS").is_ok() {
-            eprintln!(
-                "  Attention output (before WO, first 10): {:?}",
-                &output[..10.min(output.len())]
-            );
-            eprintln!("  Attention output sum: {:.6}", output.iter().sum::<f32>());
-        }
-
         let result = dispatch_matmul(
             &output,
             &weights.wo,
@@ -223,14 +157,6 @@ impl MultiHeadAttention {
             #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
             gpu,
         )?;
-
-        if std::env::var("DEBUG_WEIGHTS").is_ok() {
-            eprintln!(
-                "  Attention result (after WO, first 10): {:?}",
-                &result[..10.min(result.len())]
-            );
-            eprintln!("  Attention result sum: {:.6}", result.iter().sum::<f32>());
-        }
 
         Ok(result)
     }
@@ -394,18 +320,6 @@ impl MultiHeadAttention {
         // K, V shape: [kv_seq_len, num_kv_heads, head_dim]
         let kv_seq_len = k.len() / (num_kv_heads * head_dim);
 
-        if std::env::var("DEBUG_ATTN").is_ok() {
-            eprintln!(
-                "ATTN: seq_len={}, kv_seq_len={}, position={}, n_rep={}",
-                seq_len, kv_seq_len, position, n_rep
-            );
-            eprintln!("  Q shape: [{}x{}x{}]", seq_len, num_heads, head_dim);
-            eprintln!(
-                "  K/V shape: [{}x{}x{}]",
-                kv_seq_len, num_kv_heads, head_dim
-            );
-        }
-
         // Repeat K/V to match num_heads (for GQA/MQA)
         let k_repeated = if n_rep > 1 {
             self.repeat_kv(k, kv_seq_len, n_rep)
@@ -417,13 +331,6 @@ impl MultiHeadAttention {
         } else {
             v.to_vec()
         };
-
-        if std::env::var("DEBUG_ATTN").is_ok() && n_rep > 1 {
-            eprintln!(
-                "  K/V repeated to shape: [{}x{}x{}]",
-                kv_seq_len, num_heads, head_dim
-            );
-        }
 
         // Build causal mask: mask[i, j] = 0.0 if j > position + i (masked), 1.0 if allowed
         // Attention implementations expect 0.0 = masked, non-zero = allowed

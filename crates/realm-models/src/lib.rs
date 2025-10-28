@@ -106,9 +106,6 @@ mod tests {
         let input_tokens = vec![1];
         let result = model.forward(&input_tokens, 0);
 
-        if let Err(e) = &result {
-            eprintln!("Model forward pass failed: {:?}", e);
-        }
         assert!(result.is_ok());
         let logits = result.unwrap();
         // In inference mode, we only return logits for the last token

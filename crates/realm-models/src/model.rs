@@ -74,28 +74,6 @@ fn matmul_naive(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> 
     r
 }
 
-// Helper function to manually compute a single logit for verification
-// Assumes `lm_head` is stored as [vocab_size, hidden_size] (GGUF / row-major).
-fn compute_manual_logit(
-    hidden_states: &[f32],
-    lm_head: &[f32],
-    token_id: usize,
-    hidden_size: usize,
-    _vocab_size: usize,
-) -> f32 {
-    // logit = sum_i hidden[i] * lm_head[token_id, i]
-    // index for lm_head[token_id, i] in row-major [vocab_size, hidden_size] is:
-    //   token_id * hidden_size + i
-    let mut sum = 0.0f32;
-    for (i, &hidden_val) in hidden_states.iter().enumerate().take(hidden_size) {
-        let weight_idx = token_id * hidden_size + i;
-        if weight_idx < lm_head.len() {
-            sum += hidden_val * lm_head[weight_idx];
-        }
-    }
-    sum
-}
-
 impl Model {
     /// Create a new model with initialized (zero) weights
     pub fn new(config: TransformerConfig) -> Self {
@@ -301,20 +279,14 @@ impl Model {
             debug!("Found 'token_embd.weight'");
             data
         } else if let Ok(data) = tensor_loader.load_tensor("model.embed_tokens.weight", parser) {
-            println!("✅ Found 'model.embed_tokens.weight'");
             data
         } else if let Ok(data) = tensor_loader.load_tensor("embed_tokens.weight", parser) {
-            println!("✅ Found 'embed_tokens.weight'");
             data
         } else {
             return Err(Error::ParseError("Missing token embeddings".to_string()));
         };
 
         {
-            println!(
-                "🔍 Loading token embeddings as-is: [vocab_size={}, hidden_size={}]",
-                self.config.vocab_size, self.config.hidden_size
-            );
             // GGUF stores token_embd.weight as [vocab_size, hidden_size]
             // Our embedding lookup correctly handles this format
             // by gathering row token_id from the matrix
@@ -325,135 +297,30 @@ impl Model {
         if let Ok(norm_data) = tensor_loader.load_tensor("output_norm.weight", parser) {
             // Load raw weights without arbitrary scaling
             self.output_norm.copy_from_slice(norm_data);
-            println!("✅ Output norm loaded");
-        } else {
-            eprintln!("WARN: Failed to load output_norm.weight");
         }
 
         // Load LM head - try different tensor names
         if let Ok(lm_head_data) = tensor_loader.load_tensor("output.weight", parser) {
-            println!("✅ Found 'output.weight'");
-
-            // DEBUG: Check raw bytes for token 29892 before dequantization
-            if std::env::var("DEBUG_TRACE").is_ok() {
-                let token_id = 29892;
-                let hidden_size = self.config.hidden_size;
-                let row_start_bytes = token_id * hidden_size * 4; // 4 bytes per f32
-                eprintln!(
-                    "Raw bytes for token {} (offset {}):",
-                    token_id, row_start_bytes
-                );
-                for i in 0..20 {
-                    if row_start_bytes + i < lm_head_data.len() {
-                        eprint!("{:02x} ", lm_head_data[row_start_bytes + i] as u8);
-                    }
-                }
-                eprintln!();
-            }
-
-            println!("🔍 Loading LM head tensor: {} elements", lm_head_data.len());
             // GGUF stores output.weight as [vocab_size, hidden_size]
             // Store as-is for matmul_transposed
             self.lm_head.copy_from_slice(lm_head_data);
-            println!(
-                "✅ LM head loaded (shape: [vocab_size={}, hidden_size={}]) for transposed matmul",
-                self.config.vocab_size, self.config.hidden_size
-            );
-
-            // DEBUG: Print LM head weights for token 29892 (the problematic token)
-            if std::env::var("DEBUG_TRACE").is_ok() {
-                let token_id = 29892;
-                let row_start = token_id * self.config.hidden_size;
-                eprintln!(
-                    "LM_HEAD[{}][0:5]: {:.6} {:.6} {:.6} {:.6} {:.6}",
-                    token_id,
-                    self.lm_head[row_start],
-                    self.lm_head[row_start + 1],
-                    self.lm_head[row_start + 2],
-                    self.lm_head[row_start + 3],
-                    self.lm_head[row_start + 4]
-                );
-
-                // Find the exact boundary where zeros start
-                for test_token in [
-                    0, 1, 15043, 10588, 29800, 29805, 29810, 29815, 29820, 29825, 29830, 29835,
-                    29840, 29845, 29850, 29855, 29860, 29865, 29870, 29875, 29880, 29885, 29890,
-                    29892, 29900, 31990, 31995, 31999,
-                ] {
-                    let test_row_start = test_token * self.config.hidden_size;
-                    eprintln!(
-                        "LM_HEAD[{}][0:5]: {:.6} {:.6} {:.6} {:.6} {:.6}",
-                        test_token,
-                        self.lm_head[test_row_start],
-                        self.lm_head[test_row_start + 1],
-                        self.lm_head[test_row_start + 2],
-                        self.lm_head[test_row_start + 3],
-                        self.lm_head[test_row_start + 4]
-                    );
-                }
-            }
         } else if let Ok(lm_head_data) = tensor_loader.load_tensor("lm_head.weight", parser) {
-            println!("✅ Found 'lm_head.weight'");
             // GGUF stores lm_head.weight as [vocab_size, hidden_size]
             // Store as-is for matmul_transposed
             self.lm_head.copy_from_slice(lm_head_data);
-            println!("✅ LM head loaded for transposed matmul");
-
-            // DEBUG: Print LM head weights for token 29892 (the problematic token)
-            if std::env::var("DEBUG_TRACE").is_ok() {
-                let token_id = 29892;
-                let row_start = token_id * self.config.hidden_size;
-                eprintln!(
-                    "LM_HEAD[{}][0:5]: {:.6} {:.6} {:.6} {:.6} {:.6}",
-                    token_id,
-                    self.lm_head[row_start],
-                    self.lm_head[row_start + 1],
-                    self.lm_head[row_start + 2],
-                    self.lm_head[row_start + 3],
-                    self.lm_head[row_start + 4]
-                );
-            }
         } else if let Ok(lm_head_data) = tensor_loader.load_tensor("model.lm_head.weight", parser) {
-            println!("✅ Found 'model.lm_head.weight'");
             // GGUF stores model.lm_head.weight as [vocab_size, hidden_size]
             // Store as-is for matmul_transposed
             self.lm_head.copy_from_slice(lm_head_data);
-            println!("✅ LM head loaded for transposed matmul");
-
-            // DEBUG: Print LM head weights for token 29892 (the problematic token)
-            if std::env::var("DEBUG_TRACE").is_ok() {
-                let token_id = 29892;
-                let row_start = token_id * self.config.hidden_size;
-                eprintln!(
-                    "LM_HEAD[{}][0:5]: {:.6} {:.6} {:.6} {:.6} {:.6}",
-                    token_id,
-                    self.lm_head[row_start],
-                    self.lm_head[row_start + 1],
-                    self.lm_head[row_start + 2],
-                    self.lm_head[row_start + 3],
-                    self.lm_head[row_start + 4]
-                );
-            }
         } else {
             // Weight tying: LM head shares weights with token embeddings
-            println!("🔍 Using weight tying - LM head from token embeddings");
             let lm_head_transposed = transpose_matrix(
                 &self.token_embeddings,
                 self.config.hidden_size,
                 self.config.vocab_size,
             );
             self.lm_head.copy_from_slice(&lm_head_transposed);
-            println!("✅ LM head loaded from token embeddings (weight tying)");
         }
-
-        // Print LM head shape check
-        // eprintln!(
-        //     "LM_HEAD len={}, expected={} (vocab_size * hidden_size={})",
-        //     self.lm_head.len(),
-        //     self.config.vocab_size * self.config.hidden_size,
-        //     self.config.vocab_size * self.config.hidden_size
-        // );
-        // eprintln!("token_embeddings.len()={}", self.token_embeddings.len());
 
         // Load each layer's weights
         for layer_idx in 0..self.config.num_layers {
@@ -684,14 +551,6 @@ impl Model {
         let seq_len = token_ids.len();
         let hidden_size = self.config.hidden_size;
 
-        let debug = std::env::var("DEBUG_FORWARD").is_ok();
-        if debug {
-            eprintln!(
-                "🔍 Forward: seq_len={}, position={}, tokens={:?}",
-                seq_len, position, token_ids
-            );
-        }
-
         // 1. Embed tokens
         // GGUF stores embeddings as [vocab_size, hidden_size]
         // So for token_id, we need to gather row token_id from the matrix
@@ -708,83 +567,14 @@ impl Model {
                 if emb_idx < self.token_embeddings.len() {
                     hidden_states[out_start + dim_idx] = self.token_embeddings[emb_idx];
                 } else {
-                    eprintln!("WARN: Token {} dim {} out of bounds", token_id, dim_idx);
                     break;
                 }
             }
         }
 
-        if debug {
-            let sum: f32 = hidden_states.iter().take(10).sum();
-            let mean: f32 = hidden_states.iter().sum::<f32>() / hidden_states.len() as f32;
-            let max: f32 = hidden_states
-                .iter()
-                .copied()
-                .fold(f32::NEG_INFINITY, f32::max);
-            let min: f32 = hidden_states.iter().copied().fold(f32::INFINITY, f32::min);
-            eprintln!(
-                "  Embeddings sum(first 10): {:.6}, mean: {:.6}, min: {:.6}, max: {:.6}",
-                sum, mean, min, max
-            );
-        }
-
-        // DEBUG: Print token embeddings for comparison
-        if std::env::var("DEBUG_TRACE").is_ok() {
-            eprintln!(
-                "EMB[0:5]: {:.6} {:.6} {:.6} {:.6} {:.6}",
-                hidden_states[0],
-                hidden_states[1],
-                hidden_states[2],
-                hidden_states[3],
-                hidden_states[4]
-            );
-        }
-
         // 2. Pass through transformer layers
-        let profile = std::env::var("PROFILE").is_ok();
         for layer_idx in 0..self.config.num_layers {
-            let layer_start = std::time::Instant::now();
-            if std::env::var("DEBUG_KV").is_ok() {
-                eprintln!(
-                    "🔍 Layer {}, pos={}, kv_cache.current_seq_len BEFORE layer={}",
-                    layer_idx, position, self.kv_caches[layer_idx].current_seq_len
-                );
-            }
             hidden_states = self.forward_layer(layer_idx, &hidden_states, position)?;
-
-            // DEBUG: Print layer outputs for comparison
-            if std::env::var("DEBUG_TRACE").is_ok() {
-                if layer_idx == 0 {
-                    eprintln!(
-                        "L0_OUT[0:5]: {:.6} {:.6} {:.6} {:.6} {:.6}",
-                        hidden_states[0],
-                        hidden_states[1],
-                        hidden_states[2],
-                        hidden_states[3],
-                        hidden_states[4]
-                    );
-                }
-                if layer_idx == self.config.num_layers - 1 {
-                    eprintln!(
-                        "L21_OUT[0:5]: {:.6} {:.6} {:.6} {:.6} {:.6}",
-                        hidden_states[0],
-                        hidden_states[1],
-                        hidden_states[2],
-                        hidden_states[3],
-                        hidden_states[4]
-                    );
-                }
-            }
-
-            if profile {
-                eprintln!("  Layer {} took {:?}", layer_idx, layer_start.elapsed());
-            }
-            if std::env::var("DEBUG_KV").is_ok() {
-                eprintln!(
-                    "✅ Layer {}, pos={}, kv_cache.current_seq_len AFTER layer={}",
-                    layer_idx, position, self.kv_caches[layer_idx].current_seq_len
-                );
-            }
         }
 
         // 3. Final normalization using Candle
@@ -796,40 +586,6 @@ impl Model {
             self.config.hidden_size,
         )?;
 
-        // DEBUG: Validate hidden states after final RMSNorm
-        if debug {
-            let sum: f32 = hidden_states.iter().sum::<f32>();
-            let mean: f32 = sum / hidden_states.len() as f32;
-            let max: f32 = hidden_states
-                .iter()
-                .copied()
-                .fold(f32::NEG_INFINITY, f32::max);
-            let min: f32 = hidden_states.iter().copied().fold(f32::INFINITY, f32::min);
-            let abs_max: f32 = hidden_states
-                .iter()
-                .copied()
-                .map(f32::abs)
-                .fold(f32::NEG_INFINITY, f32::max);
-            eprintln!(
-                "  Final hidden states: mean: {:.6}, min: {:.6}, max: {:.6}, abs_max: {:.6}",
-                mean, min, max, abs_max
-            );
-
-            // Check for reasonable ranges
-            if abs_max > 10.0 {
-                eprintln!(
-                    "  ⚠️  WARNING: Hidden states have large values (abs_max={:.6})",
-                    abs_max
-                );
-            }
-            if mean.abs() > 1.0 {
-                eprintln!(
-                    "  ⚠️  WARNING: Hidden states have large mean (mean={:.6})",
-                    mean
-                );
-            }
-        }
-
         // 4. Project to vocabulary (LM head)
         let vocab_size = self.config.vocab_size;
 
@@ -838,242 +594,8 @@ impl Model {
         let last_hidden_start = (seq_len - 1) * hidden_size;
         let last_hidden = &hidden_states[last_hidden_start..last_hidden_start + hidden_size];
 
-        // DEBUG: Print hidden states before LM head for comparison
-        if std::env::var("DEBUG_TRACE").is_ok() {
-            eprintln!(
-                "HIDDEN[0:5]: {:.6} {:.6} {:.6} {:.6} {:.6}",
-                last_hidden[0], last_hidden[1], last_hidden[2], last_hidden[3], last_hidden[4]
-            );
-        }
-
-        // DEBUG: Check hidden states before LM head
-        if std::env::var("DEBUG_LOGITS").is_ok() {
-            eprintln!("🔍 HIDDEN STATES BEFORE LM HEAD:");
-            eprintln!("  hidden_states.len() = {}", hidden_states.len());
-            eprintln!(
-                "  seq_len = {}, hidden_size = {}, vocab_size = {}",
-                seq_len, hidden_size, vocab_size
-            );
-            eprintln!(
-                "  Using only last token's hidden state ({}:{})",
-                last_hidden_start,
-                last_hidden_start + hidden_size
-            );
-
-            // Check first few values
-            let preview_len = 10.min(last_hidden.len());
-            eprintln!("  last_hidden preview: {:?}", &last_hidden[..preview_len]);
-
-            // Check statistics
-            let sum: f32 = last_hidden.iter().sum();
-            let mean = sum / last_hidden.len() as f32;
-            let max = last_hidden
-                .iter()
-                .copied()
-                .fold(f32::NEG_INFINITY, f32::max);
-            let min = last_hidden.iter().copied().fold(f32::INFINITY, f32::min);
-            let nan_count = last_hidden.iter().filter(|&&x| x.is_nan()).count();
-            let inf_count = last_hidden.iter().filter(|&&x| x.is_infinite()).count();
-
-            eprintln!(
-                "  last_hidden stats: sum={:.6}, mean={:.6}, min={:.6}, max={:.6}, nan={}, inf={}",
-                sum, mean, min, max, nan_count, inf_count
-            );
-
-            // Check LM head weights
-            eprintln!("🔍 LM HEAD WEIGHTS:");
-            eprintln!("  lm_head.len() = {}", self.lm_head.len());
-            let lm_preview_len = 10.min(self.lm_head.len());
-            eprintln!("  lm_head preview: {:?}", &self.lm_head[..lm_preview_len]);
-
-            let lm_sum: f32 = self.lm_head.iter().sum();
-            let lm_mean = lm_sum / self.lm_head.len() as f32;
-            let lm_max = self
-                .lm_head
-                .iter()
-                .copied()
-                .fold(f32::NEG_INFINITY, f32::max);
-            let lm_min = self.lm_head.iter().copied().fold(f32::INFINITY, f32::min);
-            let lm_nan_count = self.lm_head.iter().filter(|&&x| x.is_nan()).count();
-            let lm_inf_count = self.lm_head.iter().filter(|&&x| x.is_infinite()).count();
-
-            eprintln!(
-                "  lm_head stats: sum={:.6}, mean={:.6}, min={:.6}, max={:.6}, nan={}, inf={}",
-                lm_sum, lm_mean, lm_min, lm_max, lm_nan_count, lm_inf_count
-            );
-        }
-
         // Compute logits only for the last token (seq_len = 1)
         let logits = self.matmul(last_hidden, &self.lm_head, 1, hidden_size, vocab_size, true)?;
-
-        // DEBUG: Validate logits
-        if debug {
-            let sum: f32 = logits.iter().sum::<f32>();
-            let mean: f32 = sum / logits.len() as f32;
-            let max: f32 = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            let min: f32 = logits.iter().copied().fold(f32::INFINITY, f32::min);
-            let abs_max: f32 = logits
-                .iter()
-                .copied()
-                .map(f32::abs)
-                .fold(f32::NEG_INFINITY, f32::max);
-            let nan_count = logits.iter().filter(|&&x| x.is_nan()).count();
-            let inf_count = logits.iter().filter(|&&x| x.is_infinite()).count();
-
-            eprintln!(
-                "  Logits: mean: {:.6}, min: {:.6}, max: {:.6}, abs_max: {:.6}, nan: {}, inf: {}",
-                mean, min, max, abs_max, nan_count, inf_count
-            );
-
-            // Check for reasonable ranges
-            if abs_max > 20.0 {
-                eprintln!(
-                    "  ⚠️  WARNING: Logits have very large values (abs_max={:.6})",
-                    abs_max
-                );
-            }
-            if mean.abs() > 5.0 {
-                eprintln!("  ⚠️  WARNING: Logits have large mean (mean={:.6})", mean);
-            }
-            if nan_count > 0 {
-                eprintln!("  ❌ ERROR: Logits contain NaN values!");
-            }
-            if inf_count > 0 {
-                eprintln!("  ❌ ERROR: Logits contain infinite values!");
-            }
-        }
-
-        // DEBUG: Check logits after matmul
-        if std::env::var("DEBUG_LOGITS").is_ok() {
-            eprintln!("🔍 LOGITS AFTER MATMUL:");
-            eprintln!("  logits.len() = {}", logits.len());
-            eprintln!(
-                "  expected len = seq_len * vocab_size = {} * {} = {}",
-                seq_len,
-                vocab_size,
-                seq_len * vocab_size
-            );
-
-            // Check first few logits
-            let preview_len = 10.min(logits.len());
-            eprintln!("  logits preview: {:?}", &logits[..preview_len]);
-
-            // Check statistics
-            let logits_sum: f32 = logits.iter().sum();
-            let logits_mean = logits_sum / logits.len() as f32;
-            let logits_max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            let logits_min = logits.iter().copied().fold(f32::INFINITY, f32::min);
-            let logits_nan_count = logits.iter().filter(|&&x| x.is_nan()).count();
-            let logits_inf_count = logits.iter().filter(|&&x| x.is_infinite()).count();
-
-            eprintln!(
-                "  logits stats: sum={:.6}, mean={:.6}, min={:.6}, max={:.6}, nan={}, inf={}",
-                logits_sum, logits_mean, logits_min, logits_max, logits_nan_count, logits_inf_count
-            );
-
-            // Check if the extreme dominance is in the raw logits
-            let mut sorted_logits: Vec<(usize, f32)> =
-                logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
-            sorted_logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-
-            eprintln!("  Top 5 raw logits:");
-            for (i, (token_id, logit)) in sorted_logits.iter().take(5).enumerate() {
-                eprintln!("    {}: token {} = {:.6}", i + 1, token_id, logit);
-            }
-
-            // Check the difference between top 2
-            if sorted_logits.len() >= 2 {
-                let diff = sorted_logits[0].1 - sorted_logits[1].1;
-                eprintln!("  Top 2 difference: {:.6}", diff);
-                if diff > 1.0 {
-                    eprintln!("  ⚠️  Large difference between top 2 logits: {:.6}", diff);
-                }
-            }
-
-            // MANUAL VERIFICATION: Compute a few logits manually to check matmul
-            eprintln!("🔍 MANUAL MATMUL VERIFICATION:");
-            let top_token_id = sorted_logits[0].0;
-            let manual_logit = compute_manual_logit(
-                &hidden_states,
-                &self.lm_head,
-                top_token_id,
-                hidden_size,
-                vocab_size,
-            );
-            let matmul_logit = logits[top_token_id];
-            eprintln!(
-                "  Token {}: matmul={:.6}, manual={:.6}, diff={:.6}",
-                top_token_id,
-                matmul_logit,
-                manual_logit,
-                (matmul_logit - manual_logit).abs()
-            );
-
-            if (matmul_logit - manual_logit).abs() > 1e-5 {
-                eprintln!(
-                    "  ❌ MATMUL BUG DETECTED! Manual computation differs from matmul result"
-                );
-            } else {
-                eprintln!("  ✅ Matmul computation verified");
-            }
-        }
-
-        // Debug: print detailed intermediate values
-        if std::env::var("DEBUG_INTERMEDIATE").is_ok() {
-            let last_logits = &logits[(logits.len() - vocab_size)..];
-            let mut indexed_logits: Vec<(usize, f32)> = last_logits
-                .iter()
-                .enumerate()
-                .map(|(i, &v)| (i, v))
-                .collect();
-            indexed_logits
-                .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-            eprintln!("=== INTERMEDIATE VALUES ===");
-            eprintln!(
-                "  Hidden states sum: {:.6}",
-                hidden_states.iter().sum::<f32>()
-            );
-            eprintln!(
-                "  Hidden states mean: {:.6}",
-                hidden_states.iter().sum::<f32>() / hidden_states.len() as f32
-            );
-            eprintln!("  Hidden states std: {:.6}", {
-                let mean = hidden_states.iter().sum::<f32>() / hidden_states.len() as f32;
-                let variance = hidden_states
-                    .iter()
-                    .map(|x| (x - mean).powi(2))
-                    .sum::<f32>()
-                    / hidden_states.len() as f32;
-                variance.sqrt()
-            });
-            eprintln!("  Logits sum: {:.6}", last_logits.iter().sum::<f32>());
-            eprintln!(
-                "  Logits mean: {:.6}",
-                last_logits.iter().sum::<f32>() / last_logits.len() as f32
-            );
-            eprintln!(
-                "  Logits max: {:.6}",
-                last_logits
-                    .iter()
-                    .copied()
-                    .fold(f32::NEG_INFINITY, f32::max)
-            );
-            eprintln!(
-                "  Logits min: {:.6}",
-                last_logits.iter().copied().fold(f32::INFINITY, f32::min)
-            );
-            eprintln!("  Top 10 logits: {:?}", &indexed_logits[..10]);
-
-            // Check specific tokens we care about
-            let important_tokens = [278, 1234, 13791]; // "the", "answer", "vertices"
-            for &token_id in &important_tokens {
-                if token_id < last_logits.len() {
-                    eprintln!("  Token {} logit: {:.6}", token_id, last_logits[token_id]);
-                }
-            }
-            eprintln!("========================");
-        }
 
         // Logits are already just for the last token (we computed them that way above)
         Ok(logits)
@@ -1130,12 +652,6 @@ impl Model {
             // Zero out probabilities beyond top-k
             for (idx, _) in indexed_probs.iter().skip(top_k as usize) {
                 probs[*idx] = 0.0;
-            }
-
-            // Debug: show top-k filtering
-            eprintln!("🔍 Top-k filtering (k={}):", top_k);
-            for (i, (idx, prob)) in indexed_probs.iter().take(top_k as usize).enumerate() {
-                eprintln!("    {}: token {} = {:.6}", i, idx, prob);
             }
         }
 
@@ -1194,12 +710,6 @@ impl Model {
         })?;
         let sampled_idx = dist.sample(&mut rng);
         let token_id = indices[sampled_idx] as u32;
-
-        // Debug: show final sampling
-        eprintln!("🎲 Final sampling:");
-        eprintln!("    Non-zero probs: {}", non_zero_probs.len());
-        eprintln!("    Sampled idx: {} -> token {}", sampled_idx, token_id);
-        eprintln!("    Token prob: {:.6}", probs[token_id as usize]);
 
         Ok(token_id)
     }
@@ -1261,32 +771,11 @@ impl Model {
         // Get logits for the last prompt token
         let logits = prefill_logits[(prefill_logits.len() - self.config.vocab_size)..].to_vec();
 
-        // Debug: show top 10 logits before sampling
-        let mut indexed_logits: Vec<(usize, f32)> = logits.iter().copied().enumerate().collect();
-        indexed_logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        eprintln!("🔍 Top 10 logits before sampling:");
-        for (idx, (token_id, logit)) in indexed_logits.iter().take(10).enumerate() {
-            let token_text = tokenizer
-                .decode(&[*token_id as u32], false)
-                .unwrap_or_default();
-            eprintln!(
-                "  {}: token_id={} logit={:.4} text='{}'",
-                idx, token_id, logit, token_text
-            );
-        }
-
         // Sample first generated token
         let mut last_logits = logits.clone();
         let next = logits_processor
             .sample(&mut last_logits)
             .map_err(Error::ParseError)?;
-
-        // Debug: show first sampled token
-        eprintln!(
-            "🔍 First token sampled: {} (text: '{}')",
-            next,
-            tokenizer.decode(&[next], false).unwrap_or_default()
-        );
 
         tokens.push(next);
 
@@ -1393,23 +882,11 @@ impl Model {
             prefill_logits.extend(chunk_logits);
         }
 
-        // DEBUG: show kv cache lengths after prefill
-        if std::env::var("DEBUG_KV").is_ok() {
-            eprintln!("  After prefill:");
-            for (li, cache) in self.kv_caches.iter().enumerate() {
-                eprintln!(
-                    "  KV layer {} current_seq_len={}",
-                    li, cache.current_seq_len
-                );
-            }
-        }
-
         // Get the last token's logits for the first generation step
         let mut last_logits =
             prefill_logits[(prefill_logits.len() - self.config.vocab_size)..].to_vec();
 
         // PHASE 2: DECODE - Process ONE new token at a time
-        eprintln!("🎯 DECODE: Starting generation phase");
         let mut pos = num_prompt_tokens;
 
         while pos < num_prompt_tokens + max_tokens - 1 {
@@ -1433,25 +910,7 @@ impl Model {
                 tokens.len() - 1
             };
 
-            eprintln!(
-                "🔄 DECODE: Processing token {} at position {}",
-                next, cache_position
-            );
             let logits = self.forward(&[next], cache_position)?;
-
-            // DEBUG: show kv cache lengths after forward
-            if std::env::var("DEBUG_KV").is_ok() {
-                eprintln!(
-                    "  After forward: pos={}, cache_position={}",
-                    pos, cache_position
-                );
-                for (li, cache) in self.kv_caches.iter().enumerate() {
-                    eprintln!(
-                        "  KV layer {} current_seq_len={}",
-                        li, cache.current_seq_len
-                    );
-                }
-            }
 
             // Get logits for next iteration
             last_logits = logits[(logits.len() - self.config.vocab_size)..].to_vec();
