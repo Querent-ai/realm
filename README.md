@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logos/final/spiral-icon-only.svg" alt="Realm Logo" width="200"/>
+</p>
+
 # Realm 🌌
 
 [![CI](https://github.com/realm-ai/realm/workflows/CI/badge.svg)](https://github.com/realm-ai/realm/actions)

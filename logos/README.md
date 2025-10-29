@@ -67,6 +67,120 @@ Realm orchestrates multiple isolated WASM sandboxes (realms) that share a single
 
 ---
 
+## Subtle & Clever Concepts
+
+### 07 - The Funnel
+**File**: `concepts/07-the-funnel.svg`
+
+**Vision**: Multiple thin input lines converge through an orchestration point into a single thick output. Clean, minimal, instantly understandable.
+
+**Cleverness**: The funnel shape is implied, not drawn - it's in the negative space.
+
+**Best for**: Favicon, app icon, minimal branding
+
+---
+
+### 08 - The Prism
+**File**: `concepts/08-the-prism.svg`
+
+**Vision**: Like a prism with light - one beam splits into spectrum (isolation), then recombines into single beam (shared GPU). Elegant physics metaphor.
+
+**Cleverness**: Uses the prism metaphor to show split → isolate → recombine in one clean visual.
+
+**Best for**: Technical presentations, explaining the concept, science-forward branding
+
+---
+
+### 09 - The Merge
+**File**: `concepts/09-the-merge.svg`
+
+**Vision**: Multiple "R" letters (for Realm) fade and merge into one bold "R". Typographic cleverness.
+
+**Cleverness**: The logo IS the wordmark. The concept is embedded in the typography itself.
+
+**Best for**: Wordmark logo, headers, minimalist branding
+
+---
+
+### 10 - Negative Space
+**File**: `concepts/10-negative-space.svg`
+
+**Vision**: Dashed rings where the **gaps** represent isolated realms, the **solid core** represents the shared GPU. The "many" are defined by absence.
+
+**Cleverness**: What's NOT there tells the story. Rewards closer inspection.
+
+**Best for**: Sophisticated branding, design-forward audience, "Aha!" moment
+
+---
+
+### 11 - The Tree
+**File**: `concepts/11-the-tree.svg`
+
+**Vision**: Inverted tree - single trunk (GPU) branches upward into many leaves (realms). Organic, natural metaphor for distribution.
+
+**Cleverness**: Uses nature's own architecture for compute architecture. Bottom-up flow is counterintuitive but correct.
+
+**Best for**: Organic/natural branding angle, showing growth and scale
+
+---
+
+### 12 - Minimal Arrows
+**File**: `concepts/12-minimal-arrows.svg`
+
+**Vision**: Several thin arrows converge into one thick arrow. Dead simple. Nothing fancy.
+
+**Cleverness**: So minimal it's almost diagrammatic. N→1 made visual in 3 seconds.
+
+**Best for**: Ultra-minimal branding, diagrams, technical documentation
+
+---
+
+## R-Integrated Concepts (Minimal Arrows + R)
+
+### 13 - R Convergence
+**File**: `concepts/13-R-convergence.svg`
+
+**Vision**: Multiple input lines converge to form the vertical stem of "R", the R's leg points to the GPU endpoint.
+
+**Cleverness**: The "R" IS the convergence point. The letter itself orchestrates the flow.
+
+**Best for**: Logo that works as both icon and initial, brand identity
+
+---
+
+### 14 - R Flow Simple
+**File**: `concepts/14-R-flow-simple.svg`
+
+**Vision**: Many thin lines → bold "R" → single thick arrow. The R is the orchestration layer.
+
+**Cleverness**: R acts as the gateway/funnel between many and one.
+
+**Best for**: Clean icon, explains the architecture in one glyph
+
+---
+
+### 15 - R Minimal Icon
+**File**: `concepts/15-R-minimal-icon.svg`
+
+**Vision**: Geometric "R" with scattered input dots on left, emphasized GPU endpoint on right (the R's leg).
+
+**Cleverness**: Minimal but complete - shows N inputs, orchestration (R), and 1 output in pure geometry.
+
+**Best for**: App icon, favicon, minimal branding, works at small sizes
+
+---
+
+### 16 - R Super Minimal ⭐
+**File**: `concepts/16-R-super-minimal.svg`
+
+**Vision**: Bold "R" with whisper-thin input connections, heavily emphasized GPU endpoint. The R's leg points directly to "the one".
+
+**Cleverness**: The R's diagonal leg literally IS the arrow to the single GPU. No extra elements needed.
+
+**Best for**: Primary logo candidate, scalable, works at any size, clever but not obscure
+
+---
+
 ## Design System
 
 ### Colors

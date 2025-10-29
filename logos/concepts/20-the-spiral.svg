@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <linearGradient id="spiralGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00FFFF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#7C3AED;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:1" />
+    </linearGradient>
+
+    <radialGradient id="spiralCore">
+      <stop offset="0%" style="stop-color:#F59E0B;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7C3AED;stop-opacity:0" />
+    </radialGradient>
+
+    <filter id="spiralGlow">
+      <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="400" height="400" fill="#000000"/>
+
+  <g filter="url(#spiralGlow)" transform="translate(200, 200)">
+    <!-- Multiple entry points spiraling inward -->
+    <g opacity="0.8" fill="none" stroke-linecap="round">
+      <!-- Spiral 1 -->
+      <path d="M -120,-40 Q -80,-50 -50,-30 T 0,0"
+            stroke="#00FFFF"
+            stroke-width="3">
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="2s" repeatCount="indefinite"/>
+      </path>
+
+      <!-- Spiral 2 -->
+      <path d="M -100,60 Q -60,80 -20,60 T 0,0"
+            stroke="#3B82F6"
+            stroke-width="3">
+        <animate attributeName="opacity" values="0.7;1;0.7" dur="2.2s" repeatCount="indefinite"/>
+      </path>
+
+      <!-- Spiral 3 -->
+      <path d="M 40,-110 Q 60,-70 40,-30 T 0,0"
+            stroke="#6B46C1"
+            stroke-width="3">
+        <animate attributeName="opacity" values="0.9;1;0.9" dur="1.8s" repeatCount="indefinite"/>
+      </path>
+
+      <!-- Spiral 4 -->
+      <path d="M 120,20 Q 80,30 40,20 T 0,0"
+            stroke="#7C3AED"
+            stroke-width="3">
+        <animate attributeName="opacity" values="0.6;1;0.6" dur="2.4s" repeatCount="indefinite"/>
+      </path>
+
+      <!-- Spiral 5 -->
+      <path d="M -40,100 Q -20,60 -10,30 T 0,0"
+            stroke="#3B82F6"
+            stroke-width="3">
+        <animate attributeName="opacity" values="0.85;1;0.85" dur="2.1s" repeatCount="indefinite"/>
+      </path>
+
+      <!-- Spiral 6 -->
+      <path d="M 100,-60 Q 60,-40 30,-20 T 0,0"
+            stroke="#00FFFF"
+            stroke-width="3">
+        <animate attributeName="opacity" values="0.75;1;0.75" dur="2.3s" repeatCount="indefinite"/>
+      </path>
+    </g>
+
+    <!-- Entry point indicators -->
+    <circle cx="-120" cy="-40" r="5" fill="#00FFFF" opacity="0.6"/>
+    <circle cx="-100" cy="60" r="5" fill="#3B82F6" opacity="0.6"/>
+    <circle cx="40" cy="-110" r="5" fill="#6B46C1" opacity="0.6"/>
+    <circle cx="120" cy="20" r="5" fill="#7C3AED" opacity="0.6"/>
+    <circle cx="-40" cy="100" r="5" fill="#3B82F6" opacity="0.6"/>
+    <circle cx="100" cy="-60" r="5" fill="#00FFFF" opacity="0.6"/>
+
+    <!-- Central core (convergence point) -->
+    <circle r="50" fill="url(#spiralCore)" opacity="0.5"/>
+    <circle r="40" fill="none" stroke="#F59E0B" stroke-width="5">
+      <animate attributeName="r" values="40;43;40" dur="2.5s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="1;0.7;1" dur="2.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="30" fill="none" stroke="#FBBF24" stroke-width="3" opacity="0.7"/>
+    <circle r="18" fill="#F59E0B" opacity="0.7">
+      <animate attributeName="opacity" values="0.7;1;0.7" dur="2s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <text x="200" y="365" font-family="sans-serif" font-size="16" fill="#7C3AED" text-anchor="middle" opacity="0.8" letter-spacing="3" font-weight="300">
+    REALM
+  </text>
+</svg>
