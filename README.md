@@ -4,9 +4,8 @@
 
 # Realm 🌌
 
-[![CI](https://github.com/realm-ai/realm/workflows/CI/badge.svg)](https://github.com/realm-ai/realm/actions)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue)](LICENSE)
-[![Rust: 1.75+](https://img.shields.io/badge/rust-1.75%2B-orange)](https://www.rust-lang.org)
+![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
+![Rust](https://img.shields.io/badge/rust-1.75%2B-orange)
 
 > **Inference Orchestration, Reimagined**
 > Run multiple isolated AI workloads on a single GPU. Same performance. Shared infrastructure.
