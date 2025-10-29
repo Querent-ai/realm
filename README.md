@@ -6,6 +6,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.75%2B-orange)
+![CI](https://img.shields.io/badge/build-passing-brightgreen)
 
 > **Inference Orchestration, Reimagined**
 > Run multiple isolated AI workloads on a single GPU. Same performance. Shared infrastructure.
@@ -93,7 +94,7 @@ On an NVIDIA A100 (40GB):
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Clone Realm
-git clone https://github.com/realm-ai/realm.git
+git clone https://github.com/querent-ai/realm.git
 cd realm
 
 # Build it

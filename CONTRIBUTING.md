@@ -23,7 +23,7 @@ git clone https://github.com/YOUR_USERNAME/realm.git
 cd realm
 
 # Add upstream remote
-git remote add upstream https://github.com/realm-ai/realm.git
+git remote add upstream https://github.com/querent-ai/realm.git
 
 # Install Rust if you haven't already
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -259,7 +259,7 @@ Use the feature request template on GitHub.
 
 ## Questions?
 
-- 💬 [GitHub Discussions](https://github.com/realm-ai/realm/discussions) - Ask questions
+- 💬 [GitHub Discussions](https://github.com/querent-ai/realm/discussions) - Ask questions
 - 💭 [Discord](https://discord.gg/realm) - Chat with the community
 - 📧 Email: [opensource@realm.ai](mailto:opensource@realm.ai)
 
