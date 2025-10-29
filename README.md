@@ -470,8 +470,8 @@ And inspired by the philosophy: *Make it work, make it right, make it fast.*
 
 ## Contact
 
-- **Discord**: [discord.gg/realm](https://discord.gg/realm)
-- **Twitter**: [@realm_ai](https://twitter.com/realm_ai)
-- **Email**: hello@realm.ai
+- **Discord**: [discord.gg/querent](https://discord.gg/querent)
+- **Twitter**: [@querent_ai](https://twitter.com/querent_ai)
+- **Email**: contact@querent.xyz
 
 Built with 🦀 by engineers who believe infrastructure should be beautiful.
