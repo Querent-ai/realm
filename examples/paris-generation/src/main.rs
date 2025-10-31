@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use realm_core::{GGUFParser, TensorLoader, Tokenizer};
+use realm_metrics::{CostConfig, UsageTracker};
 use std::fs::File;
 use std::io::BufReader;
 
@@ -17,16 +18,15 @@ use realm_models::TransformerConfig;
 fn main() -> Result<()> {
     // Initialize logger (RUST_LOG=info for INFO level, =debug for DEBUG level)
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-
-    println!("🗼 Realm Paris Generation Example");
-    println!("===================================\n");
+    log::info!("Realm Paris Generation Example");
+    log::info!("===================================\n");
 
     // Use first arg or default model path
     let model_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "../models/tinyllama-1.1b.Q4_K_M.gguf".to_string());
 
-    println!("📦 Loading model: {}", model_path);
+    log::info!("Loading model: {}", model_path);
 
     // Open and parse GGUF file
     let file = File::open(&model_path)?;
@@ -34,9 +34,9 @@ fn main() -> Result<()> {
     let mut parser = GGUFParser::new(reader);
     let meta = parser.parse_header()?;
 
-    println!("✅ Model header parsed");
-    println!("   Version: {}", meta.version);
-    println!("   Tensors: {}", meta.tensor_count);
+    log::info!("Model header parsed");
+    log::debug!("Version: {}", meta.version);
+    log::debug!("Tensors: {}", meta.tensor_count);
 
     // Extract configuration
     let config_data = parser
@@ -44,18 +44,19 @@ fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Failed to extract config"))?;
     let config: TransformerConfig = config_data.into();
 
-    println!(
-        "✅ Config loaded: {} layers, {} heads",
-        config.num_layers, config.num_heads
+    log::info!(
+        "Config loaded: {} layers, {} heads",
+        config.num_layers,
+        config.num_heads
     );
 
     // Create model
     let mut model = Model::new(config.clone());
-    println!("🔧 Model created");
+    log::info!("Model created");
 
     // Load tokenizer
     let tokenizer = Tokenizer::from_gguf(&meta)?;
-    println!("✅ Tokenizer loaded: {} tokens", tokenizer.vocab_size());
+    log::info!("Tokenizer loaded: {} tokens", tokenizer.vocab_size());
 
     // Load weights
     let data_offset = parser.tensor_data_offset()?;
@@ -72,7 +73,15 @@ fn main() -> Result<()> {
     parser.parse_header()?;
 
     model.load_from_gguf(&mut tensor_loader, &mut parser)?;
-    println!("✅ Weights loaded\n");
+    log::info!("Weights loaded\n");
+
+    // Setup usage tracking (optional - for cost/billing analytics)
+    let cost_config = CostConfig::simple(3.0, 15.0); // $3/M input, $15/M output
+    let tracker = UsageTracker::new(cost_config);
+    model.set_usage_tracker(tracker);
+    model.set_model_name("tinyllama-1.1b-q4");
+    model.set_tenant_id("demo-user");
+    log::info!("Usage tracking enabled\n");
 
     // Use ChatML template like wasm-chord for correct behavior
     use realm_runtime::{ChatMessage, ChatTemplate};
@@ -82,7 +91,7 @@ fn main() -> Result<()> {
         ChatMessage::user("What is the capital of France?"),
     ];
     let prompt = template.format(&conversation)?;
-    println!("📝 Prompt: \"{}\"\n", prompt);
+    log::info!("Prompt: \"{}\"\n", prompt);
 
     // Generation config - match wasm-chord exactly
     let gen_config = GenerationConfig {
@@ -93,19 +102,28 @@ fn main() -> Result<()> {
         repetition_penalty: 1.1,
     };
 
-    println!("🤖 Generating response...\n");
+    log::info!("Generating response...\n");
     let response = model.generate(&prompt, &tokenizer, &gen_config)?;
 
-    println!("✨ Response: {}\n", response);
+    log::info!("Response: {}\n", response);
 
     // Check if response contains "Paris"
     if response.to_lowercase().contains("paris") {
-        println!("✅ SUCCESS: Model correctly identified Paris as the capital of France!");
+        log::info!("SUCCESS: Model correctly identified Paris as the capital of France!");
     } else {
-        println!(
-            "⚠️  WARNING: Expected 'Paris' in response, got: {}",
-            response
-        );
+        log::warn!("Expected 'Paris' in response, got: {}", response);
+    }
+
+    // Display usage metrics
+    if let Some(tracker) = model.usage_tracker() {
+        log::info!("\n=== Usage Metrics ===");
+        let total = tracker.total();
+        log::info!("Input tokens: {}", total.total_input_tokens);
+        log::info!("Output tokens: {}", total.total_output_tokens);
+        log::info!("Total tokens: {}", total.total_tokens);
+        log::info!("Estimated cost: ${:.6}", total.estimated_cost);
+        log::info!("Requests: {}", total.request_count);
+        log::info!("Avg tokens/request: {:.1}", total.avg_tokens_per_request);
     }
 
     Ok(())

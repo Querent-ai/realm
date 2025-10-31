@@ -129,14 +129,14 @@ pub struct FFNWeights {
 
 #[allow(dead_code)]
 impl FFNWeights {
-    pub fn new(config: &TransformerConfig) -> Self {
-        let hidden_size = config.hidden_size;
-        let intermediate_size = config.intermediate_size;
-
+    pub fn new(_config: &TransformerConfig) -> Self {
+        // Lazy allocation: Don't pre-allocate weight vectors
+        // They will be allocated during load_from_gguf() based on actual tensor sizes
+        // This saves ~138MB per layer, crucial for WASM memory limits
         Self {
-            w_gate: vec![0.0; hidden_size * intermediate_size],
-            w_up: vec![0.0; hidden_size * intermediate_size],
-            w_down: vec![0.0; intermediate_size * hidden_size],
+            w_gate: Vec::new(),
+            w_up: Vec::new(),
+            w_down: Vec::new(),
         }
     }
 }

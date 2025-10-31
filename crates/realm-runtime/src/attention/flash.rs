@@ -632,7 +632,7 @@ impl Attention for FlashAttention {
             #[cfg(feature = "cuda")]
             FlashBackend::CUDA => {
                 // TODO: Call CUDA kernel
-                eprintln!("⚠️  CUDA backend not yet implemented, using CPU");
+                // eprintln!("⚠️  CUDA backend not yet implemented, using CPU");
                 self.forward_cpu(
                     q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
                 )
@@ -641,7 +641,7 @@ impl Attention for FlashAttention {
             #[cfg(feature = "metal")]
             FlashBackend::Metal => {
                 // TODO: Call Metal shader
-                eprintln!("⚠️  Metal backend not yet implemented, using CPU");
+                // eprintln!("⚠️  Metal backend not yet implemented, using CPU");
                 self.forward_cpu(
                     q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
                 )
@@ -650,7 +650,7 @@ impl Attention for FlashAttention {
             #[cfg(feature = "webgpu")]
             FlashBackend::WebGPU => {
                 // TODO: Call WebGPU compute shader
-                eprintln!("⚠️  WebGPU backend not yet implemented, using CPU");
+                // eprintln!("⚠️  WebGPU backend not yet implemented, using CPU");
                 self.forward_cpu(
                     q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
                 )

@@ -472,10 +472,7 @@ impl<R: Read + Seek> GGUFParser<R> {
             14 => Ok(DataType::Q6_K),
             // Unknown types are treated as unsupported but don't fail parsing
             _ => {
-                eprintln!(
-                    "Warning: Unsupported dtype: {}, treating as Unsupported",
-                    val
-                );
+                // eprintln!("Warning: Unsupported dtype: {}, treating as Unsupported", val);
                 Ok(DataType::Unsupported)
             }
         }

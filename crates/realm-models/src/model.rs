@@ -1,12 +1,12 @@
 //! Complete transformer model implementation
 
 use log::{debug, info, warn};
-use rand::distr::weighted::WeightedIndex;
-use rand::distr::Distribution;
-use rand::rng;
-use realm_compute_cpu::{
-    CandleCpuBackend, CandleNeuralOpsBackend, CpuBackendTrait, NaiveCpuBackend,
-};
+use rand::distributions::weighted::WeightedIndex;
+use rand::distributions::Distribution;
+use rand::thread_rng;
+#[cfg(not(target_arch = "wasm32"))]
+use realm_compute_cpu::CandleCpuBackend;
+use realm_compute_cpu::{CandleNeuralOpsBackend, CpuBackendTrait, NaiveCpuBackend};
 #[cfg(any(feature = "cuda", feature = "metal"))]
 use realm_compute_gpu::CandleGpuBackend;
 #[cfg(feature = "webgpu")]
@@ -15,6 +15,7 @@ use realm_compute_gpu::GpuBackend;
 use realm_compute_gpu::GpuBackendTrait;
 use realm_core::error::Result;
 use realm_core::Tokenizer;
+use realm_metrics::{TokenUsage, UsageTracker};
 
 use super::{GenerationConfig, KVCache, TransformerConfig, TransformerLayer};
 
@@ -40,9 +41,14 @@ pub struct Model {
     candle_backend: CandleNeuralOpsBackend,
     /// CPU backend for optimized CPU operations
     cpu_backend: Box<dyn realm_compute_cpu::CpuBackendTrait>,
-    /// Memory64 model for large models (>4GB) with on-demand layer loading
-    #[cfg(feature = "memory64")]
-    pub memory64_model: Option<crate::memory64_layer_manager::Memory64Model>,
+    /// Usage metrics tracker for cost/billing analytics
+    usage_tracker: Option<UsageTracker>,
+    /// Model name for usage tracking
+    model_name: Option<String>,
+    /// Tenant ID for multi-tenant usage tracking
+    tenant_id: Option<String>,
+    // NOTE: Memory64 support moved to realm-runtime::memory64_model
+    // Use Memory64ModelLoader from realm-runtime for large model loading
 }
 
 /// Transpose a matrix stored in row-major order
@@ -61,9 +67,17 @@ fn transpose_matrix(matrix: &[f32], rows: usize, cols: usize) -> Vec<f32> {
 impl Model {
     /// Create a new model with initialized (zero) weights
     pub fn new(config: TransformerConfig) -> Self {
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&"Model::new - starting".into());
+
         let mut layers = Vec::new();
         let mut kv_caches = Vec::new();
         let head_dim = config.hidden_size / config.num_heads;
+
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &format!("Model::new - creating {} layers", config.num_layers).into(),
+        );
 
         for _ in 0..config.num_layers {
             layers.push(TransformerLayer::new(&config));
@@ -74,19 +88,46 @@ impl Model {
             ));
         }
 
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&"Model::new - layers created, creating candle backend...".into());
+
+        // WASM: Initialize candle backend only on non-WASM platforms
+        #[cfg(not(target_arch = "wasm32"))]
+        let candle_backend = CandleNeuralOpsBackend::new();
+        #[cfg(target_arch = "wasm32")]
+        let candle_backend = {
+            // Use a dummy/minimal candle backend for WASM
+            // We'll use NaiveCpuBackend instead
+            CandleNeuralOpsBackend::new()
+        };
+
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &"Model::new - candle backend created, creating cpu backend...".into(),
+        );
+
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &"Model::new - using lazy allocation (no pre-allocation of weight vectors)".into(),
+        );
+
+        // Lazy allocation: Don't pre-allocate weight vectors
+        // They will be allocated in load_from_gguf() based on actual tensor sizes
+        // This saves memory and allows large models to load in WASM
         Self {
-            token_embeddings: vec![0.0; config.vocab_size * config.hidden_size],
-            output_norm: vec![1.0; config.hidden_size],
-            lm_head: vec![0.0; config.hidden_size * config.vocab_size],
+            token_embeddings: Vec::new(), // Will be allocated during load_from_gguf()
+            output_norm: Vec::new(),      // Will be allocated during load_from_gguf()
+            lm_head: Vec::new(),          // Will be allocated during load_from_gguf()
             kv_caches,
             layers,
             config,
             #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
             gpu: Self::create_gpu_backend(),
-            candle_backend: CandleNeuralOpsBackend::new(),
+            candle_backend,
             cpu_backend: Self::create_cpu_backend(),
-            #[cfg(feature = "memory64")]
-            memory64_model: None,
+            usage_tracker: None,
+            model_name: None,
+            tenant_id: None,
         }
     }
 
@@ -96,6 +137,7 @@ impl Model {
         {
             // In WASM environment, use Naive CPU backend directly
             // Candle CPU backend may not work in WASM
+            #[cfg(feature = "wasm-console-log")]
             info!("WASM: Using Naive CPU backend");
             return Box::new(NaiveCpuBackend);
         }
@@ -163,6 +205,51 @@ impl Model {
         Ok(())
     }
 
+    /// Enable usage metrics tracking with a custom tracker
+    ///
+    /// # Arguments
+    /// * `tracker` - UsageTracker for collecting token usage and costs
+    pub fn set_usage_tracker(&mut self, tracker: UsageTracker) {
+        self.usage_tracker = Some(tracker);
+    }
+
+    /// Set model name for usage tracking (e.g., "llama-7b", "gpt-3.5-turbo")
+    pub fn set_model_name(&mut self, name: impl Into<String>) {
+        self.model_name = Some(name.into());
+    }
+
+    /// Set tenant ID for multi-tenant usage tracking
+    pub fn set_tenant_id(&mut self, id: impl Into<String>) {
+        self.tenant_id = Some(id.into());
+    }
+
+    /// Get the usage tracker (if enabled)
+    pub fn usage_tracker(&self) -> Option<&UsageTracker> {
+        self.usage_tracker.as_ref()
+    }
+
+    /// Get mutable usage tracker (if enabled)
+    pub fn usage_tracker_mut(&mut self) -> Option<&mut UsageTracker> {
+        self.usage_tracker.as_mut()
+    }
+
+    /// Record token usage after generation
+    fn record_usage(&mut self, input_tokens: u64, output_tokens: u64, stop_reason: &str) {
+        if let Some(tracker) = &mut self.usage_tracker {
+            let usage = TokenUsage::new(input_tokens, output_tokens)
+                .with_model(
+                    self.model_name
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                )
+                .with_stop_reason(stop_reason.to_string());
+
+            let tenant = self.tenant_id.as_deref();
+            let model = self.model_name.as_deref();
+            tracker.record_usage(usage, tenant, model);
+        }
+    }
+
     /// Matrix multiplication with GPU/CPU fallback
     ///
     /// Tries GPU backends in this order:
@@ -198,60 +285,13 @@ impl Model {
     ) -> Result<()> {
         use realm_core::error::Error;
 
-        // Check if we should use Memory64 for large models
-        #[cfg(feature = "memory64")]
-        {
-            // Estimate total model size from tensor metadata
-            if let Some(meta) = parser.metadata() {
-                let total_size: usize = meta.tensors.iter().map(|t| t.size_bytes).sum();
-                let size_gb = total_size as f64 / 1_000_000_000.0;
-
-                info!(
-                    "Model size estimate: {:.2} GB ({} bytes)",
-                    size_gb, total_size
-                );
-
-                // Use Memory64 for models >3GB
-                if total_size > 3_000_000_000 {
-                    info!("Large model detected - using Memory64 for on-demand layer loading");
-
-                    // Create Memory64 loader and load the model
-                    let mut mem64_loader = crate::memory64_gguf::Memory64GGUFLoader::new();
-                    let mem64_model = mem64_loader.load_model(parser)?;
-
-                    // Copy embeddings and norms from Memory64Model to self
-                    // (forward pass expects these in the Model struct)
-                    self.token_embeddings
-                        .copy_from_slice(&mem64_model.token_embeddings);
-                    self.output_norm.copy_from_slice(&mem64_model.output_norm);
-                    self.lm_head.copy_from_slice(&mem64_model.lm_head);
-
-                    info!(
-                        "Embeddings and norms loaded ({:.2} MB)",
-                        (self.token_embeddings.len() * 4
-                            + self.output_norm.len() * 4
-                            + self.lm_head.len() * 4) as f64
-                            / 1_000_000.0
-                    );
-
-                    // Store Memory64Model for on-demand layer access
-                    self.memory64_model = Some(mem64_model);
-
-                    info!("Memory64 model loaded - layers will be accessed on-demand");
-                    info!(
-                        "Memory savings: ~{:.2} GB (layers not loaded into RAM)",
-                        (total_size
-                            - (self.token_embeddings.len() * 4
-                                + self.output_norm.len() * 4
-                                + self.lm_head.len() * 4)) as f64
-                            / 1_000_000_000.0
-                    );
-
-                    // Skip standard layer loading
-                    return Ok(());
-                }
-            }
-        }
+        // NOTE: Memory64 loading for large models (>4GB) is now handled by
+        // `Memory64ModelLoader` in realm-runtime. See examples/memory64-demo for usage.
+        //
+        // For models >3GB, use:
+        //   use realm_runtime::memory64_model::Memory64ModelLoader;
+        //   let mut loader = Memory64ModelLoader::new(config, total_size);
+        //   let model = loader.load_model(&mut tensor_loader, &mut parser)?;
 
         // Standard loading path for smaller models
         info!("Using standard loading (all weights in RAM)");
@@ -274,27 +314,48 @@ impl Model {
             // GGUF stores token_embd.weight as [vocab_size, hidden_size]
             // Our embedding lookup correctly handles this format
             // by gathering row token_id from the matrix
+
+            // Lazy allocation: Allocate vector if empty
+            if self.token_embeddings.is_empty() {
+                self.token_embeddings = vec![0.0; embedding_data.len()];
+            }
             self.token_embeddings.copy_from_slice(embedding_data);
         }
 
         // Load output norm
         if let Ok(norm_data) = tensor_loader.load_tensor("output_norm.weight", parser) {
+            // Lazy allocation: Allocate vector if empty
+            if self.output_norm.is_empty() {
+                self.output_norm = vec![0.0; norm_data.len()];
+            }
             // Load raw weights without arbitrary scaling
             self.output_norm.copy_from_slice(norm_data);
         } else {
-            eprintln!("WARN: Failed to load output_norm.weight");
+            warn!("Failed to load output_norm.weight");
         }
 
         // Load LM head - try different tensor names
         if let Ok(lm_head_data) = tensor_loader.load_tensor("output.weight", parser) {
+            // Lazy allocation: Allocate vector if empty
+            if self.lm_head.is_empty() {
+                self.lm_head = vec![0.0; lm_head_data.len()];
+            }
             // GGUF stores output.weight as [vocab_size, hidden_size]
             // Store as-is for matmul_transposed
             self.lm_head.copy_from_slice(lm_head_data);
         } else if let Ok(lm_head_data) = tensor_loader.load_tensor("lm_head.weight", parser) {
+            // Lazy allocation: Allocate vector if empty
+            if self.lm_head.is_empty() {
+                self.lm_head = vec![0.0; lm_head_data.len()];
+            }
             // GGUF stores lm_head.weight as [vocab_size, hidden_size]
             // Store as-is for matmul_transposed
             self.lm_head.copy_from_slice(lm_head_data);
         } else if let Ok(lm_head_data) = tensor_loader.load_tensor("model.lm_head.weight", parser) {
+            // Lazy allocation: Allocate vector if empty
+            if self.lm_head.is_empty() {
+                self.lm_head = vec![0.0; lm_head_data.len()];
+            }
             // GGUF stores model.lm_head.weight as [vocab_size, hidden_size]
             // Store as-is for matmul_transposed
             self.lm_head.copy_from_slice(lm_head_data);
@@ -305,6 +366,10 @@ impl Model {
                 self.config.hidden_size,
                 self.config.vocab_size,
             );
+            // Lazy allocation: Allocate vector if empty
+            if self.lm_head.is_empty() {
+                self.lm_head = vec![0.0; lm_head_transposed.len()];
+            }
             self.lm_head.copy_from_slice(&lm_head_transposed);
         }
 
@@ -344,6 +409,13 @@ impl Model {
                 // Use GGUF weights directly - no transpose needed
                 // matmul_transposed will handle the orientation efficiently
                 layer.attention_weights.wq = crate::weight_format::WeightFormat::F32(wq.to_vec());
+                if log::log_enabled!(log::Level::Debug) {
+                    if let crate::weight_format::WeightFormat::F32(ref data) =
+                        layer.attention_weights.wq
+                    {
+                        Self::tensor_stats(&format!("{} (model)", wq_name), data);
+                    }
+                }
             } else if layer_idx == 0 {
                 warn!("Failed to load {}", wq_name);
             }
@@ -351,6 +423,13 @@ impl Model {
                 // Use GGUF weights directly - no transpose needed
                 // matmul_transposed will handle the orientation efficiently
                 layer.attention_weights.wk = crate::weight_format::WeightFormat::F32(wk.to_vec());
+                if log::log_enabled!(log::Level::Debug) {
+                    if let crate::weight_format::WeightFormat::F32(ref data) =
+                        layer.attention_weights.wk
+                    {
+                        Self::tensor_stats(&format!("{} (model)", wk_name), data);
+                    }
+                }
             } else if layer_idx == 0 {
                 warn!("Failed to load {}", wk_name);
             }
@@ -358,11 +437,25 @@ impl Model {
                 // Use GGUF weights directly - no transpose needed
                 // matmul_transposed will handle the orientation efficiently
                 layer.attention_weights.wv = crate::weight_format::WeightFormat::F32(wv.to_vec());
+                if log::log_enabled!(log::Level::Debug) {
+                    if let crate::weight_format::WeightFormat::F32(ref data) =
+                        layer.attention_weights.wv
+                    {
+                        Self::tensor_stats(&format!("{} (model)", wv_name), data);
+                    }
+                }
             } else if layer_idx == 0 {
                 warn!("Failed to load {}", wv_name);
             }
             if let Ok(wo) = tensor_loader.load_tensor(&wo_name, parser) {
                 layer.attention_weights.wo = crate::weight_format::WeightFormat::F32(wo.to_vec());
+                if log::log_enabled!(log::Level::Debug) {
+                    if let crate::weight_format::WeightFormat::F32(ref data) =
+                        layer.attention_weights.wo
+                    {
+                        Self::tensor_stats(&format!("{} (model)", wo_name), data);
+                    }
+                }
             } else if layer_idx == 0 {
                 warn!("Failed to load {}", wo_name);
             }
@@ -371,6 +464,10 @@ impl Model {
             // Attention norm
             let attn_norm_name = format!("blk.{}.attn_norm.weight", layer_idx);
             if let Ok(norm) = tensor_loader.load_tensor(&attn_norm_name, parser) {
+                // Lazy allocation: Allocate if empty
+                if layer.attention_norm.is_empty() {
+                    layer.attention_norm = vec![0.0; norm.len()];
+                }
                 layer.attention_norm.copy_from_slice(norm);
             }
 
@@ -380,18 +477,34 @@ impl Model {
             let ffn_down_name = format!("blk.{}.ffn_down.weight", layer_idx);
 
             if let Ok(gate) = tensor_loader.load_tensor(&ffn_gate_name, parser) {
+                // Lazy allocation: Allocate if empty
+                if layer.ffn_weights.w_gate.is_empty() {
+                    layer.ffn_weights.w_gate = vec![0.0; gate.len()];
+                }
                 layer.ffn_weights.w_gate.copy_from_slice(gate);
             }
             if let Ok(up) = tensor_loader.load_tensor(&ffn_up_name, parser) {
+                // Lazy allocation: Allocate if empty
+                if layer.ffn_weights.w_up.is_empty() {
+                    layer.ffn_weights.w_up = vec![0.0; up.len()];
+                }
                 layer.ffn_weights.w_up.copy_from_slice(up);
             }
             if let Ok(down) = tensor_loader.load_tensor(&ffn_down_name, parser) {
+                // Lazy allocation: Allocate if empty
+                if layer.ffn_weights.w_down.is_empty() {
+                    layer.ffn_weights.w_down = vec![0.0; down.len()];
+                }
                 layer.ffn_weights.w_down.copy_from_slice(down);
             }
 
             // FFN norm
             let ffn_norm_name = format!("blk.{}.ffn_norm.weight", layer_idx);
             if let Ok(norm) = tensor_loader.load_tensor(&ffn_norm_name, parser) {
+                // Lazy allocation: Allocate if empty
+                if layer.ffn_norm.is_empty() {
+                    layer.ffn_norm = vec![0.0; norm.len()];
+                }
                 layer.ffn_norm.copy_from_slice(norm);
             }
         }
@@ -408,46 +521,7 @@ impl Model {
         hidden_states: &[f32],
         position: usize,
     ) -> Result<Vec<f32>> {
-        // Check if we should use Memory64 path
-        #[cfg(feature = "memory64")]
-        let use_memory64 = self.memory64_model.is_some();
-        #[cfg(not(feature = "memory64"))]
-        let use_memory64 = false;
-
-        if use_memory64 {
-            #[cfg(feature = "memory64")]
-            {
-                // Memory64 path: Get layer from on-demand storage
-                let layer = self
-                    .memory64_model
-                    .as_mut()
-                    .unwrap()
-                    .get_layer(layer_idx as u32)
-                    .map_err(|e| {
-                        realm_core::error::Error::Runtime(format!(
-                            "Memory64 layer {} access failed: {}",
-                            layer_idx, e
-                        ))
-                    })?;
-
-                let kv_cache = &mut self.kv_caches[layer_idx];
-                #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
-                let gpu = self
-                    .gpu
-                    .as_ref()
-                    .map(|g| g.as_ref() as &dyn GpuBackendTrait);
-
-                return layer.forward(
-                    hidden_states,
-                    kv_cache,
-                    position,
-                    &self.candle_backend,
-                    Some(self.cpu_backend.as_ref()),
-                    #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
-                    gpu,
-                );
-            }
-        }
+        // NOTE: Memory64 layer loading removed - use realm-runtime::memory64_model::Memory64ModelLoader
 
         // Standard path: Direct Vec access
         let kv_cache = &mut self.kv_caches[layer_idx];
@@ -496,7 +570,7 @@ impl Model {
                 if emb_idx < self.token_embeddings.len() {
                     hidden_states[out_start + dim_idx] = self.token_embeddings[emb_idx];
                 } else {
-                    eprintln!("WARN: Token {} dim {} out of bounds", token_id, dim_idx);
+                    warn!("Token {} dim {} out of bounds", token_id, dim_idx);
                     break;
                 }
             }
@@ -616,7 +690,7 @@ impl Model {
         }
 
         // Sample from filtered distribution using true randomness
-        let mut rng = rng();
+        let mut rng = thread_rng();
 
         // Convert probabilities to weights for weighted sampling
         // Filter out zero probabilities for efficiency
@@ -742,6 +816,14 @@ impl Model {
         // Decode all tokens to text (skip special tokens)
         let generated_text = tokenizer.decode(&tokens, true)?;
 
+        // Record usage metrics if tracker is enabled
+        let stop_reason = if generated >= max_tokens {
+            "max_tokens"
+        } else {
+            "stop"
+        };
+        self.record_usage(num_prompt_tokens as u64, generated as u64, stop_reason);
+
         Ok(generated_text)
     }
 
@@ -796,8 +878,8 @@ impl Model {
         let num_prompt_tokens = tokens.len();
 
         // PHASE 1: PREFILL - Process prompt tokens in chunks to avoid memory issues
-        eprintln!(
-            "🔥 PREFILL: Processing {} prompt tokens in chunks",
+        info!(
+            "PREFILL: Processing {} prompt tokens in chunks",
             num_prompt_tokens
         );
 
@@ -818,6 +900,7 @@ impl Model {
 
         // PHASE 2: DECODE - Process ONE new token at a time
         let mut pos = num_prompt_tokens;
+        let mut generated = 0;
 
         while pos < num_prompt_tokens + max_tokens - 1 {
             // Generate next token
@@ -853,11 +936,21 @@ impl Model {
                 break;
             }
 
+            generated += 1;
             pos += 1;
         }
 
         // Return full generated text
         let generated_text = tokenizer.decode(&tokens, true)?;
+
+        // Record usage metrics if tracker is enabled
+        let stop_reason = if pos >= num_prompt_tokens + max_tokens - 1 {
+            "max_tokens"
+        } else {
+            "stop"
+        };
+        self.record_usage(num_prompt_tokens as u64, generated as u64, stop_reason);
+
         Ok(generated_text)
     }
 
@@ -889,5 +982,41 @@ impl Model {
         }
 
         Ok(output)
+    }
+
+    /// Debug-only tensor statistics helper
+    fn tensor_stats(name: &str, data: &[f32]) {
+        if data.is_empty() {
+            debug!("{}: empty tensor", name);
+            return;
+        }
+        let mut min_v = f32::INFINITY;
+        let mut max_v = f32::NEG_INFINITY;
+        let mut sum = 0f64;
+        let mut sum_sq = 0f64;
+        for &v in data {
+            if v < min_v {
+                min_v = v;
+            }
+            if v > max_v {
+                max_v = v;
+            }
+            let vd = v as f64;
+            sum += vd;
+            sum_sq += vd * vd;
+        }
+        let n = data.len() as f64;
+        let mean = sum / n;
+        let var = (sum_sq / n) - (mean * mean);
+        let std = if var > 0.0 { var.sqrt() } else { 0.0 };
+        debug!(
+            "{}: len={}, min={:.6}, max={:.6}, mean={:.6}, std={:.6}",
+            name,
+            data.len(),
+            min_v,
+            max_v,
+            mean,
+            std
+        );
     }
 }

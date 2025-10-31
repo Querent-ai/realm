@@ -14,6 +14,7 @@
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex; // No poisoning, faster than std::sync::Mutex
 use std::sync::Arc;
+use tracing::{error, info, warn};
 use wasmtime::{AsContext, Caller, Extern, Linker, Memory, MemoryType, Store};
 
 // Import Candle backends
@@ -408,12 +409,11 @@ impl Memory64Runtime {
     fn create_cpu_backend() -> Option<Arc<dyn CpuBackendTrait>> {
         match CandleCpuBackend::new() {
             Ok(backend) => {
-                eprintln!("✅ Memory64 Runtime: Candle CPU backend initialized");
+                info!("Memory64 Runtime: Candle CPU backend initialized");
                 Some(Arc::new(backend))
             }
             Err(e) => {
-                eprintln!("⚠️  Memory64 Runtime: Candle CPU backend failed: {}", e);
-                eprintln!("   WASM will use NaiveCpuBackend fallback");
+                warn!("Memory64 Runtime: Candle CPU backend failed: {}, WASM will use NaiveCpuBackend fallback", e);
                 None
             }
         }
@@ -426,11 +426,11 @@ impl Memory64Runtime {
 
         match CandleGpuBackend::new() {
             Ok(backend) => {
-                eprintln!("✅ Memory64 Runtime: Candle GPU backend initialized");
+                info!("Memory64 Runtime: Candle GPU backend initialized");
                 Some(Arc::new(backend))
             }
             Err(e) => {
-                eprintln!("⚠️  Memory64 Runtime: Candle GPU backend failed: {}", e);
+                warn!("Memory64 Runtime: Candle GPU backend failed: {}", e);
                 None
             }
         }
@@ -490,14 +490,14 @@ impl Memory64Runtime {
                 let layer = match state_guard.get_layer(layer_id) {
                     Ok(l) => l.clone(),
                     Err(e) => {
-                        eprintln!("❌ Layer {} not found: {}", layer_id, e); // ✅ FIX 4: Log error
+                        error!("Layer {} not found: {}", layer_id, e);
                         return -2;
                     }
                 };
 
                 if layer.size > max_size as usize {
-                    eprintln!(
-                        "❌ Buffer too small for layer {}: need {}, got {}",
+                    error!(
+                        "Buffer too small for layer {}: need {}, got {}",
                         layer_id, layer.size, max_size
                     );
                     return -3;
@@ -507,7 +507,7 @@ impl Memory64Runtime {
                 let wasm_memory = match caller.get_export("memory") {
                     Some(Extern::Memory(mem)) => mem,
                     _ => {
-                        eprintln!("❌ No WASM memory export available");
+                        error!("No WASM memory export available");
                         return -5;
                     }
                 };
@@ -518,15 +518,15 @@ impl Memory64Runtime {
                 let end_ptr = match (wasm_ptr as usize).checked_add(layer.size) {
                     Some(end) => end,
                     None => {
-                        eprintln!("❌ WASM pointer overflow: {} + {}", wasm_ptr, layer.size);
+                        error!("WASM pointer overflow: {} + {}", wasm_ptr, layer.size);
                         state_guard.stats.errors += 1;
                         return -6;
                     }
                 };
 
                 if end_ptr > wasm_mem_size {
-                    eprintln!(
-                        "❌ WASM pointer out of bounds: {} + {} > {}",
+                    error!(
+                        "WASM pointer out of bounds: {} + {} > {}",
                         wasm_ptr, layer.size, wasm_mem_size
                     );
                     state_guard.stats.errors += 1;
@@ -536,14 +536,14 @@ impl Memory64Runtime {
                 // Read from Memory64
                 let mut buffer = vec![0u8; layer.size];
                 if let Err(e) = state_guard.read(caller.as_context(), layer.offset, &mut buffer) {
-                    eprintln!("❌ Failed to read layer {}: {}", layer_id, e); // ✅ FIX 4: Log error
+                    error!("Failed to read layer {}: {}", layer_id, e);
                     state_guard.stats.errors += 1;
                     return -4;
                 }
 
                 // Write to WASM memory (already validated)
                 if let Err(e) = wasm_memory.write(&mut caller, wasm_ptr as usize, &buffer) {
-                    eprintln!("❌ Failed to write to WASM memory: {}", e);
+                    error!("Failed to write to WASM memory: {}", e);
                     state_guard.stats.errors += 1;
                     return -8;
                 }
@@ -569,7 +569,7 @@ impl Memory64Runtime {
                 let wasm_memory = match caller.get_export("memory") {
                     Some(Extern::Memory(mem)) => mem,
                     _ => {
-                        eprintln!("❌ No WASM memory export");
+                        error!("No WASM memory export");
                         return -3;
                     }
                 };
@@ -580,15 +580,15 @@ impl Memory64Runtime {
                 let end_ptr = match (wasm_ptr as usize).checked_add(size as usize) {
                     Some(end) => end,
                     None => {
-                        eprintln!("❌ WASM pointer overflow: {} + {}", wasm_ptr, size);
+                        error!("WASM pointer overflow: {} + {}", wasm_ptr, size);
                         state_guard.stats.errors += 1;
                         return -4;
                     }
                 };
 
                 if end_ptr > wasm_mem_size {
-                    eprintln!(
-                        "❌ WASM pointer out of bounds: {} + {} > {}",
+                    error!(
+                        "WASM pointer out of bounds: {} + {} > {}",
                         wasm_ptr, size, wasm_mem_size
                     );
                     state_guard.stats.errors += 1;
@@ -598,14 +598,14 @@ impl Memory64Runtime {
                 // Read from Memory64
                 let mut buffer = vec![0u8; size as usize];
                 if let Err(e) = state_guard.read(caller.as_context(), offset, &mut buffer) {
-                    eprintln!("❌ memory64_read failed at offset {}: {}", offset, e); // ✅ FIX 4
+                    error!("memory64_read failed at offset {}: {}", offset, e);
                     state_guard.stats.errors += 1;
                     return -2;
                 }
 
                 // Write to WASM memory
                 if let Err(e) = wasm_memory.write(&mut caller, wasm_ptr as usize, &buffer) {
-                    eprintln!("❌ Failed to write to WASM memory: {}", e);
+                    error!("Failed to write to WASM memory: {}", e);
                     state_guard.stats.errors += 1;
                     return -6;
                 }
@@ -659,7 +659,7 @@ impl Memory64Runtime {
                       -> i32 {
                     // Check if backend is available
                     if cpu_backend.is_none() {
-                        eprintln!("❌ Candle CPU backend not available");
+                        error!("Candle CPU backend not available");
                         return -1;
                     }
 
@@ -669,7 +669,7 @@ impl Memory64Runtime {
                     let wasm_memory = match caller.get_export("memory") {
                         Some(Extern::Memory(mem)) => mem,
                         _ => {
-                            eprintln!("❌ No WASM memory export");
+                            error!("No WASM memory export");
                             return -2;
                         }
                     };
@@ -687,12 +687,12 @@ impl Memory64Runtime {
                     let mut b_buffer = vec![0u8; b_size * 4];
 
                     if let Err(e) = wasm_memory.read(&caller, a_ptr as usize, &mut a_buffer) {
-                        eprintln!("❌ Failed to read matrix A: {}", e);
+                        error!("Failed to read matrix A: {}", e);
                         return -3;
                     }
 
                     if let Err(e) = wasm_memory.read(&caller, b_ptr as usize, &mut b_buffer) {
-                        eprintln!("❌ Failed to read matrix B: {}", e);
+                        error!("Failed to read matrix B: {}", e);
                         return -4;
                     }
 
@@ -711,7 +711,7 @@ impl Memory64Runtime {
                     let result = match backend.matmul(&a_f32, &b_f32, m_usize, k_usize, n_usize) {
                         Ok(r) => r,
                         Err(e) => {
-                            eprintln!("❌ Candle matmul failed: {}", e);
+                            error!("Candle matmul failed: {}", e);
                             return -5;
                         }
                     };
@@ -724,7 +724,7 @@ impl Memory64Runtime {
                     if let Err(e) =
                         wasm_memory.write(&mut caller, result_ptr as usize, &result_bytes)
                     {
-                        eprintln!("❌ Failed to write result: {}", e);
+                        error!("Failed to write result: {}", e);
                         return -6;
                     }
 
@@ -746,7 +746,7 @@ impl Memory64Runtime {
                       n: u32|
                       -> i32 {
                     if cpu_backend2.is_none() {
-                        eprintln!("❌ Candle CPU backend not available");
+                        error!("Candle CPU backend not available");
                         return -1;
                     }
 
@@ -755,7 +755,7 @@ impl Memory64Runtime {
                     let wasm_memory = match caller.get_export("memory") {
                         Some(Extern::Memory(mem)) => mem,
                         _ => {
-                            eprintln!("❌ No WASM memory export");
+                            error!("No WASM memory export");
                             return -2;
                         }
                     };
@@ -771,12 +771,12 @@ impl Memory64Runtime {
                     let mut b_buffer = vec![0u8; b_size * 4];
 
                     if let Err(e) = wasm_memory.read(&caller, a_ptr as usize, &mut a_buffer) {
-                        eprintln!("❌ Failed to read matrix A: {}", e);
+                        error!("Failed to read matrix A: {}", e);
                         return -3;
                     }
 
                     if let Err(e) = wasm_memory.read(&caller, b_ptr as usize, &mut b_buffer) {
-                        eprintln!("❌ Failed to read matrix B: {}", e);
+                        error!("Failed to read matrix B: {}", e);
                         return -4;
                     }
 
@@ -795,7 +795,7 @@ impl Memory64Runtime {
                     {
                         Ok(r) => r,
                         Err(e) => {
-                            eprintln!("❌ Candle matmul_transposed failed: {}", e);
+                            error!("Candle matmul_transposed failed: {}", e);
                             return -5;
                         }
                     };
@@ -806,7 +806,7 @@ impl Memory64Runtime {
                     if let Err(e) =
                         wasm_memory.write(&mut caller, result_ptr as usize, &result_bytes)
                     {
-                        eprintln!("❌ Failed to write result: {}", e);
+                        error!("Failed to write result: {}", e);
                         return -6;
                     }
 
@@ -814,6 +814,292 @@ impl Memory64Runtime {
                 },
             )?;
         }
+
+        // ========================================
+        // Model Storage Host Functions
+        // ========================================
+
+        // Host function: Store a model from GGUF bytes in HOST memory
+        // Parameters: gguf_ptr, gguf_len (WASM memory offsets)
+        // Returns: model_id on success (> 0), negative on error
+        linker.func_wrap(
+            "env",
+            "realm_store_model",
+            move |mut caller: Caller<'_, ()>, gguf_ptr: u32, gguf_len: u32| -> i32 {
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_store_model: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                // Validate pointer bounds
+                let wasm_mem_size = wasm_memory.data_size(&caller);
+                let end_ptr = match (gguf_ptr as usize).checked_add(gguf_len as usize) {
+                    Some(end) => end,
+                    None => {
+                        error!(
+                            "realm_store_model: Pointer overflow: {} + {}",
+                            gguf_ptr, gguf_len
+                        );
+                        return -2;
+                    }
+                };
+
+                if end_ptr > wasm_mem_size {
+                    error!(
+                        "realm_store_model: Pointer out of bounds: {} + {} > {}",
+                        gguf_ptr, gguf_len, wasm_mem_size
+                    );
+                    return -3;
+                }
+
+                // Read GGUF bytes from WASM memory
+                let mut gguf_buffer = vec![0u8; gguf_len as usize];
+                if let Err(e) = wasm_memory.read(&caller, gguf_ptr as usize, &mut gguf_buffer) {
+                    error!("realm_store_model: Failed to read GGUF data: {}", e);
+                    return -4;
+                }
+
+                // Store model in HOST storage
+                use crate::model_storage::GLOBAL_MODEL_STORAGE;
+                match GLOBAL_MODEL_STORAGE.store_model(&gguf_buffer) {
+                    Ok(model_id) => {
+                        info!(
+                            "realm_store_model: Stored model {} ({} bytes)",
+                            model_id, gguf_len
+                        );
+                        model_id as i32
+                    }
+                    Err(e) => {
+                        error!("realm_store_model: Failed to store model: {}", e);
+                        -5
+                    }
+                }
+            },
+        )?;
+
+        // Host function: Get tensor data from HOST storage (with automatic dequantization)
+        // Parameters: model_id, tensor_name_ptr, tensor_name_len, out_ptr, out_max_len
+        // Returns: actual tensor size in BYTES on success (f32 * 4), negative on error
+        //
+        // This function:
+        // 1. Retrieves quantized tensor from storage
+        // 2. Dequantizes to f32 automatically
+        // 3. Writes f32 array to WASM memory
+        linker.func_wrap(
+            "env",
+            "realm_get_tensor",
+            move |mut caller: Caller<'_, ()>,
+                  model_id: u32,
+                  tensor_name_ptr: u32,
+                  tensor_name_len: u32,
+                  out_ptr: u32,
+                  out_max_len: u32|
+                  -> i32 {
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_get_tensor: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                let wasm_mem_size = wasm_memory.data_size(&caller);
+
+                // Read tensor name from WASM memory
+                let name_end = match (tensor_name_ptr as usize).checked_add(tensor_name_len as usize)
+                {
+                    Some(end) => end,
+                    None => {
+                        error!("realm_get_tensor: Name pointer overflow");
+                        return -2;
+                    }
+                };
+
+                if name_end > wasm_mem_size {
+                    error!("realm_get_tensor: Name pointer out of bounds");
+                    return -3;
+                }
+
+                let mut name_buffer = vec![0u8; tensor_name_len as usize];
+                if let Err(e) = wasm_memory.read(&caller, tensor_name_ptr as usize, &mut name_buffer)
+                {
+                    error!("realm_get_tensor: Failed to read tensor name: {}", e);
+                    return -4;
+                }
+
+                let tensor_name = match std::str::from_utf8(&name_buffer) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("realm_get_tensor: Invalid UTF-8 in tensor name: {}", e);
+                        return -5;
+                    }
+                };
+
+                // Validate output pointer
+                let out_end = match (out_ptr as usize).checked_add(out_max_len as usize) {
+                    Some(end) => end,
+                    None => {
+                        error!("realm_get_tensor: Output pointer overflow");
+                        return -6;
+                    }
+                };
+
+                if out_end > wasm_mem_size {
+                    error!("realm_get_tensor: Output pointer out of bounds");
+                    return -7;
+                }
+
+                // Get tensor from HOST storage
+                use crate::model_storage::GLOBAL_MODEL_STORAGE;
+                let tensor = match GLOBAL_MODEL_STORAGE.get_tensor(model_id, tensor_name) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!(
+                            "realm_get_tensor: Failed to get tensor '{}' from model {}: {}",
+                            tensor_name, model_id, e
+                        );
+                        return -8;
+                    }
+                };
+
+                // Dequantize tensor to f32
+                use realm_core::quant::dequantize_tensor;
+                let element_count = tensor.element_count() as usize;
+                let dequantized = match dequantize_tensor(&tensor.data, tensor.dtype, element_count) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        error!(
+                            "realm_get_tensor: Failed to dequantize tensor '{}': {}",
+                            tensor_name, e
+                        );
+                        return -9;
+                    }
+                };
+
+                // Convert f32 array to bytes
+                let f32_bytes: Vec<u8> = dequantized
+                    .iter()
+                    .flat_map(|&f| f.to_le_bytes())
+                    .collect();
+
+                // Check if output buffer is large enough
+                if f32_bytes.len() > out_max_len as usize {
+                    error!(
+                        "realm_get_tensor: Buffer too small: need {} bytes, got {}",
+                        f32_bytes.len(),
+                        out_max_len
+                    );
+                    return -10;
+                }
+
+                // Write dequantized f32 data to WASM memory
+                if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, &f32_bytes) {
+                    error!("realm_get_tensor: Failed to write tensor data: {}", e);
+                    return -11;
+                }
+
+                info!(
+                    "realm_get_tensor: Loaded and dequantized tensor '{}' from model {} ({} elements, {} bytes)",
+                    tensor_name,
+                    model_id,
+                    element_count,
+                    f32_bytes.len()
+                );
+
+                f32_bytes.len() as i32
+            },
+        )?;
+
+        // Host function: Get model metadata (tensor count, total size)
+        // Parameters: model_id, out_tensor_count_ptr, out_total_size_ptr
+        // Returns: 0 on success, negative on error
+        linker.func_wrap(
+            "env",
+            "realm_get_model_info",
+            move |mut caller: Caller<'_, ()>,
+                  model_id: u32,
+                  out_tensor_count_ptr: u32,
+                  out_total_size_ptr: u32|
+                  -> i32 {
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_get_model_info: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                // Get model from storage
+                use crate::model_storage::GLOBAL_MODEL_STORAGE;
+                let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("realm_get_model_info: Model {} not found: {}", model_id, e);
+                        return -2;
+                    }
+                };
+
+                let tensor_count = model.tensor_count() as u32;
+                let total_size = model.total_size as u64;
+
+                // Write tensor_count (u32, 4 bytes)
+                let tensor_count_bytes = tensor_count.to_le_bytes();
+                if let Err(e) = wasm_memory.write(
+                    &mut caller,
+                    out_tensor_count_ptr as usize,
+                    &tensor_count_bytes,
+                ) {
+                    error!("realm_get_model_info: Failed to write tensor count: {}", e);
+                    return -3;
+                }
+
+                // Write total_size (u64, 8 bytes)
+                let total_size_bytes = total_size.to_le_bytes();
+                if let Err(e) =
+                    wasm_memory.write(&mut caller, out_total_size_ptr as usize, &total_size_bytes)
+                {
+                    error!("realm_get_model_info: Failed to write total size: {}", e);
+                    return -4;
+                }
+
+                info!(
+                    "realm_get_model_info: Model {} has {} tensors, {} bytes total",
+                    model_id, tensor_count, total_size
+                );
+
+                0 // Success
+            },
+        )?;
+
+        // Host function: Remove model from storage (cleanup)
+        // Parameters: model_id
+        // Returns: 0 on success, negative on error
+        linker.func_wrap(
+            "env",
+            "realm_remove_model",
+            move |_caller: Caller<'_, ()>, model_id: u32| -> i32 {
+                use crate::model_storage::GLOBAL_MODEL_STORAGE;
+                match GLOBAL_MODEL_STORAGE.remove_model(model_id) {
+                    Ok(()) => {
+                        info!("realm_remove_model: Removed model {}", model_id);
+                        0
+                    }
+                    Err(e) => {
+                        error!(
+                            "realm_remove_model: Failed to remove model {}: {}",
+                            model_id, e
+                        );
+                        -1
+                    }
+                }
+            },
+        )?;
 
         Ok(())
     }

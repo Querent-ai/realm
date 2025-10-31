@@ -38,6 +38,9 @@ pub mod memory64_layer_manager;
 #[cfg(feature = "memory64")]
 pub mod memory64_gguf;
 
+// Host-side model storage (quantized weights in HOST, not WASM)
+pub mod model_storage;
+
 // Async background prefetch optimization
 #[cfg(feature = "async-prefetch")]
 pub mod async_prefetch;

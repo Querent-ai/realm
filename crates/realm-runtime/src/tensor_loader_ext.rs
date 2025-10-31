@@ -19,7 +19,7 @@ use realm_core::{
 /// # Returns
 /// * `Result<WeightFormat>` - Weight tensor in optimal format
 pub fn load_weight_optimal<R: std::io::Read + std::io::Seek>(
-    tensor_name: &str,
+    _tensor_name: &str,
     metadata: &TensorMetadata,
     parser: &mut GGUFParser<R>,
     _data_offset: u64,
@@ -92,10 +92,7 @@ pub fn load_weight_optimal<R: std::io::Read + std::io::Seek>(
         }
         _ => {
             // Unsupported format, fall back to F32
-            eprintln!(
-                "WARN: Unsupported weight format {:?} for {}, falling back to F32",
-                metadata.desc.dtype, tensor_name
-            );
+            // eprintln!("WARN: Unsupported weight format {:?} for {}, falling back to F32", metadata.desc.dtype, tensor_name);
 
             // Try to parse as F32 anyway
             let mut result = Vec::with_capacity(metadata.desc.element_count());

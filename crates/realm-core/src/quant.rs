@@ -70,18 +70,15 @@ pub fn dequantize_q4_k(block: &BlockQ4_K, output: &mut [f32]) -> Result<()> {
     // Debug: print d and min values and scales extraction
     static FIRST_BLOCK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
     if FIRST_BLOCK.swap(false, std::sync::atomic::Ordering::Relaxed) {
-        eprintln!("Q4_K dequant first block:");
-        eprintln!("  d={:.10}, min={:.10}", d, min);
-        eprintln!("  scales bytes: {:02x?}", &block.scales);
+        // eprintln!("Q4_K dequant first block:");
+        // eprintln!("  d={:.10}, min={:.10}", d, min);
+        // eprintln!("  scales bytes: {:02x?}", &block.scales);
 
         // Test scale extraction for first 4 groups
         for is in 0..4 {
-            let (sc0, m0) = get_scale_min_k4(is * 2, &block.scales);
-            let (sc1, m1) = get_scale_min_k4(is * 2 + 1, &block.scales);
-            eprintln!(
-                "  Group {}: sc0={}, m0={}, sc1={}, m1={}",
-                is, sc0, m0, sc1, m1
-            );
+            let (_sc0, _m0) = get_scale_min_k4(is * 2, &block.scales);
+            let (_sc1, _m1) = get_scale_min_k4(is * 2 + 1, &block.scales);
+            // eprintln!("  Group {}: sc0={}, m0={}, sc1={}, m1={}", is, _sc0, _m0, _sc1, _m1);
         }
     }
 
@@ -367,6 +364,177 @@ pub fn get_block_size(dtype: DataType) -> Option<usize> {
         DataType::Q8_K => Some(QK_K),
         _ => None,
     }
+}
+
+/// Dequantize an entire tensor from quantized bytes to f32
+///
+/// This is the main entry point for dequantizing tensors from HOST storage.
+/// Handles all quantization formats by dispatching to the appropriate block dequantizer.
+///
+/// # Arguments
+/// * `data` - Raw quantized bytes
+/// * `dtype` - Quantization format (Q4_K_M, Q8_0, etc.)
+/// * `element_count` - Number of f32 elements to produce
+///
+/// # Returns
+/// Vec<f32> with dequantized values
+pub fn dequantize_tensor(data: &[u8], dtype: DataType, element_count: usize) -> Result<Vec<f32>> {
+    let mut output = vec![0.0f32; element_count];
+
+    match dtype {
+        DataType::Q4_K => {
+            // Q4_K uses 256-element blocks
+            let block_size = QK_K; // 256
+            let bytes_per_block = std::mem::size_of::<BlockQ4_K>(); // 144 bytes
+
+            if !data.len().is_multiple_of(bytes_per_block) {
+                return Err(Error::InvalidFormat(format!(
+                    "Q4_K data size {} is not a multiple of block size {}",
+                    data.len(),
+                    bytes_per_block
+                )));
+            }
+
+            let num_blocks = data.len() / bytes_per_block;
+            let expected_elements = num_blocks * block_size;
+
+            if element_count != expected_elements {
+                return Err(Error::InvalidShape(format!(
+                    "Element count mismatch: expected {}, got {}",
+                    expected_elements, element_count
+                )));
+            }
+
+            // Dequantize each block
+            for block_idx in 0..num_blocks {
+                let block_start = block_idx * bytes_per_block;
+                let block_bytes = &data[block_start..block_start + bytes_per_block];
+
+                // Safety: BlockQ4_K is repr(C) and we verified size
+                let block = unsafe { &*(block_bytes.as_ptr() as *const BlockQ4_K) };
+
+                let output_start = block_idx * block_size;
+                let output_slice = &mut output[output_start..output_start + block_size];
+
+                dequantize_q4_k(block, output_slice)?;
+            }
+        }
+
+        DataType::Q6_K => {
+            let block_size = QK_K;
+            let bytes_per_block = std::mem::size_of::<BlockQ6_K>();
+            let num_blocks = data.len() / bytes_per_block;
+
+            for block_idx in 0..num_blocks {
+                let block_start = block_idx * bytes_per_block;
+                let block_bytes = &data[block_start..block_start + bytes_per_block];
+                let block = unsafe { &*(block_bytes.as_ptr() as *const BlockQ6_K) };
+
+                let output_start = block_idx * block_size;
+                let output_slice = &mut output[output_start..output_start + block_size];
+
+                dequantize_q6_k(block, output_slice)?;
+            }
+        }
+
+        DataType::Q5_K => {
+            let block_size = QK_K;
+            let bytes_per_block = std::mem::size_of::<BlockQ5_K>();
+            let num_blocks = data.len() / bytes_per_block;
+
+            for block_idx in 0..num_blocks {
+                let block_start = block_idx * bytes_per_block;
+                let block_bytes = &data[block_start..block_start + bytes_per_block];
+                let block = unsafe { &*(block_bytes.as_ptr() as *const BlockQ5_K) };
+
+                let output_start = block_idx * block_size;
+                let output_slice = &mut output[output_start..output_start + block_size];
+
+                dequantize_q5_k(block, output_slice)?;
+            }
+        }
+
+        DataType::Q8_K => {
+            let block_size = QK_K;
+            let bytes_per_block = std::mem::size_of::<BlockQ8_K>();
+            let num_blocks = data.len() / bytes_per_block;
+
+            for block_idx in 0..num_blocks {
+                let block_start = block_idx * bytes_per_block;
+                let block_bytes = &data[block_start..block_start + bytes_per_block];
+                let block = unsafe { &*(block_bytes.as_ptr() as *const BlockQ8_K) };
+
+                let output_start = block_idx * block_size;
+                let output_slice = &mut output[output_start..output_start + block_size];
+
+                dequantize_q8_k(block, output_slice)?;
+            }
+        }
+
+        DataType::Q8_0 => {
+            let block_size = Q8_BLOCK_SIZE;
+            let bytes_per_block = std::mem::size_of::<BlockQ8_0>();
+            let num_blocks = data.len() / bytes_per_block;
+
+            for block_idx in 0..num_blocks {
+                let block_start = block_idx * bytes_per_block;
+                let block_bytes = &data[block_start..block_start + bytes_per_block];
+                let block = unsafe { &*(block_bytes.as_ptr() as *const BlockQ8_0) };
+
+                let output_start = block_idx * block_size;
+                let output_slice = &mut output[output_start..output_start + block_size];
+
+                dequantize_q8_0(block, output_slice)?;
+            }
+        }
+
+        DataType::F32 => {
+            // Already f32, just copy
+            if data.len() != element_count * 4 {
+                return Err(Error::InvalidShape(format!(
+                    "F32 data size mismatch: expected {} bytes, got {}",
+                    element_count * 4,
+                    data.len()
+                )));
+            }
+
+            for i in 0..element_count {
+                let bytes = [
+                    data[i * 4],
+                    data[i * 4 + 1],
+                    data[i * 4 + 2],
+                    data[i * 4 + 3],
+                ];
+                output[i] = f32::from_le_bytes(bytes);
+            }
+        }
+
+        DataType::F16 => {
+            // Convert f16 to f32
+            if data.len() != element_count * 2 {
+                return Err(Error::InvalidShape(format!(
+                    "F16 data size mismatch: expected {} bytes, got {}",
+                    element_count * 2,
+                    data.len()
+                )));
+            }
+
+            for i in 0..element_count {
+                let bytes = [data[i * 2], data[i * 2 + 1]];
+                let f16_val = half::f16::from_le_bytes(bytes);
+                output[i] = f16_val.to_f32();
+            }
+        }
+
+        _ => {
+            return Err(Error::UnsupportedDataType(format!(
+                "Dequantization not implemented for {:?}",
+                dtype
+            )));
+        }
+    }
+
+    Ok(output)
 }
 
 #[cfg(test)]

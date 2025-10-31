@@ -71,7 +71,7 @@ pub fn create_attention(backend: AttentionBackend) -> Box<dyn Attention> {
             if let Some(flash) = flash::FlashAttention::try_new() {
                 Box::new(flash)
             } else {
-                eprintln!("⚠️  Flash Attention not available, using standard attention");
+                // eprintln!("⚠️  Flash Attention not available, using standard attention");
                 Box::new(standard::StandardAttention::new())
             }
         }
