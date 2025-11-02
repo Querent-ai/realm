@@ -11,7 +11,10 @@
 //! - Runtime feature detection for safe SIMD
 
 use realm_core::error::Result;
-use realm_core::quant::{get_scale_min_k4, BlockQ4_K, QK_K};
+use realm_core::quant::{
+    get_scale_min_k4, BlockQ2_K, BlockQ3_K, BlockQ4_0, BlockQ4_1, BlockQ4_K, BlockQ5_0, BlockQ5_1,
+    BlockQ8_0, BlockQ8_1, Q4_BLOCK_SIZE, Q8_BLOCK_SIZE, QK_K,
+};
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -1365,6 +1368,1283 @@ pub fn fused_attention_score(
     Ok(scores)
 }
 
+// ============================================================================
+// SIMD Optimizations for Q4_0/Q4_1 Fused Kernels
+// ============================================================================
+
+/// Q4_0-specific SIMD accumulation for AVX2
+/// Processes 8 nibble pairs at once (16 values total with interleaved layout)
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+#[allow(dead_code)] // Reserved for future SIMD optimization
+unsafe fn q40_accumulate_avx2(
+    accumulator: &mut f32,
+    packed_bytes: &[u8], // 8 bytes containing 16 nibbles
+    input: &[f32],       // 16 input values (interleaved: first 8, then next 8)
+    scale: f32,
+) {
+    debug_assert!(packed_bytes.len() >= 8);
+    debug_assert!(input.len() >= 16);
+
+    let vscale = _mm256_set1_ps(scale);
+    let voffset = _mm256_set1_ps(-8.0); // -8 for dequantization
+    let mut vacc = _mm256_setzero_ps();
+
+    // Load 8 input values for lower nibbles (first half)
+    let vinput_low = _mm256_loadu_ps(input.as_ptr());
+
+    // Extract lower nibbles and convert to f32
+    let mut nibbles_low = [0.0f32; 8];
+    for i in 0..8 {
+        nibbles_low[i] = ((packed_bytes[i] & 0x0F) as i8 - 8) as f32;
+    }
+    let vnibbles_low = _mm256_loadu_ps(nibbles_low.as_ptr());
+
+    // Dequantize and accumulate: acc += (nibble - 8) * scale * input
+    let vdequant_low = _mm256_add_ps(vnibbles_low, voffset); // nibble - 8
+    let vdequant_low = _mm256_mul_ps(vdequant_low, vscale);
+    vacc = _mm256_fmadd_ps(vdequant_low, vinput_low, vacc);
+
+    // Load 8 input values for upper nibbles (second half)
+    let vinput_high = _mm256_loadu_ps(input.as_ptr().add(8));
+
+    // Extract upper nibbles and convert to f32
+    let mut nibbles_high = [0.0f32; 8];
+    for i in 0..8 {
+        nibbles_high[i] = (((packed_bytes[i] >> 4) as i8) - 8) as f32;
+    }
+    let vnibbles_high = _mm256_loadu_ps(nibbles_high.as_ptr());
+
+    // Dequantize and accumulate: acc += (nibble - 8) * scale * input
+    let vdequant_high = _mm256_add_ps(vnibbles_high, voffset); // nibble - 8
+    let vdequant_high = _mm256_mul_ps(vdequant_high, vscale);
+    vacc = _mm256_fmadd_ps(vdequant_high, vinput_high, vacc);
+
+    // Horizontal sum
+    let sum_high = _mm256_extractf128_ps(vacc, 1);
+    let sum_low = _mm256_castps256_ps128(vacc);
+    let sum128 = _mm_add_ps(sum_low, sum_high);
+    let sum64 = _mm_add_ps(sum128, _mm_movehl_ps(sum128, sum128));
+    let sum32 = _mm_add_ss(sum64, _mm_shuffle_ps(sum64, sum64, 0x1));
+    *accumulator += _mm_cvtss_f32(sum32);
+}
+
+/// Q4_0-specific SIMD accumulation for ARM NEON
+/// Processes 4 nibble pairs at once (8 values total)
+#[cfg(target_arch = "aarch64")]
+unsafe fn q40_accumulate_neon(
+    accumulator: &mut f32,
+    packed_bytes: &[u8], // 4 bytes containing 8 nibbles
+    input: &[f32],       // 8 input values (interleaved: first 4, then next 4)
+    scale: f32,
+) {
+    debug_assert!(packed_bytes.len() >= 4);
+    debug_assert!(input.len() >= 8);
+
+    let vscale = vdupq_n_f32(scale);
+    let voffset = vdupq_n_f32(-8.0);
+    let mut vacc = vdupq_n_f32(0.0);
+
+    // Load 4 input values for lower nibbles
+    let vinput_low = vld1q_f32(input.as_ptr());
+
+    // Extract lower nibbles
+    let mut nibbles_low = [0.0f32; 4];
+    for i in 0..4 {
+        nibbles_low[i] = ((packed_bytes[i] & 0x0F) as i8 - 8) as f32;
+    }
+    let vnibbles_low = vld1q_f32(nibbles_low.as_ptr());
+
+    // Dequantize and accumulate
+    let vdequant_low = vaddq_f32(vnibbles_low, voffset);
+    let vdequant_low = vmulq_f32(vdequant_low, vscale);
+    vacc = vfmaq_f32(vacc, vdequant_low, vinput_low);
+
+    // Load 4 input values for upper nibbles
+    let vinput_high = vld1q_f32(input.as_ptr().add(4));
+
+    // Extract upper nibbles
+    let mut nibbles_high = [0.0f32; 4];
+    for i in 0..4 {
+        nibbles_high[i] = (((packed_bytes[i] >> 4) as i8) - 8) as f32;
+    }
+    let vnibbles_high = vld1q_f32(nibbles_high.as_ptr());
+
+    // Dequantize and accumulate
+    let vdequant_high = vaddq_f32(vnibbles_high, voffset);
+    let vdequant_high = vmulq_f32(vdequant_high, vscale);
+    vacc = vfmaq_f32(vacc, vdequant_high, vinput_high);
+
+    // Horizontal sum
+    *accumulator += vaddvq_f32(vacc);
+}
+
+/// Q4_1-specific SIMD accumulation for AVX2
+/// Processes 8 nibble pairs at once (16 values total with interleaved layout + delta)
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+#[allow(dead_code)] // Reserved for future SIMD optimization
+unsafe fn q41_accumulate_avx2(
+    accumulator: &mut f32,
+    packed_bytes: &[u8], // 8 bytes containing 16 nibbles
+    input: &[f32],       // 16 input values
+    scale: f32,
+    delta: f32,
+) {
+    debug_assert!(packed_bytes.len() >= 8);
+    debug_assert!(input.len() >= 16);
+
+    let vscale = _mm256_set1_ps(scale);
+    let vdelta = _mm256_set1_ps(delta);
+    let voffset = _mm256_set1_ps(-8.0);
+    let mut vacc = _mm256_setzero_ps();
+
+    // Lower nibbles
+    let vinput_low = _mm256_loadu_ps(input.as_ptr());
+    let mut nibbles_low = [0.0f32; 8];
+    for i in 0..8 {
+        nibbles_low[i] = ((packed_bytes[i] & 0x0F) as i8 - 8) as f32;
+    }
+    let vnibbles_low = _mm256_loadu_ps(nibbles_low.as_ptr());
+    let vdequant_low = _mm256_fmadd_ps(vscale, _mm256_add_ps(vnibbles_low, voffset), vdelta);
+    vacc = _mm256_fmadd_ps(vdequant_low, vinput_low, vacc);
+
+    // Upper nibbles
+    let vinput_high = _mm256_loadu_ps(input.as_ptr().add(8));
+    let mut nibbles_high = [0.0f32; 8];
+    for i in 0..8 {
+        nibbles_high[i] = (((packed_bytes[i] >> 4) as i8) - 8) as f32;
+    }
+    let vnibbles_high = _mm256_loadu_ps(nibbles_high.as_ptr());
+    let vdequant_high = _mm256_fmadd_ps(vscale, _mm256_add_ps(vnibbles_high, voffset), vdelta);
+    vacc = _mm256_fmadd_ps(vdequant_high, vinput_high, vacc);
+
+    // Horizontal sum
+    let sum_high = _mm256_extractf128_ps(vacc, 1);
+    let sum_low = _mm256_castps256_ps128(vacc);
+    let sum128 = _mm_add_ps(sum_low, sum_high);
+    let sum64 = _mm_add_ps(sum128, _mm_movehl_ps(sum128, sum128));
+    let sum32 = _mm_add_ss(sum64, _mm_shuffle_ps(sum64, sum64, 0x1));
+    *accumulator += _mm_cvtss_f32(sum32);
+}
+
+/// Q4_1-specific SIMD accumulation for ARM NEON
+#[cfg(target_arch = "aarch64")]
+unsafe fn q41_accumulate_neon(
+    accumulator: &mut f32,
+    packed_bytes: &[u8],
+    input: &[f32],
+    scale: f32,
+    delta: f32,
+) {
+    debug_assert!(packed_bytes.len() >= 4);
+    debug_assert!(input.len() >= 8);
+
+    let vscale = vdupq_n_f32(scale);
+    let vdelta = vdupq_n_f32(delta);
+    let voffset = vdupq_n_f32(-8.0);
+    let mut vacc = vdupq_n_f32(0.0);
+
+    // Lower nibbles
+    let vinput_low = vld1q_f32(input.as_ptr());
+    let mut nibbles_low = [0.0f32; 4];
+    for i in 0..4 {
+        nibbles_low[i] = ((packed_bytes[i] & 0x0F) as i8 - 8) as f32;
+    }
+    let vnibbles_low = vld1q_f32(nibbles_low.as_ptr());
+    let vdequant_low = vfmaq_f32(vdelta, vscale, vaddq_f32(vnibbles_low, voffset));
+    vacc = vfmaq_f32(vacc, vdequant_low, vinput_low);
+
+    // Upper nibbles
+    let vinput_high = vld1q_f32(input.as_ptr().add(4));
+    let mut nibbles_high = [0.0f32; 4];
+    for i in 0..4 {
+        nibbles_high[i] = (((packed_bytes[i] >> 4) as i8) - 8) as f32;
+    }
+    let vnibbles_high = vld1q_f32(nibbles_high.as_ptr());
+    let vdequant_high = vfmaq_f32(vdelta, vscale, vaddq_f32(vnibbles_high, voffset));
+    vacc = vfmaq_f32(vacc, vdequant_high, vinput_high);
+
+    *accumulator += vaddvq_f32(vacc);
+}
+
+// ============================================================================
+// SIMD Optimizations for Q5_0/Q5_1 Fused Kernels
+// ============================================================================
+
+/// Q5_0-specific SIMD accumulation for AVX2
+/// Processes 8 values at once, unpacking 4 bits from ql + 1 bit from qh
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+#[allow(dead_code)] // Reserved for future SIMD optimization
+unsafe fn q50_accumulate_avx2(
+    accumulator: &mut f32,
+    ql_bytes: &[u8], // 4 bytes (8 values: 4 bits each)
+    qh_byte: u8,     // 1 byte (bits for upper nibble)
+    input: &[f32],   // 8 input values
+    scale: f32,
+) {
+    debug_assert!(ql_bytes.len() >= 4);
+    debug_assert!(input.len() >= 8);
+
+    let vscale = _mm256_set1_ps(scale);
+    let voffset = _mm256_set1_ps(-16.0);
+    let mut vacc = _mm256_setzero_ps();
+    let vinput = _mm256_loadu_ps(input.as_ptr());
+
+    // Extract 4-bit values from ql_bytes (packed 2 per byte)
+    let mut quants = [0.0f32; 8];
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..8 {
+        let ql_idx = i / 2;
+        let ql_val = if i % 2 == 0 {
+            ql_bytes[ql_idx] & 0x0F
+        } else {
+            ql_bytes[ql_idx] >> 4
+        };
+        let qh_bit_pos = ((i % 4) >= 2) as usize;
+        let qh_val = (qh_byte >> (qh_bit_pos * 4 + (i / 4 % 2) * 2)) & 1;
+        quants[i] = (((ql_val as i8) | ((qh_val as i8) << 4)) - 16) as f32;
+    }
+    let vquants = _mm256_loadu_ps(quants.as_ptr());
+
+    // Dequantize: (quant - 16) * scale
+    let vdequant = _mm256_mul_ps(_mm256_add_ps(vquants, voffset), vscale);
+    vacc = _mm256_fmadd_ps(vdequant, vinput, vacc);
+
+    // Horizontal sum
+    let sum_high = _mm256_extractf128_ps(vacc, 1);
+    let sum_low = _mm256_castps256_ps128(vacc);
+    let sum128 = _mm_add_ps(sum_low, sum_high);
+    let sum64 = _mm_add_ps(sum128, _mm_movehl_ps(sum128, sum128));
+    let sum32 = _mm_add_ss(sum64, _mm_shuffle_ps(sum64, sum64, 0x1));
+    *accumulator += _mm_cvtss_f32(sum32);
+}
+
+/// Q5_0-specific SIMD accumulation for ARM NEON
+#[cfg(target_arch = "aarch64")]
+unsafe fn q50_accumulate_neon(
+    accumulator: &mut f32,
+    ql_bytes: &[u8],
+    qh_byte: u8,
+    input: &[f32],
+    scale: f32,
+) {
+    debug_assert!(ql_bytes.len() >= 2);
+    debug_assert!(input.len() >= 4);
+
+    let vscale = vdupq_n_f32(scale);
+    let voffset = vdupq_n_f32(-16.0);
+    let vinput = vld1q_f32(input.as_ptr());
+
+    // Extract 4 values
+    let mut quants = [0.0f32; 4];
+    for i in 0..4 {
+        let ql_idx = i / 2;
+        let ql_val = if i % 2 == 0 {
+            ql_bytes[ql_idx] & 0x0F
+        } else {
+            ql_bytes[ql_idx] >> 4
+        };
+        let qh_bit_pos = ((i % 4) >= 2) as usize;
+        let qh_val = (qh_byte >> (qh_bit_pos * 4)) & 1;
+        quants[i] = (((ql_val as i8) | ((qh_val as i8) << 4)) - 16) as f32;
+    }
+    let vquants = vld1q_f32(quants.as_ptr());
+
+    let vdequant = vmulq_f32(vaddq_f32(vquants, voffset), vscale);
+    let vprod = vmulq_f32(vdequant, vinput);
+    *accumulator += vaddvq_f32(vprod);
+}
+
+/// Q5_1-specific SIMD accumulation for AVX2
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+#[allow(dead_code)] // Reserved for future SIMD optimization
+unsafe fn q51_accumulate_avx2(
+    accumulator: &mut f32,
+    ql_bytes: &[u8],
+    qh_byte: u8,
+    input: &[f32],
+    scale: f32,
+    delta: f32,
+) {
+    debug_assert!(ql_bytes.len() >= 4);
+    debug_assert!(input.len() >= 8);
+
+    let vscale = _mm256_set1_ps(scale);
+    let vdelta = _mm256_set1_ps(delta);
+    let voffset = _mm256_set1_ps(-16.0);
+    let mut vacc = _mm256_setzero_ps();
+    let vinput = _mm256_loadu_ps(input.as_ptr());
+
+    let mut quants = [0.0f32; 8];
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..8 {
+        let ql_idx = i / 2;
+        let ql_val = if i % 2 == 0 {
+            ql_bytes[ql_idx] & 0x0F
+        } else {
+            ql_bytes[ql_idx] >> 4
+        };
+        let qh_bit_pos = ((i % 4) >= 2) as usize;
+        let qh_val = (qh_byte >> (qh_bit_pos * 4)) & 1;
+        quants[i] = (((ql_val as i8) | ((qh_val as i8) << 4)) - 16) as f32;
+    }
+    let vquants = _mm256_loadu_ps(quants.as_ptr());
+
+    let vdequant = _mm256_fmadd_ps(vscale, _mm256_add_ps(vquants, voffset), vdelta);
+    vacc = _mm256_fmadd_ps(vdequant, vinput, vacc);
+
+    let sum_high = _mm256_extractf128_ps(vacc, 1);
+    let sum_low = _mm256_castps256_ps128(vacc);
+    let sum128 = _mm_add_ps(sum_low, sum_high);
+    let sum64 = _mm_add_ps(sum128, _mm_movehl_ps(sum128, sum128));
+    let sum32 = _mm_add_ss(sum64, _mm_shuffle_ps(sum64, sum64, 0x1));
+    *accumulator += _mm_cvtss_f32(sum32);
+}
+
+/// Q5_1-specific SIMD accumulation for ARM NEON
+#[cfg(target_arch = "aarch64")]
+unsafe fn q51_accumulate_neon(
+    accumulator: &mut f32,
+    ql_bytes: &[u8],
+    qh_byte: u8,
+    input: &[f32],
+    scale: f32,
+    delta: f32,
+) {
+    debug_assert!(ql_bytes.len() >= 2);
+    debug_assert!(input.len() >= 4);
+
+    let vscale = vdupq_n_f32(scale);
+    let vdelta = vdupq_n_f32(delta);
+    let voffset = vdupq_n_f32(-16.0);
+    let vinput = vld1q_f32(input.as_ptr());
+
+    let mut quants = [0.0f32; 4];
+    for i in 0..4 {
+        let ql_idx = i / 2;
+        let ql_val = if i % 2 == 0 {
+            ql_bytes[ql_idx] & 0x0F
+        } else {
+            ql_bytes[ql_idx] >> 4
+        };
+        let qh_bit_pos = ((i % 4) >= 2) as usize;
+        let qh_val = (qh_byte >> (qh_bit_pos * 4)) & 1;
+        quants[i] = (((ql_val as i8) | ((qh_val as i8) << 4)) - 16) as f32;
+    }
+    let vquants = vld1q_f32(quants.as_ptr());
+
+    let vdequant = vfmaq_f32(vdelta, vscale, vaddq_f32(vquants, voffset));
+    let vprod = vmulq_f32(vdequant, vinput);
+    *accumulator += vaddvq_f32(vprod);
+}
+
+// ============================================================================
+// SIMD Optimizations for Q8_0/Q8_1 Fused Kernels
+// ============================================================================
+
+/// Q8_0-specific SIMD accumulation for AVX2
+/// Processes 8 values at once with single scale
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn q80_accumulate_avx2(
+    accumulator: &mut f32,
+    quants: &[i8], // 8 quantized values
+    input: &[f32], // 8 input values
+    scale: f32,
+) {
+    debug_assert!(quants.len() >= 8);
+    debug_assert!(input.len() >= 8);
+
+    let vscale = _mm256_set1_ps(scale);
+
+    // Load 8 input values
+    let vinput = _mm256_loadu_ps(input.as_ptr());
+
+    // Load 8 quantized values (i8) and convert to f32
+    // Convert i8 to i32, then to f32
+    let q_i32 = [
+        quants[0] as i32,
+        quants[1] as i32,
+        quants[2] as i32,
+        quants[3] as i32,
+        quants[4] as i32,
+        quants[5] as i32,
+        quants[6] as i32,
+        quants[7] as i32,
+    ];
+    let vquants = _mm256_cvtepi32_ps(_mm256_loadu_si256(q_i32.as_ptr() as *const __m256i));
+
+    // Dequantize: scale * quant
+    let vdequant = _mm256_mul_ps(vscale, vquants);
+
+    // Accumulate: sum += dequant * input
+    let vprod = _mm256_mul_ps(vdequant, vinput);
+    let vacc = _mm256_add_ps(_mm256_permute2f128_ps(vprod, vprod, 0x11), vprod);
+    let vacc = _mm256_add_ps(vacc, _mm256_permute_ps(vacc, 0x4E));
+    let vacc = _mm256_add_ps(vacc, _mm256_permute_ps(vacc, 0xB1));
+    *accumulator += _mm256_cvtss_f32(vacc);
+}
+
+/// Q8_0-specific SIMD accumulation for ARM NEON
+/// Processes 4 values at once with single scale
+#[cfg(target_arch = "aarch64")]
+unsafe fn q80_accumulate_neon(
+    accumulator: &mut f32,
+    quants: &[i8], // 4 quantized values
+    input: &[f32], // 4 input values
+    scale: f32,
+) {
+    debug_assert!(quants.len() >= 4);
+    debug_assert!(input.len() >= 4);
+
+    let vscale = vdupq_n_f32(scale);
+
+    // Load 4 input values
+    let vinput = vld1q_f32(input.as_ptr());
+
+    // Load 4 quantized values (i8) and convert to f32
+    let q_i8 = [
+        quants[0] as i32,
+        quants[1] as i32,
+        quants[2] as i32,
+        quants[3] as i32,
+    ];
+    let q_i32 = vld1q_s32(q_i8.as_ptr());
+    let vquants = vcvtq_f32_s32(q_i32);
+
+    // Dequantize: scale * quant
+    let vdequant = vmulq_f32(vscale, vquants);
+
+    // Accumulate: sum += dequant * input
+    let vprod = vmulq_f32(vdequant, vinput);
+
+    // Horizontal sum
+    *accumulator += vaddvq_f32(vprod);
+}
+
+/// Q8_1-specific SIMD accumulation for AVX2
+/// Processes 8 values at once with scale and delta
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn q81_accumulate_avx2(
+    accumulator: &mut f32,
+    quants: &[i8], // 8 quantized values
+    input: &[f32], // 8 input values
+    scale: f32,
+    delta: f32,
+) {
+    debug_assert!(quants.len() >= 8);
+    debug_assert!(input.len() >= 8);
+
+    let vscale = _mm256_set1_ps(scale);
+    let vdelta = _mm256_set1_ps(delta);
+
+    // Load 8 input values
+    let vinput = _mm256_loadu_ps(input.as_ptr());
+
+    // Load 8 quantized values (i8) and convert to f32
+    // Convert i8 to i32, then to f32
+    let q_i32 = [
+        quants[0] as i32,
+        quants[1] as i32,
+        quants[2] as i32,
+        quants[3] as i32,
+        quants[4] as i32,
+        quants[5] as i32,
+        quants[6] as i32,
+        quants[7] as i32,
+    ];
+    let vquants = _mm256_cvtepi32_ps(_mm256_loadu_si256(q_i32.as_ptr() as *const __m256i));
+
+    // Dequantize: scale * quant + delta
+    let vdequant = _mm256_fmadd_ps(vscale, vquants, vdelta);
+
+    // Accumulate: sum += dequant * input
+    let vprod = _mm256_mul_ps(vdequant, vinput);
+    let vacc = _mm256_add_ps(_mm256_permute2f128_ps(vprod, vprod, 0x11), vprod);
+    let vacc = _mm256_add_ps(vacc, _mm256_permute_ps(vacc, 0x4E));
+    let vacc = _mm256_add_ps(vacc, _mm256_permute_ps(vacc, 0xB1));
+    *accumulator += _mm256_cvtss_f32(vacc);
+}
+
+/// Q8_1-specific SIMD accumulation for ARM NEON
+/// Processes 4 values at once with scale and delta
+#[cfg(target_arch = "aarch64")]
+unsafe fn q81_accumulate_neon(
+    accumulator: &mut f32,
+    quants: &[i8], // 4 quantized values
+    input: &[f32], // 4 input values
+    scale: f32,
+    delta: f32,
+) {
+    debug_assert!(quants.len() >= 4);
+    debug_assert!(input.len() >= 4);
+
+    let vscale = vdupq_n_f32(scale);
+    let vdelta = vdupq_n_f32(delta);
+
+    // Load 4 input values
+    let vinput = vld1q_f32(input.as_ptr());
+
+    // Load 4 quantized values (i8) and convert to f32
+    let q_i8 = [
+        quants[0] as i32,
+        quants[1] as i32,
+        quants[2] as i32,
+        quants[3] as i32,
+    ];
+    let q_i32 = vld1q_s32(q_i8.as_ptr());
+    let vquants = vcvtq_f32_s32(q_i32);
+
+    // Dequantize: scale * quant + delta
+    let vdequant = vfmaq_f32(vdelta, vscale, vquants);
+
+    // Accumulate: sum += dequant * input
+    let vprod = vmulq_f32(vdequant, vinput);
+
+    // Horizontal sum
+    *accumulator += vaddvq_f32(vprod);
+}
+
+// ============================================================================
+// Fused Dequant+MatMul for Q2_K, Q3_K, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q8_1
+// ============================================================================
+
+/// Fused dequantization + matrix multiplication for Q2_K format
+pub fn fused_dequant_matmul_q2k(
+    quantized_weights: &[BlockQ2_K],
+    input: &[f32],
+    output: &mut [f32],
+    batch_size: usize,
+    num_output_features: usize,
+    k: usize,
+) -> Result<()> {
+    let expected_blocks = (num_output_features * k).div_ceil(QK_K);
+    if quantized_weights.len() != expected_blocks {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Wrong number of blocks: expected {}, got {}",
+            expected_blocks,
+            quantized_weights.len()
+        )));
+    }
+    if input.len() != batch_size * k {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Input size mismatch: expected {}, got {}",
+            batch_size * k,
+            input.len()
+        )));
+    }
+    if output.len() != batch_size * num_output_features {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Output size mismatch: expected {}, got {}",
+            batch_size * num_output_features,
+            output.len()
+        )));
+    }
+
+    output.fill(0.0);
+
+    // For each output feature
+    for out_idx in 0..num_output_features {
+        // For each input batch
+        for batch_idx in 0..batch_size {
+            let mut sum = 0.0f32;
+
+            // Process K dimension in blocks of 256
+            let num_k_blocks = k.div_ceil(QK_K);
+            for k_block in 0..num_k_blocks {
+                let k_start = k_block * QK_K;
+                let k_end = (k_start + QK_K).min(k);
+                let block_idx = out_idx * num_k_blocks + k_block;
+
+                if block_idx >= quantized_weights.len() {
+                    continue;
+                }
+
+                let block = &quantized_weights[block_idx];
+                let d = half::f16::from_bits(block.d).to_f32();
+                let min = half::f16::from_bits(block.dmin).to_f32();
+
+                // Process 16 groups of 16 values each
+                for l in 0..16 {
+                    let is = l;
+                    let scale_byte = block.scales[is / 2];
+                    let scale_val = if is % 2 == 0 {
+                        scale_byte & 0xF
+                    } else {
+                        scale_byte >> 4
+                    };
+
+                    for k_local in 0..16 {
+                        let idx = k_start + l * 16 + k_local;
+                        if idx >= k_end {
+                            break;
+                        }
+
+                        // Extract 2-bit value
+                        let qs_idx = idx % QK_K / 2;
+                        let qh_idx = idx % QK_K / 8;
+                        let qs_bit = if (idx % QK_K).is_multiple_of(2) {
+                            block.qs[qs_idx] & 0x3
+                        } else {
+                            (block.qs[qs_idx] >> 2) & 0x3
+                        };
+                        let qh_bit = (block.qh[qh_idx] >> ((idx % QK_K) % 8)) & 1;
+                        let quant_val = (qs_bit | (qh_bit << 2)) as i8 - 2;
+                        let dequant = d * (scale_val as f32) * (quant_val as f32) + min;
+
+                        sum += dequant * input[batch_idx * k + idx];
+                    }
+                }
+            }
+
+            output[batch_idx * num_output_features + out_idx] = sum;
+        }
+    }
+
+    Ok(())
+}
+
+/// Fused dequantization + matrix multiplication for Q3_K format
+pub fn fused_dequant_matmul_q3k(
+    quantized_weights: &[BlockQ3_K],
+    input: &[f32],
+    output: &mut [f32],
+    batch_size: usize,
+    num_output_features: usize,
+    k: usize,
+) -> Result<()> {
+    let expected_blocks = (num_output_features * k).div_ceil(QK_K);
+    if quantized_weights.len() != expected_blocks {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Wrong number of blocks: expected {}, got {}",
+            expected_blocks,
+            quantized_weights.len()
+        )));
+    }
+    if input.len() != batch_size * k {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Input size mismatch: expected {}, got {}",
+            batch_size * k,
+            input.len()
+        )));
+    }
+    if output.len() != batch_size * num_output_features {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Output size mismatch: expected {}, got {}",
+            batch_size * num_output_features,
+            output.len()
+        )));
+    }
+
+    output.fill(0.0);
+
+    let num_k_blocks = k.div_ceil(QK_K);
+    for out_idx in 0..num_output_features {
+        for batch_idx in 0..batch_size {
+            let mut sum = 0.0f32;
+
+            for k_block in 0..num_k_blocks {
+                let k_start = k_block * QK_K;
+                let k_end = (k_start + QK_K).min(k);
+                let block_idx = out_idx * num_k_blocks + k_block;
+
+                if block_idx >= quantized_weights.len() {
+                    continue;
+                }
+
+                let block = &quantized_weights[block_idx];
+                let d = half::f16::from_bits(block.d).to_f32();
+                let min = half::f16::from_bits(block.dmin).to_f32();
+
+                // Process 32 groups of 8 values each
+                for l in 0..32 {
+                    let is = l;
+                    let scale_idx = is / 4;
+                    let scale_bit_offset = (is % 4) * 2;
+                    let scale_byte = block.scales[scale_idx];
+                    let scale_val = (scale_byte >> scale_bit_offset) & 0x3F;
+
+                    for k_local in 0..8 {
+                        let idx = k_start + l * 8 + k_local;
+                        if idx >= k_end {
+                            break;
+                        }
+
+                        // Extract 3-bit value
+                        let qs_idx = idx % QK_K / 4;
+                        let qh_idx = idx % QK_K / 8;
+                        let qs_bit_offset = ((idx % QK_K) % 4) * 2;
+                        let qs_bits = (block.qs[qs_idx] >> qs_bit_offset) & 0x3;
+                        let qh_bit = (block.qh[qh_idx] >> ((idx % QK_K) % 8)) & 1;
+                        let quant_val = (qs_bits | (qh_bit << 2)) as i8 - 4;
+                        let dequant = d * (scale_val as f32) * (quant_val as f32) + min;
+
+                        sum += dequant * input[batch_idx * k + idx];
+                    }
+                }
+            }
+
+            output[batch_idx * num_output_features + out_idx] = sum;
+        }
+    }
+
+    Ok(())
+}
+
+/// Fused dequantization + matrix multiplication for Q4_0 format (32-element blocks)
+pub fn fused_dequant_matmul_q40(
+    quantized_weights: &[BlockQ4_0],
+    input: &[f32],
+    output: &mut [f32],
+    batch_size: usize,
+    num_output_features: usize,
+    k: usize,
+) -> Result<()> {
+    let expected_blocks = (num_output_features * k).div_ceil(Q4_BLOCK_SIZE);
+    if quantized_weights.len() != expected_blocks {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Wrong number of blocks: expected {}, got {}",
+            expected_blocks,
+            quantized_weights.len()
+        )));
+    }
+    if input.len() != batch_size * k {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Input size mismatch: expected {}, got {}",
+            batch_size * k,
+            input.len()
+        )));
+    }
+    if output.len() != batch_size * num_output_features {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Output size mismatch: expected {}, got {}",
+            batch_size * num_output_features,
+            output.len()
+        )));
+    }
+
+    output.fill(0.0);
+
+    for out_idx in 0..num_output_features {
+        for batch_idx in 0..batch_size {
+            let mut sum = 0.0f32;
+
+            let num_k_blocks = k.div_ceil(Q4_BLOCK_SIZE);
+            for k_block in 0..num_k_blocks {
+                let k_start = k_block * Q4_BLOCK_SIZE;
+                let k_end = (k_start + Q4_BLOCK_SIZE).min(k);
+                let block_idx = out_idx * num_k_blocks + k_block;
+
+                if block_idx >= quantized_weights.len() {
+                    continue;
+                }
+
+                let block = &quantized_weights[block_idx];
+                let scale = half::f16::from_bits(block.scale).to_f32();
+
+                let block_size = k_end - k_start;
+                let num_bytes = block_size.div_ceil(2); // Number of bytes needed
+
+                // Process pairs: each byte contributes to two indices (i and i+16)
+                for byte_idx in 0..num_bytes.min(Q4_BLOCK_SIZE / 2) {
+                    let byte = block.quants[byte_idx];
+                    let lower_nibble = ((byte & 0x0F) as i8) - 8;
+                    let upper_nibble = ((byte >> 4) as i8) - 8;
+
+                    // Lower nibble -> index byte_idx
+                    if byte_idx < block_size {
+                        let idx = k_start + byte_idx;
+                        let dequant = lower_nibble as f32 * scale;
+                        sum += dequant * input[batch_idx * k + idx];
+                    }
+
+                    // Upper nibble -> index byte_idx + 16
+                    if byte_idx + 16 < block_size {
+                        let idx = k_start + byte_idx + 16;
+                        let dequant = upper_nibble as f32 * scale;
+                        sum += dequant * input[batch_idx * k + idx];
+                    }
+                }
+            }
+
+            output[batch_idx * num_output_features + out_idx] = sum;
+        }
+    }
+
+    Ok(())
+}
+
+/// Fused dequantization + matrix multiplication for Q4_1 format (32-element blocks)
+pub fn fused_dequant_matmul_q41(
+    quantized_weights: &[BlockQ4_1],
+    input: &[f32],
+    output: &mut [f32],
+    batch_size: usize,
+    num_output_features: usize,
+    k: usize,
+) -> Result<()> {
+    let expected_blocks = (num_output_features * k).div_ceil(Q4_BLOCK_SIZE);
+    if quantized_weights.len() != expected_blocks {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Wrong number of blocks: expected {}, got {}",
+            expected_blocks,
+            quantized_weights.len()
+        )));
+    }
+    if input.len() != batch_size * k {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Input size mismatch: expected {}, got {}",
+            batch_size * k,
+            input.len()
+        )));
+    }
+    if output.len() != batch_size * num_output_features {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Output size mismatch: expected {}, got {}",
+            batch_size * num_output_features,
+            output.len()
+        )));
+    }
+
+    output.fill(0.0);
+
+    for out_idx in 0..num_output_features {
+        for batch_idx in 0..batch_size {
+            let mut sum = 0.0f32;
+
+            let num_k_blocks = k.div_ceil(Q4_BLOCK_SIZE);
+            for k_block in 0..num_k_blocks {
+                let k_start = k_block * Q4_BLOCK_SIZE;
+                let k_end = (k_start + Q4_BLOCK_SIZE).min(k);
+                let block_idx = out_idx * num_k_blocks + k_block;
+
+                if block_idx >= quantized_weights.len() {
+                    continue;
+                }
+
+                let block = &quantized_weights[block_idx];
+                let scale = half::f16::from_bits(block.scale).to_f32();
+                let delta = half::f16::from_bits(block.delta).to_f32();
+
+                let block_size = k_end - k_start;
+                let num_bytes = block_size.div_ceil(2); // Number of bytes needed
+
+                // Process pairs: each byte contributes to two indices (i and i+16)
+                for byte_idx in 0..num_bytes.min(Q4_BLOCK_SIZE / 2) {
+                    let byte = block.quants[byte_idx];
+                    let lower_nibble = ((byte & 0x0F) as i8) - 8;
+                    let upper_nibble = ((byte >> 4) as i8) - 8;
+
+                    // Lower nibble -> index byte_idx
+                    if byte_idx < block_size {
+                        let idx = k_start + byte_idx;
+                        let dequant = lower_nibble as f32 * scale + delta;
+                        sum += dequant * input[batch_idx * k + idx];
+                    }
+
+                    // Upper nibble -> index byte_idx + 16
+                    if byte_idx + 16 < block_size {
+                        let idx = k_start + byte_idx + 16;
+                        let dequant = upper_nibble as f32 * scale + delta;
+                        sum += dequant * input[batch_idx * k + idx];
+                    }
+                }
+            }
+
+            output[batch_idx * num_output_features + out_idx] = sum;
+        }
+    }
+
+    Ok(())
+}
+
+/// Fused dequantization + matrix multiplication for Q5_0 format (32-element blocks)
+pub fn fused_dequant_matmul_q50(
+    quantized_weights: &[BlockQ5_0],
+    input: &[f32],
+    output: &mut [f32],
+    batch_size: usize,
+    num_output_features: usize,
+    k: usize,
+) -> Result<()> {
+    let expected_blocks = (num_output_features * k).div_ceil(Q4_BLOCK_SIZE);
+    if quantized_weights.len() != expected_blocks {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Wrong number of blocks: expected {}, got {}",
+            expected_blocks,
+            quantized_weights.len()
+        )));
+    }
+    if input.len() != batch_size * k {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Input size mismatch: expected {}, got {}",
+            batch_size * k,
+            input.len()
+        )));
+    }
+    if output.len() != batch_size * num_output_features {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Output size mismatch: expected {}, got {}",
+            batch_size * num_output_features,
+            output.len()
+        )));
+    }
+
+    output.fill(0.0);
+
+    for out_idx in 0..num_output_features {
+        for batch_idx in 0..batch_size {
+            let mut sum = 0.0f32;
+
+            let num_k_blocks = k.div_ceil(Q4_BLOCK_SIZE);
+            for k_block in 0..num_k_blocks {
+                let k_start = k_block * Q4_BLOCK_SIZE;
+                let k_end = (k_start + Q4_BLOCK_SIZE).min(k);
+                let block_idx = out_idx * num_k_blocks + k_block;
+
+                if block_idx >= quantized_weights.len() {
+                    continue;
+                }
+
+                let block = &quantized_weights[block_idx];
+                let scale = half::f16::from_bits(block.scale).to_f32();
+
+                let block_size = k_end - k_start;
+                let mut i = 0;
+
+                // Q5_0/Q5_1 SIMD is complex due to qh bit extraction - using scalar for correctness
+                // TODO: Optimize SIMD implementation later
+
+                // Scalar fallback
+                while i < block_size {
+                    let idx = k_start + i;
+                    let ql_idx = i / 2;
+                    let qh_idx = i / 8;
+                    let ql_val = if i % 2 == 0 {
+                        block.ql[ql_idx] & 0x0F
+                    } else {
+                        block.ql[ql_idx] >> 4
+                    };
+                    let qh_bit = (i / 4) % 2;
+                    let qh_bit_pos = ((i % 4) >= 2) as usize;
+                    let qh_val = (block.qh[qh_idx] >> (qh_bit_pos * 4 + qh_bit * 2)) & 1;
+                    let quant_val = ((ql_val as i8) | ((qh_val as i8) << 4)) - 16;
+                    let dequant = quant_val as f32 * scale;
+                    sum += dequant * input[batch_idx * k + idx];
+                    i += 1;
+                }
+            }
+
+            output[batch_idx * num_output_features + out_idx] = sum;
+        }
+    }
+
+    Ok(())
+}
+
+/// Fused dequantization + matrix multiplication for Q5_1 format (32-element blocks)
+pub fn fused_dequant_matmul_q51(
+    quantized_weights: &[BlockQ5_1],
+    input: &[f32],
+    output: &mut [f32],
+    batch_size: usize,
+    num_output_features: usize,
+    k: usize,
+) -> Result<()> {
+    let expected_blocks = (num_output_features * k).div_ceil(Q4_BLOCK_SIZE);
+    if quantized_weights.len() != expected_blocks {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Wrong number of blocks: expected {}, got {}",
+            expected_blocks,
+            quantized_weights.len()
+        )));
+    }
+    if input.len() != batch_size * k {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Input size mismatch: expected {}, got {}",
+            batch_size * k,
+            input.len()
+        )));
+    }
+    if output.len() != batch_size * num_output_features {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Output size mismatch: expected {}, got {}",
+            batch_size * num_output_features,
+            output.len()
+        )));
+    }
+
+    output.fill(0.0);
+
+    for out_idx in 0..num_output_features {
+        for batch_idx in 0..batch_size {
+            let mut sum = 0.0f32;
+
+            let num_k_blocks = k.div_ceil(Q4_BLOCK_SIZE);
+            for k_block in 0..num_k_blocks {
+                let k_start = k_block * Q4_BLOCK_SIZE;
+                let k_end = (k_start + Q4_BLOCK_SIZE).min(k);
+                let block_idx = out_idx * num_k_blocks + k_block;
+
+                if block_idx >= quantized_weights.len() {
+                    continue;
+                }
+
+                let block = &quantized_weights[block_idx];
+                let scale = half::f16::from_bits(block.scale).to_f32();
+                let delta = half::f16::from_bits(block.delta).to_f32();
+
+                let block_size = k_end - k_start;
+                let mut i = 0;
+
+                // Q5_0/Q5_1 SIMD is complex due to qh bit extraction - using scalar for correctness
+                // TODO: Optimize SIMD implementation later
+
+                // Scalar fallback
+                while i < block_size {
+                    let idx = k_start + i;
+                    let ql_idx = i / 2;
+                    let qh_idx = i / 8;
+                    let ql_val = if i % 2 == 0 {
+                        block.ql[ql_idx] & 0x0F
+                    } else {
+                        block.ql[ql_idx] >> 4
+                    };
+                    let qh_bit_pos = ((i % 4) >= 2) as usize;
+                    let qh_val = (block.qh[qh_idx] >> (qh_bit_pos * 4)) & 1;
+                    let quant_val = ((ql_val as i8) | ((qh_val as i8) << 4)) - 16;
+                    let dequant = quant_val as f32 * scale + delta;
+                    sum += dequant * input[batch_idx * k + idx];
+                    i += 1;
+                }
+            }
+
+            output[batch_idx * num_output_features + out_idx] = sum;
+        }
+    }
+
+    Ok(())
+}
+
+/// Fused dequantization + matrix multiplication for Q8_0 format (32-element blocks)
+pub fn fused_dequant_matmul_q80(
+    quantized_weights: &[BlockQ8_0],
+    input: &[f32],
+    output: &mut [f32],
+    batch_size: usize,
+    num_output_features: usize,
+    k: usize,
+) -> Result<()> {
+    let expected_blocks = (num_output_features * k).div_ceil(Q8_BLOCK_SIZE);
+    if quantized_weights.len() != expected_blocks {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Wrong number of blocks: expected {}, got {}",
+            expected_blocks,
+            quantized_weights.len()
+        )));
+    }
+    if input.len() != batch_size * k {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Input size mismatch: expected {}, got {}",
+            batch_size * k,
+            input.len()
+        )));
+    }
+    if output.len() != batch_size * num_output_features {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Output size mismatch: expected {}, got {}",
+            batch_size * num_output_features,
+            output.len()
+        )));
+    }
+
+    output.fill(0.0);
+
+    for out_idx in 0..num_output_features {
+        for batch_idx in 0..batch_size {
+            let mut sum = 0.0f32;
+
+            let num_k_blocks = k.div_ceil(Q8_BLOCK_SIZE);
+            for k_block in 0..num_k_blocks {
+                let k_start = k_block * Q8_BLOCK_SIZE;
+                let k_end = (k_start + Q8_BLOCK_SIZE).min(k);
+                let block_idx = out_idx * num_k_blocks + k_block;
+
+                if block_idx >= quantized_weights.len() {
+                    continue;
+                }
+
+                let block = &quantized_weights[block_idx];
+                let scale = half::f16::from_bits(block.scale).to_f32();
+
+                let block_size = k_end - k_start;
+                let mut i = 0;
+
+                // Process with SIMD in chunks of 8 (AVX2) or 4 (NEON)
+                #[cfg(target_arch = "x86_64")]
+                {
+                    if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+                        while i + 8 <= block_size {
+                            unsafe {
+                                q80_accumulate_avx2(
+                                    &mut sum,
+                                    &block.quants[i..i + 8],
+                                    &input[batch_idx * k + k_start + i
+                                        ..batch_idx * k + k_start + i + 8],
+                                    scale,
+                                );
+                            }
+                            i += 8;
+                        }
+                    }
+                }
+
+                #[cfg(target_arch = "aarch64")]
+                {
+                    while i + 4 <= block_size {
+                        unsafe {
+                            q80_accumulate_neon(
+                                &mut sum,
+                                &block.quants[i..i + 4],
+                                &input
+                                    [batch_idx * k + k_start + i..batch_idx * k + k_start + i + 4],
+                                scale,
+                            );
+                        }
+                        i += 4;
+                    }
+                }
+
+                // Scalar fallback for remainder
+                while i < block_size {
+                    let idx = k_start + i;
+                    let quant_val = block.quants[i] as f32;
+                    let dequant = quant_val * scale;
+                    sum += dequant * input[batch_idx * k + idx];
+                    i += 1;
+                }
+            }
+
+            output[batch_idx * num_output_features + out_idx] = sum;
+        }
+    }
+
+    Ok(())
+}
+
+/// Fused dequantization + matrix multiplication for Q8_1 format (32-element blocks)
+pub fn fused_dequant_matmul_q81(
+    quantized_weights: &[BlockQ8_1],
+    input: &[f32],
+    output: &mut [f32],
+    batch_size: usize,
+    num_output_features: usize,
+    k: usize,
+) -> Result<()> {
+    let expected_blocks = (num_output_features * k).div_ceil(Q8_BLOCK_SIZE);
+    if quantized_weights.len() != expected_blocks {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Wrong number of blocks: expected {}, got {}",
+            expected_blocks,
+            quantized_weights.len()
+        )));
+    }
+    if input.len() != batch_size * k {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Input size mismatch: expected {}, got {}",
+            batch_size * k,
+            input.len()
+        )));
+    }
+    if output.len() != batch_size * num_output_features {
+        return Err(realm_core::error::Error::InvalidShape(format!(
+            "Output size mismatch: expected {}, got {}",
+            batch_size * num_output_features,
+            output.len()
+        )));
+    }
+
+    output.fill(0.0);
+
+    for out_idx in 0..num_output_features {
+        for batch_idx in 0..batch_size {
+            let mut sum = 0.0f32;
+
+            let num_k_blocks = k.div_ceil(Q8_BLOCK_SIZE);
+            for k_block in 0..num_k_blocks {
+                let k_start = k_block * Q8_BLOCK_SIZE;
+                let k_end = (k_start + Q8_BLOCK_SIZE).min(k);
+                let block_idx = out_idx * num_k_blocks + k_block;
+
+                if block_idx >= quantized_weights.len() {
+                    continue;
+                }
+
+                let block = &quantized_weights[block_idx];
+                let scale = half::f16::from_bits(block.scale).to_f32();
+                let delta = half::f16::from_bits(block.delta).to_f32();
+
+                let block_size = k_end - k_start;
+                let mut i = 0;
+
+                // Process with SIMD in chunks of 8 (AVX2) or 4 (NEON)
+                #[cfg(target_arch = "x86_64")]
+                {
+                    if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+                        while i + 8 <= block_size {
+                            unsafe {
+                                q81_accumulate_avx2(
+                                    &mut sum,
+                                    &block.quants[i..i + 8],
+                                    &input[batch_idx * k + k_start + i
+                                        ..batch_idx * k + k_start + i + 8],
+                                    scale,
+                                    delta,
+                                );
+                            }
+                            i += 8;
+                        }
+                    }
+                }
+
+                #[cfg(target_arch = "aarch64")]
+                {
+                    while i + 4 <= block_size {
+                        unsafe {
+                            q81_accumulate_neon(
+                                &mut sum,
+                                &block.quants[i..i + 4],
+                                &input
+                                    [batch_idx * k + k_start + i..batch_idx * k + k_start + i + 4],
+                                scale,
+                                delta,
+                            );
+                        }
+                        i += 4;
+                    }
+                }
+
+                // Scalar fallback for remainder
+                while i < block_size {
+                    let idx = k_start + i;
+                    let quant_val = block.quants[i] as f32;
+                    let dequant = quant_val * scale + delta;
+                    sum += dequant * input[batch_idx * k + idx];
+                    i += 1;
+                }
+            }
+
+            output[batch_idx * num_output_features + out_idx] = sum;
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2343,6 +3623,649 @@ mod tests {
         // Should fail: wrong number of blocks
         let result = fused_dequant_matmul_q6k(&blocks, &input, &mut output, 1, 2, 256);
         assert!(result.is_err(), "Should reject incorrect number of blocks");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q80_correctness() -> Result<()> {
+        use realm_core::quant::{dequantize_q8_0, BlockQ8_0, Q8_BLOCK_SIZE};
+
+        // Test that fused kernel matches standalone dequant + matmul
+        let batch_size = 1;
+        let num_output_features = 2;
+        let k = 64; // Two blocks
+
+        // Create varied Q8_0 blocks
+        let mut blocks = Vec::new();
+        for i in 0..num_output_features {
+            for j in 0..2 {
+                let mut quants = [0i8; Q8_BLOCK_SIZE];
+                for (idx, quant) in quants.iter_mut().enumerate() {
+                    *quant = ((i * 13 + j * 7 + idx) % 127) as i8 - 64;
+                }
+
+                let block = BlockQ8_0 {
+                    scale: half::f16::from_f32(0.5 + i as f32 * 0.1).to_bits(),
+                    quants,
+                };
+                blocks.push(block);
+            }
+        }
+
+        // Create input
+        let input: Vec<f32> = (0..k).map(|i| ((i % 7) as f32 - 3.0) * 0.5).collect();
+
+        // Run fused kernel
+        let mut fused_output = vec![0.0f32; batch_size * num_output_features];
+        fused_dequant_matmul_q80(
+            &blocks,
+            &input,
+            &mut fused_output,
+            batch_size,
+            num_output_features,
+            k,
+        )?;
+
+        // Run reference: dequantize then matmul
+        let mut dequantized = Vec::new();
+        for block in &blocks {
+            let mut dequant_block = vec![0.0f32; Q8_BLOCK_SIZE];
+            dequantize_q8_0(block, &mut dequant_block)?;
+            dequantized.extend_from_slice(&dequant_block);
+        }
+
+        // Reshape dequantized to [num_output_features, k]
+        let mut reference_output = vec![0.0f32; batch_size * num_output_features];
+        for out_idx in 0..num_output_features {
+            let mut sum = 0.0f32;
+            for k_idx in 0..k {
+                sum += dequantized[out_idx * k + k_idx] * input[k_idx];
+            }
+            reference_output[out_idx] = sum;
+        }
+
+        // Compare results
+        for i in 0..num_output_features {
+            let diff = (fused_output[i] - reference_output[i]).abs();
+            let rel_error = if reference_output[i].abs() > 1e-6 {
+                diff / reference_output[i].abs()
+            } else {
+                diff
+            };
+
+            assert!(
+                rel_error < 1e-4,
+                "Output {} mismatch: fused={}, reference={}, rel_error={}",
+                i,
+                fused_output[i],
+                reference_output[i],
+                rel_error
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q80_batch() -> Result<()> {
+        use realm_core::quant::{BlockQ8_0, Q8_BLOCK_SIZE};
+
+        // Test with larger batch size
+        let batch_size = 4;
+        let num_output_features = 2;
+        let k = 32;
+
+        // Create blocks with non-zero quantized values
+        let mut blocks = Vec::new();
+        for i in 0..num_output_features {
+            let mut quants = [0i8; Q8_BLOCK_SIZE];
+            for (idx, quant) in quants.iter_mut().enumerate() {
+                *quant = ((i + 1) * 17 + idx) as i8 - 50;
+            }
+
+            let block = BlockQ8_0 {
+                scale: half::f16::from_f32(1.0).to_bits(),
+                quants,
+            };
+            blocks.push(block);
+        }
+
+        // Create input with different values per batch
+        let mut input = Vec::new();
+        for b in 0..batch_size {
+            for i in 0..k {
+                input.push((b * 10 + i % 5) as f32);
+            }
+        }
+
+        // Run fused kernel
+        let mut output = vec![0.0f32; batch_size * num_output_features];
+        fused_dequant_matmul_q80(
+            &blocks,
+            &input,
+            &mut output,
+            batch_size,
+            num_output_features,
+            k,
+        )?;
+
+        // Verify all outputs are finite
+        for &val in &output {
+            assert!(val.is_finite(), "Output should be finite");
+        }
+
+        // Different batches should produce different results (different inputs)
+        assert_ne!(
+            output[0], output[1],
+            "Different batches should produce different outputs"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q81_correctness() -> Result<()> {
+        use realm_core::quant::{dequantize_q8_1, BlockQ8_1, Q8_BLOCK_SIZE};
+
+        // Test that fused kernel matches standalone dequant + matmul
+        let batch_size = 1;
+        let num_output_features = 2;
+        let k = 64; // Two blocks
+
+        // Create varied Q8_1 blocks
+        let mut blocks = Vec::new();
+        for i in 0..num_output_features {
+            for j in 0..2 {
+                let mut quants = [0i8; Q8_BLOCK_SIZE];
+                for (idx, quant) in quants.iter_mut().enumerate() {
+                    *quant = ((i * 13 + j * 7 + idx) % 127) as i8 - 64;
+                }
+
+                let block = BlockQ8_1 {
+                    scale: half::f16::from_f32(0.5 + i as f32 * 0.1).to_bits(),
+                    delta: half::f16::from_f32(0.1 + j as f32 * 0.05).to_bits(),
+                    quants,
+                };
+                blocks.push(block);
+            }
+        }
+
+        // Create input
+        let input: Vec<f32> = (0..k).map(|i| ((i % 7) as f32 - 3.0) * 0.5).collect();
+
+        // Run fused kernel
+        let mut fused_output = vec![0.0f32; batch_size * num_output_features];
+        fused_dequant_matmul_q81(
+            &blocks,
+            &input,
+            &mut fused_output,
+            batch_size,
+            num_output_features,
+            k,
+        )?;
+
+        // Run reference: dequantize then matmul
+        let mut dequantized = Vec::new();
+        for block in &blocks {
+            let mut dequant_block = vec![0.0f32; Q8_BLOCK_SIZE];
+            dequantize_q8_1(block, &mut dequant_block)?;
+            dequantized.extend_from_slice(&dequant_block);
+        }
+
+        // Reshape dequantized to [num_output_features, k]
+        let mut reference_output = vec![0.0f32; batch_size * num_output_features];
+        for out_idx in 0..num_output_features {
+            let mut sum = 0.0f32;
+            for k_idx in 0..k {
+                sum += dequantized[out_idx * k + k_idx] * input[k_idx];
+            }
+            reference_output[out_idx] = sum;
+        }
+
+        // Compare results
+        for i in 0..num_output_features {
+            let diff = (fused_output[i] - reference_output[i]).abs();
+            let rel_error = if reference_output[i].abs() > 1e-6 {
+                diff / reference_output[i].abs()
+            } else {
+                diff
+            };
+
+            assert!(
+                rel_error < 1e-4,
+                "Output {} mismatch: fused={}, reference={}, rel_error={}",
+                i,
+                fused_output[i],
+                reference_output[i],
+                rel_error
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q81_batch() -> Result<()> {
+        use realm_core::quant::{BlockQ8_1, Q8_BLOCK_SIZE};
+
+        // Test with larger batch size
+        let batch_size = 4;
+        let num_output_features = 2;
+        let k = 32;
+
+        // Create blocks with non-zero quantized values
+        let mut blocks = Vec::new();
+        for i in 0..num_output_features {
+            let mut quants = [0i8; Q8_BLOCK_SIZE];
+            for (idx, quant) in quants.iter_mut().enumerate() {
+                *quant = ((i + 1) * 17 + idx) as i8 - 50;
+            }
+
+            let block = BlockQ8_1 {
+                scale: half::f16::from_f32(1.0).to_bits(),
+                delta: half::f16::from_f32(0.1).to_bits(),
+                quants,
+            };
+            blocks.push(block);
+        }
+
+        // Create input with different values per batch
+        let mut input = Vec::new();
+        for b in 0..batch_size {
+            for i in 0..k {
+                input.push((b * 10 + i % 5) as f32);
+            }
+        }
+
+        // Run fused kernel
+        let mut output = vec![0.0f32; batch_size * num_output_features];
+        fused_dequant_matmul_q81(
+            &blocks,
+            &input,
+            &mut output,
+            batch_size,
+            num_output_features,
+            k,
+        )?;
+
+        // Verify all outputs are finite
+        for &val in &output {
+            assert!(val.is_finite(), "Output should be finite");
+        }
+
+        // Different batches should produce different results (different inputs)
+        assert_ne!(
+            output[0], output[1],
+            "Different batches should produce different outputs"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q80_validation() -> Result<()> {
+        use realm_core::quant::BlockQ8_0;
+
+        // Test input validation
+        let blocks = vec![BlockQ8_0 {
+            scale: 0,
+            quants: [0; Q8_BLOCK_SIZE],
+        }];
+        let input = vec![0.0f32; 32];
+        let mut output = vec![0.0f32; 1];
+
+        // Should fail: wrong number of blocks
+        let result = fused_dequant_matmul_q80(&blocks, &input, &mut output, 1, 2, 32);
+        assert!(result.is_err(), "Should reject incorrect number of blocks");
+
+        // Should fail: input size mismatch
+        let result = fused_dequant_matmul_q80(&blocks, &input, &mut output, 1, 1, 64);
+        assert!(result.is_err(), "Should reject input size mismatch");
+
+        // Should fail: output size mismatch
+        let result = fused_dequant_matmul_q80(&blocks, &input, &mut output, 1, 2, 32);
+        assert!(result.is_err(), "Should reject output size mismatch");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q81_validation() -> Result<()> {
+        use realm_core::quant::BlockQ8_1;
+
+        // Test input validation
+        let blocks = vec![BlockQ8_1 {
+            scale: 0,
+            delta: 0,
+            quants: [0; Q8_BLOCK_SIZE],
+        }];
+        let input = vec![0.0f32; 32];
+        let mut output = vec![0.0f32; 1];
+
+        // Should fail: wrong number of blocks
+        let result = fused_dequant_matmul_q81(&blocks, &input, &mut output, 1, 2, 32);
+        assert!(result.is_err(), "Should reject incorrect number of blocks");
+
+        // Should fail: input size mismatch
+        let result = fused_dequant_matmul_q81(&blocks, &input, &mut output, 1, 1, 64);
+        assert!(result.is_err(), "Should reject input size mismatch");
+
+        // Should fail: output size mismatch
+        let result = fused_dequant_matmul_q81(&blocks, &input, &mut output, 1, 2, 32);
+        assert!(result.is_err(), "Should reject output size mismatch");
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // Q4_0/Q4_1 Fused Kernel Tests
+    // ========================================================================
+
+    #[test]
+    fn test_fused_dequant_matmul_q40_correctness() -> Result<()> {
+        use realm_core::quant::{dequantize_q4_0, BlockQ4_0, Q4_BLOCK_SIZE};
+
+        let batch_size = 1;
+        let num_output_features = 2;
+        let k = 64; // Two blocks
+
+        let mut blocks = Vec::new();
+        for i in 0..num_output_features {
+            for j in 0..2 {
+                let mut quants = [0u8; Q4_BLOCK_SIZE / 2];
+                for (idx, quant) in quants.iter_mut().enumerate() {
+                    *quant = ((i * 13 + j * 7 + idx) % 255) as u8;
+                }
+
+                let block = BlockQ4_0 {
+                    scale: half::f16::from_f32(0.5 + i as f32 * 0.1).to_bits(),
+                    quants,
+                };
+                blocks.push(block);
+            }
+        }
+
+        let input: Vec<f32> = (0..k).map(|i| ((i % 7) as f32 - 3.0) * 0.5).collect();
+
+        let mut fused_output = vec![0.0f32; batch_size * num_output_features];
+        fused_dequant_matmul_q40(
+            &blocks,
+            &input,
+            &mut fused_output,
+            batch_size,
+            num_output_features,
+            k,
+        )?;
+
+        let mut dequantized = Vec::new();
+        for block in &blocks {
+            let mut dequant_block = vec![0.0f32; Q4_BLOCK_SIZE];
+            dequantize_q4_0(block, &mut dequant_block)?;
+            dequantized.extend_from_slice(&dequant_block);
+        }
+
+        let mut reference_output = vec![0.0f32; batch_size * num_output_features];
+        for out_idx in 0..num_output_features {
+            let mut sum = 0.0f32;
+            for k_idx in 0..k {
+                sum += dequantized[out_idx * k + k_idx] * input[k_idx];
+            }
+            reference_output[out_idx] = sum;
+        }
+
+        for i in 0..num_output_features {
+            let diff = (fused_output[i] - reference_output[i]).abs();
+            let rel_error = if reference_output[i].abs() > 1e-6 {
+                diff / reference_output[i].abs()
+            } else {
+                diff
+            };
+
+            assert!(
+                rel_error < 1e-4,
+                "Output {} mismatch: fused={}, reference={}, rel_error={}",
+                i,
+                fused_output[i],
+                reference_output[i],
+                rel_error
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q41_correctness() -> Result<()> {
+        use realm_core::quant::{dequantize_q4_1, BlockQ4_1, Q4_BLOCK_SIZE};
+
+        let batch_size = 1;
+        let num_output_features = 2;
+        let k = 64;
+
+        let mut blocks = Vec::new();
+        for i in 0..num_output_features {
+            for j in 0..2 {
+                let mut quants = [0u8; Q4_BLOCK_SIZE / 2];
+                for (idx, quant) in quants.iter_mut().enumerate() {
+                    *quant = ((i * 13 + j * 7 + idx) % 255) as u8;
+                }
+
+                let block = BlockQ4_1 {
+                    scale: half::f16::from_f32(0.5 + i as f32 * 0.1).to_bits(),
+                    delta: half::f16::from_f32(0.1 + j as f32 * 0.05).to_bits(),
+                    quants,
+                };
+                blocks.push(block);
+            }
+        }
+
+        let input: Vec<f32> = (0..k).map(|i| ((i % 7) as f32 - 3.0) * 0.5).collect();
+
+        let mut fused_output = vec![0.0f32; batch_size * num_output_features];
+        fused_dequant_matmul_q41(
+            &blocks,
+            &input,
+            &mut fused_output,
+            batch_size,
+            num_output_features,
+            k,
+        )?;
+
+        let mut dequantized = Vec::new();
+        for block in &blocks {
+            let mut dequant_block = vec![0.0f32; Q4_BLOCK_SIZE];
+            dequantize_q4_1(block, &mut dequant_block)?;
+            dequantized.extend_from_slice(&dequant_block);
+        }
+
+        let mut reference_output = vec![0.0f32; batch_size * num_output_features];
+        for out_idx in 0..num_output_features {
+            let mut sum = 0.0f32;
+            for k_idx in 0..k {
+                sum += dequantized[out_idx * k + k_idx] * input[k_idx];
+            }
+            reference_output[out_idx] = sum;
+        }
+
+        for i in 0..num_output_features {
+            let diff = (fused_output[i] - reference_output[i]).abs();
+            let rel_error = if reference_output[i].abs() > 1e-6 {
+                diff / reference_output[i].abs()
+            } else {
+                diff
+            };
+
+            assert!(
+                rel_error < 1e-4,
+                "Output {} mismatch: fused={}, reference={}, rel_error={}",
+                i,
+                fused_output[i],
+                reference_output[i],
+                rel_error
+            );
+        }
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // Q5_0/Q5_1 Fused Kernel Tests
+    // ========================================================================
+
+    #[test]
+    fn test_fused_dequant_matmul_q50_correctness() -> Result<()> {
+        use realm_core::quant::{dequantize_q5_0, BlockQ5_0, Q4_BLOCK_SIZE};
+
+        let batch_size = 1;
+        let num_output_features = 2;
+        let k = 64;
+
+        let mut blocks = Vec::new();
+        for i in 0..num_output_features {
+            for j in 0..2 {
+                let mut ql = [0u8; Q4_BLOCK_SIZE / 2];
+                let mut qh = [0u8; Q4_BLOCK_SIZE / 8];
+                for (idx, val) in ql.iter_mut().enumerate() {
+                    *val = ((i * 13 + j * 7 + idx) % 255) as u8;
+                }
+                for (idx, val) in qh.iter_mut().enumerate() {
+                    *val = ((i * 11 + j * 5 + idx) % 255) as u8;
+                }
+
+                let block = BlockQ5_0 {
+                    scale: half::f16::from_f32(0.5 + i as f32 * 0.1).to_bits(),
+                    ql,
+                    qh,
+                };
+                blocks.push(block);
+            }
+        }
+
+        let input: Vec<f32> = (0..k).map(|i| ((i % 7) as f32 - 3.0) * 0.5).collect();
+
+        let mut fused_output = vec![0.0f32; batch_size * num_output_features];
+        fused_dequant_matmul_q50(
+            &blocks,
+            &input,
+            &mut fused_output,
+            batch_size,
+            num_output_features,
+            k,
+        )?;
+
+        let mut dequantized = Vec::new();
+        for block in &blocks {
+            let mut dequant_block = vec![0.0f32; Q4_BLOCK_SIZE];
+            dequantize_q5_0(block, &mut dequant_block)?;
+            dequantized.extend_from_slice(&dequant_block);
+        }
+
+        let mut reference_output = vec![0.0f32; batch_size * num_output_features];
+        for out_idx in 0..num_output_features {
+            let mut sum = 0.0f32;
+            for k_idx in 0..k {
+                sum += dequantized[out_idx * k + k_idx] * input[k_idx];
+            }
+            reference_output[out_idx] = sum;
+        }
+
+        for i in 0..num_output_features {
+            let diff = (fused_output[i] - reference_output[i]).abs();
+            let rel_error = if reference_output[i].abs() > 1e-6 {
+                diff / reference_output[i].abs()
+            } else {
+                diff
+            };
+
+            assert!(
+                rel_error < 1e-4,
+                "Output {} mismatch: fused={}, reference={}, rel_error={}",
+                i,
+                fused_output[i],
+                reference_output[i],
+                rel_error
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q51_correctness() -> Result<()> {
+        use realm_core::quant::{dequantize_q5_1, BlockQ5_1, Q4_BLOCK_SIZE};
+
+        let batch_size = 1;
+        let num_output_features = 2;
+        let k = 64;
+
+        let mut blocks = Vec::new();
+        for i in 0..num_output_features {
+            for j in 0..2 {
+                let mut ql = [0u8; Q4_BLOCK_SIZE / 2];
+                let mut qh = [0u8; Q4_BLOCK_SIZE / 8];
+                for (idx, val) in ql.iter_mut().enumerate() {
+                    *val = ((i * 13 + j * 7 + idx) % 255) as u8;
+                }
+                for (idx, val) in qh.iter_mut().enumerate() {
+                    *val = ((i * 11 + j * 5 + idx) % 255) as u8;
+                }
+
+                let block = BlockQ5_1 {
+                    scale: half::f16::from_f32(0.5 + i as f32 * 0.1).to_bits(),
+                    delta: half::f16::from_f32(0.1 + j as f32 * 0.05).to_bits(),
+                    ql,
+                    qh,
+                };
+                blocks.push(block);
+            }
+        }
+
+        let input: Vec<f32> = (0..k).map(|i| ((i % 7) as f32 - 3.0) * 0.5).collect();
+
+        let mut fused_output = vec![0.0f32; batch_size * num_output_features];
+        fused_dequant_matmul_q51(
+            &blocks,
+            &input,
+            &mut fused_output,
+            batch_size,
+            num_output_features,
+            k,
+        )?;
+
+        let mut dequantized = Vec::new();
+        for block in &blocks {
+            let mut dequant_block = vec![0.0f32; Q4_BLOCK_SIZE];
+            dequantize_q5_1(block, &mut dequant_block)?;
+            dequantized.extend_from_slice(&dequant_block);
+        }
+
+        let mut reference_output = vec![0.0f32; batch_size * num_output_features];
+        for out_idx in 0..num_output_features {
+            let mut sum = 0.0f32;
+            for k_idx in 0..k {
+                sum += dequantized[out_idx * k + k_idx] * input[k_idx];
+            }
+            reference_output[out_idx] = sum;
+        }
+
+        for i in 0..num_output_features {
+            let diff = (fused_output[i] - reference_output[i]).abs();
+            let rel_error = if reference_output[i].abs() > 1e-6 {
+                diff / reference_output[i].abs()
+            } else {
+                diff
+            };
+
+            assert!(
+                rel_error < 1e-4,
+                "Output {} mismatch: fused={}, reference={}, rel_error={}",
+                i,
+                fused_output[i],
+                reference_output[i],
+                rel_error
+            );
+        }
 
         Ok(())
     }

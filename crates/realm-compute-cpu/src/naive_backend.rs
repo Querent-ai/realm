@@ -4,11 +4,17 @@
 //! It's useful as a fallback and for testing.
 
 use crate::{
-    fused_dequant_matmul_q4k, fused_dequant_matmul_q5k, fused_dequant_matmul_q6k,
-    fused_dequant_matmul_q8k, matmul_f32, matmul_transposed,
+    fused_dequant_matmul_q2k, fused_dequant_matmul_q3k, fused_dequant_matmul_q40,
+    fused_dequant_matmul_q41, fused_dequant_matmul_q4k, fused_dequant_matmul_q50,
+    fused_dequant_matmul_q51, fused_dequant_matmul_q5k, fused_dequant_matmul_q6k,
+    fused_dequant_matmul_q80, fused_dequant_matmul_q81, fused_dequant_matmul_q8k, matmul_f32,
+    matmul_transposed,
 };
 use realm_core::error::Result;
-use realm_core::quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K};
+use realm_core::quant::{
+    BlockQ2_K, BlockQ3_K, BlockQ4_0, BlockQ4_1, BlockQ4_K, BlockQ5_0, BlockQ5_1, BlockQ5_K,
+    BlockQ6_K, BlockQ8_0, BlockQ8_1, BlockQ8_K,
+};
 
 use super::cpu_backend_trait::CpuBackendTrait;
 
@@ -96,6 +102,110 @@ impl CpuBackendTrait for NaiveCpuBackend {
     ) -> Result<Vec<f32>> {
         let mut output = vec![0.0; batch_size * n];
         fused_dequant_matmul_q8k(blocks, input, &mut output, batch_size, n, k)?;
+        Ok(output)
+    }
+
+    fn fused_dequant_matmul_q2k(
+        &self,
+        blocks: &[BlockQ2_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        let mut output = vec![0.0; batch_size * n];
+        fused_dequant_matmul_q2k(blocks, input, &mut output, batch_size, n, k)?;
+        Ok(output)
+    }
+
+    fn fused_dequant_matmul_q3k(
+        &self,
+        blocks: &[BlockQ3_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        let mut output = vec![0.0; batch_size * n];
+        fused_dequant_matmul_q3k(blocks, input, &mut output, batch_size, n, k)?;
+        Ok(output)
+    }
+
+    fn fused_dequant_matmul_q40(
+        &self,
+        blocks: &[BlockQ4_0],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        let mut output = vec![0.0; batch_size * n];
+        fused_dequant_matmul_q40(blocks, input, &mut output, batch_size, n, k)?;
+        Ok(output)
+    }
+
+    fn fused_dequant_matmul_q41(
+        &self,
+        blocks: &[BlockQ4_1],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        let mut output = vec![0.0; batch_size * n];
+        fused_dequant_matmul_q41(blocks, input, &mut output, batch_size, n, k)?;
+        Ok(output)
+    }
+
+    fn fused_dequant_matmul_q50(
+        &self,
+        blocks: &[BlockQ5_0],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        let mut output = vec![0.0; batch_size * n];
+        fused_dequant_matmul_q50(blocks, input, &mut output, batch_size, n, k)?;
+        Ok(output)
+    }
+
+    fn fused_dequant_matmul_q51(
+        &self,
+        blocks: &[BlockQ5_1],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        let mut output = vec![0.0; batch_size * n];
+        fused_dequant_matmul_q51(blocks, input, &mut output, batch_size, n, k)?;
+        Ok(output)
+    }
+
+    fn fused_dequant_matmul_q80(
+        &self,
+        blocks: &[BlockQ8_0],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        let mut output = vec![0.0; batch_size * n];
+        fused_dequant_matmul_q80(blocks, input, &mut output, batch_size, n, k)?;
+        Ok(output)
+    }
+
+    fn fused_dequant_matmul_q81(
+        &self,
+        blocks: &[BlockQ8_1],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        let mut output = vec![0.0; batch_size * n];
+        fused_dequant_matmul_q81(blocks, input, &mut output, batch_size, n, k)?;
         Ok(output)
     }
 

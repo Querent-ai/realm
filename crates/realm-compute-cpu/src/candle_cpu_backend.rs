@@ -4,7 +4,10 @@
 
 use candle_core::{Device, Result as CandleResult, Tensor};
 use realm_core::error::{Error, Result};
-use realm_core::quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K};
+use realm_core::quant::{
+    BlockQ2_K, BlockQ3_K, BlockQ4_0, BlockQ4_1, BlockQ4_K, BlockQ5_0, BlockQ5_1, BlockQ5_K,
+    BlockQ6_K, BlockQ8_0, BlockQ8_1, BlockQ8_K,
+};
 
 use super::cpu_backend_trait::CpuBackendTrait;
 
@@ -139,6 +142,110 @@ impl CpuBackendTrait for CandleCpuBackend {
         // TODO: Implement Candle CPU fused Q8_K kernel
         Err(Error::Runtime(
             "Candle CPU Q8_K fused kernel not implemented yet".to_string(),
+        ))
+    }
+
+    fn fused_dequant_matmul_q2k(
+        &self,
+        _blocks: &[BlockQ2_K],
+        _input: &[f32],
+        _batch_size: usize,
+        _n: usize,
+        _k: usize,
+    ) -> Result<Vec<f32>> {
+        Err(Error::Runtime(
+            "Candle CPU Q2_K fused kernel not implemented yet".to_string(),
+        ))
+    }
+
+    fn fused_dequant_matmul_q3k(
+        &self,
+        _blocks: &[BlockQ3_K],
+        _input: &[f32],
+        _batch_size: usize,
+        _n: usize,
+        _k: usize,
+    ) -> Result<Vec<f32>> {
+        Err(Error::Runtime(
+            "Candle CPU Q3_K fused kernel not implemented yet".to_string(),
+        ))
+    }
+
+    fn fused_dequant_matmul_q40(
+        &self,
+        _blocks: &[BlockQ4_0],
+        _input: &[f32],
+        _batch_size: usize,
+        _n: usize,
+        _k: usize,
+    ) -> Result<Vec<f32>> {
+        Err(Error::Runtime(
+            "Candle CPU Q4_0 fused kernel not implemented yet".to_string(),
+        ))
+    }
+
+    fn fused_dequant_matmul_q41(
+        &self,
+        _blocks: &[BlockQ4_1],
+        _input: &[f32],
+        _batch_size: usize,
+        _n: usize,
+        _k: usize,
+    ) -> Result<Vec<f32>> {
+        Err(Error::Runtime(
+            "Candle CPU Q4_1 fused kernel not implemented yet".to_string(),
+        ))
+    }
+
+    fn fused_dequant_matmul_q50(
+        &self,
+        _blocks: &[BlockQ5_0],
+        _input: &[f32],
+        _batch_size: usize,
+        _n: usize,
+        _k: usize,
+    ) -> Result<Vec<f32>> {
+        Err(Error::Runtime(
+            "Candle CPU Q5_0 fused kernel not implemented yet".to_string(),
+        ))
+    }
+
+    fn fused_dequant_matmul_q51(
+        &self,
+        _blocks: &[BlockQ5_1],
+        _input: &[f32],
+        _batch_size: usize,
+        _n: usize,
+        _k: usize,
+    ) -> Result<Vec<f32>> {
+        Err(Error::Runtime(
+            "Candle CPU Q5_1 fused kernel not implemented yet".to_string(),
+        ))
+    }
+
+    fn fused_dequant_matmul_q80(
+        &self,
+        _blocks: &[BlockQ8_0],
+        _input: &[f32],
+        _batch_size: usize,
+        _n: usize,
+        _k: usize,
+    ) -> Result<Vec<f32>> {
+        Err(Error::Runtime(
+            "Candle CPU Q8_0 fused kernel not implemented yet".to_string(),
+        ))
+    }
+
+    fn fused_dequant_matmul_q81(
+        &self,
+        _blocks: &[BlockQ8_1],
+        _input: &[f32],
+        _batch_size: usize,
+        _n: usize,
+        _k: usize,
+    ) -> Result<Vec<f32>> {
+        Err(Error::Runtime(
+            "Candle CPU Q8_1 fused kernel not implemented yet".to_string(),
         ))
     }
 

@@ -5,8 +5,11 @@
 //! Supports both CPU and GPU backends with automatic fallback.
 
 use realm_compute_cpu::{
-    fused_dequant_matmul_q4k, fused_dequant_matmul_q5k, fused_dequant_matmul_q6k,
-    fused_dequant_matmul_q8k, matmul_transposed, CpuBackendTrait,
+    fused_dequant_matmul_q2k, fused_dequant_matmul_q3k, fused_dequant_matmul_q40,
+    fused_dequant_matmul_q41, fused_dequant_matmul_q4k, fused_dequant_matmul_q50,
+    fused_dequant_matmul_q51, fused_dequant_matmul_q5k, fused_dequant_matmul_q6k,
+    fused_dequant_matmul_q80, fused_dequant_matmul_q81, fused_dequant_matmul_q8k,
+    matmul_transposed, CpuBackendTrait,
 };
 use realm_core::error::Result;
 
@@ -18,7 +21,7 @@ use crate::weight_format::WeightFormat;
 /// Dispatch matmul to appropriate kernel based on weight format and available backends
 ///
 /// This function automatically selects the optimal implementation:
-/// - **Quantized formats (Q4_K/Q5_K/Q6_K/Q8_K):** Fused dequant + matmul (2-4x faster)
+/// - **Quantized formats (Q2_K/Q3_K/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0/Q8_1/Q4_K/Q5_K/Q6_K/Q8_K):** Fused dequant + matmul (2-4x faster)
 /// - **F32:** Standard matmul
 /// - **GPU backends:** When available, uses GPU acceleration
 /// - **CPU backends:** Fallback or primary for CPU-only builds
@@ -143,6 +146,70 @@ pub fn dispatch_matmul(
             // Direct implementation fallback
             let mut output = vec![0.0f32; batch_size * n];
             fused_dequant_matmul_q8k(blocks, input, &mut output, batch_size, n, k)?;
+            Ok(output)
+        }
+        WeightFormat::Q2K(blocks) => {
+            if let Some(cpu) = cpu_backend {
+                return cpu.fused_dequant_matmul_q2k(blocks, input, batch_size, n, k);
+            }
+            let mut output = vec![0.0f32; batch_size * n];
+            fused_dequant_matmul_q2k(blocks, input, &mut output, batch_size, n, k)?;
+            Ok(output)
+        }
+        WeightFormat::Q3K(blocks) => {
+            if let Some(cpu) = cpu_backend {
+                return cpu.fused_dequant_matmul_q3k(blocks, input, batch_size, n, k);
+            }
+            let mut output = vec![0.0f32; batch_size * n];
+            fused_dequant_matmul_q3k(blocks, input, &mut output, batch_size, n, k)?;
+            Ok(output)
+        }
+        WeightFormat::Q40(blocks) => {
+            if let Some(cpu) = cpu_backend {
+                return cpu.fused_dequant_matmul_q40(blocks, input, batch_size, n, k);
+            }
+            let mut output = vec![0.0f32; batch_size * n];
+            fused_dequant_matmul_q40(blocks, input, &mut output, batch_size, n, k)?;
+            Ok(output)
+        }
+        WeightFormat::Q41(blocks) => {
+            if let Some(cpu) = cpu_backend {
+                return cpu.fused_dequant_matmul_q41(blocks, input, batch_size, n, k);
+            }
+            let mut output = vec![0.0f32; batch_size * n];
+            fused_dequant_matmul_q41(blocks, input, &mut output, batch_size, n, k)?;
+            Ok(output)
+        }
+        WeightFormat::Q50(blocks) => {
+            if let Some(cpu) = cpu_backend {
+                return cpu.fused_dequant_matmul_q50(blocks, input, batch_size, n, k);
+            }
+            let mut output = vec![0.0f32; batch_size * n];
+            fused_dequant_matmul_q50(blocks, input, &mut output, batch_size, n, k)?;
+            Ok(output)
+        }
+        WeightFormat::Q51(blocks) => {
+            if let Some(cpu) = cpu_backend {
+                return cpu.fused_dequant_matmul_q51(blocks, input, batch_size, n, k);
+            }
+            let mut output = vec![0.0f32; batch_size * n];
+            fused_dequant_matmul_q51(blocks, input, &mut output, batch_size, n, k)?;
+            Ok(output)
+        }
+        WeightFormat::Q80(blocks) => {
+            if let Some(cpu) = cpu_backend {
+                return cpu.fused_dequant_matmul_q80(blocks, input, batch_size, n, k);
+            }
+            let mut output = vec![0.0f32; batch_size * n];
+            fused_dequant_matmul_q80(blocks, input, &mut output, batch_size, n, k)?;
+            Ok(output)
+        }
+        WeightFormat::Q81(blocks) => {
+            if let Some(cpu) = cpu_backend {
+                return cpu.fused_dequant_matmul_q81(blocks, input, batch_size, n, k);
+            }
+            let mut output = vec![0.0f32; batch_size * n];
+            fused_dequant_matmul_q81(blocks, input, &mut output, batch_size, n, k)?;
             Ok(output)
         }
     }

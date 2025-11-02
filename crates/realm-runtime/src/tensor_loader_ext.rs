@@ -3,7 +3,10 @@
 use crate::weight_format::WeightFormat;
 use realm_core::{
     error::Result,
-    quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K},
+    quant::{
+        BlockQ2_K, BlockQ3_K, BlockQ4_0, BlockQ4_1, BlockQ4_K, BlockQ5_0, BlockQ5_1, BlockQ5_K,
+        BlockQ6_K, BlockQ8_0, BlockQ8_1, BlockQ8_K,
+    },
     tensor::DataType,
     GGUFParser, TensorMetadata,
 };
@@ -89,6 +92,86 @@ pub fn load_weight_optimal<R: std::io::Read + std::io::Seek>(
                 blocks.push(block);
             }
             Ok(WeightFormat::Q8K(blocks))
+        }
+        DataType::Q2_K => {
+            const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ2_K>();
+            let num_blocks = raw_data.len() / BLOCK_SIZE;
+            let mut blocks = Vec::with_capacity(num_blocks);
+            for block_data in raw_data.chunks_exact(BLOCK_SIZE) {
+                let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ2_K) };
+                blocks.push(block);
+            }
+            Ok(WeightFormat::Q2K(blocks))
+        }
+        DataType::Q3_K => {
+            const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ3_K>();
+            let num_blocks = raw_data.len() / BLOCK_SIZE;
+            let mut blocks = Vec::with_capacity(num_blocks);
+            for block_data in raw_data.chunks_exact(BLOCK_SIZE) {
+                let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ3_K) };
+                blocks.push(block);
+            }
+            Ok(WeightFormat::Q3K(blocks))
+        }
+        DataType::Q4_0 => {
+            const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ4_0>();
+            let num_blocks = raw_data.len() / BLOCK_SIZE;
+            let mut blocks = Vec::with_capacity(num_blocks);
+            for block_data in raw_data.chunks_exact(BLOCK_SIZE) {
+                let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ4_0) };
+                blocks.push(block);
+            }
+            Ok(WeightFormat::Q40(blocks))
+        }
+        DataType::Q4_1 => {
+            const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ4_1>();
+            let num_blocks = raw_data.len() / BLOCK_SIZE;
+            let mut blocks = Vec::with_capacity(num_blocks);
+            for block_data in raw_data.chunks_exact(BLOCK_SIZE) {
+                let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ4_1) };
+                blocks.push(block);
+            }
+            Ok(WeightFormat::Q41(blocks))
+        }
+        DataType::Q5_0 => {
+            const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ5_0>();
+            let num_blocks = raw_data.len() / BLOCK_SIZE;
+            let mut blocks = Vec::with_capacity(num_blocks);
+            for block_data in raw_data.chunks_exact(BLOCK_SIZE) {
+                let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ5_0) };
+                blocks.push(block);
+            }
+            Ok(WeightFormat::Q50(blocks))
+        }
+        DataType::Q5_1 => {
+            const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ5_1>();
+            let num_blocks = raw_data.len() / BLOCK_SIZE;
+            let mut blocks = Vec::with_capacity(num_blocks);
+            for block_data in raw_data.chunks_exact(BLOCK_SIZE) {
+                let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ5_1) };
+                blocks.push(block);
+            }
+            Ok(WeightFormat::Q51(blocks))
+        }
+        DataType::Q8_0 => {
+            const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ8_0>();
+            let num_blocks = raw_data.len() / BLOCK_SIZE;
+            let mut blocks = Vec::with_capacity(num_blocks);
+            for block_data in raw_data.chunks_exact(BLOCK_SIZE) {
+                let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ8_0) };
+                blocks.push(block);
+            }
+            Ok(WeightFormat::Q80(blocks))
+        }
+        DataType::Q8_1 => {
+            const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ8_1>();
+            let num_blocks = raw_data.len() / BLOCK_SIZE;
+            let mut blocks = Vec::with_capacity(num_blocks);
+            for block_data in raw_data.chunks_exact(BLOCK_SIZE) {
+                let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ8_1) };
+                blocks.push(block);
+            }
+            Ok(WeightFormat::Q81(blocks))
         }
         _ => {
             // Unsupported format, fall back to F32
