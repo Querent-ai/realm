@@ -596,17 +596,85 @@ mod tests {
 
     #[test]
     fn test_naive_fused_q5k_basic() -> Result<()> {
-        let _backend = NaiveCpuBackend::new();
-        // Q5_K test would require proper Q5_K block creation helper
-        // Skipping for now as Q5_K uses different structure than Q4_K
+        let backend = NaiveCpuBackend::new();
+        let k = QK_K;
+        let n = 1;
+        let batch_size = 1;
+
+        // Create a Q5_K block: ql (128 bytes), qh (32 bytes), scales (16 bytes), d (2 bytes)
+        let block = realm_core::quant::BlockQ5_K {
+            d: half::f16::from_f32(0.5).to_bits(),
+            ql: {
+                let mut ql = [0u8; QK_K / 2];
+                for (i, q) in ql.iter_mut().enumerate() {
+                    *q = (i % 16) as u8 | (((i + 1) % 16) as u8) << 4;
+                }
+                ql
+            },
+            qh: {
+                let mut qh = [0u8; QK_K / 8];
+                for (i, q) in qh.iter_mut().enumerate() {
+                    *q = (i % 2) as u8 * 0x55; // Pattern: 01010101 or 00000000
+                }
+                qh
+            },
+            scales: {
+                let mut scales = [0i8; QK_K / 16];
+                for (i, scale) in scales.iter_mut().enumerate() {
+                    *scale = 16i8 + i as i8;
+                }
+                scales
+            },
+        };
+        let blocks = vec![block];
+
+        let input: Vec<f32> = (0..k).map(|i| ((i % 7) as f32 - 3.0) * 0.5).collect();
+
+        let result = backend.fused_dequant_matmul_q5k(&blocks, &input, batch_size, n, k)?;
+        assert_eq!(result.len(), batch_size * n);
+        assert!(result[0].abs() > 1e-6);
         Ok(())
     }
 
     #[test]
     fn test_naive_fused_q6k_basic() -> Result<()> {
-        let _backend = NaiveCpuBackend::new();
-        // Q6_K test would require proper Q6_K block creation helper
-        // Skipping for now as Q6_K uses different structure than Q4_K
+        let backend = NaiveCpuBackend::new();
+        let k = QK_K;
+        let n = 1;
+        let batch_size = 1;
+
+        // Create a Q6_K block: ql (128 bytes), qh (64 bytes), scales (16 bytes), d (2 bytes)
+        let block = realm_core::quant::BlockQ6_K {
+            d: half::f16::from_f32(0.5).to_bits(),
+            ql: {
+                let mut ql = [0u8; QK_K / 2];
+                for (i, q) in ql.iter_mut().enumerate() {
+                    *q = (i % 16) as u8 | (((i + 1) % 16) as u8) << 4;
+                }
+                ql
+            },
+            qh: {
+                let mut qh = [0u8; QK_K / 4];
+                for (i, q) in qh.iter_mut().enumerate() {
+                    *q = (i % 4) as u8 | (((i + 1) % 4) as u8) << 2;
+                }
+                qh
+            },
+            scales: {
+                let mut scales = [0i8; QK_K / 16];
+                for (i, scale) in scales.iter_mut().enumerate() {
+                    *scale = 16i8 + i as i8;
+                }
+                scales
+            },
+        };
+        let blocks = vec![block];
+
+        let input: Vec<f32> = (0..k).map(|i| ((i % 7) as f32 - 3.0) * 0.5).collect();
+
+        let result = backend.fused_dequant_matmul_q6k(&blocks, &input, batch_size, n, k)?;
+        assert_eq!(result.len(), batch_size * n);
+        assert!(result[0].abs() > 1e-6);
         Ok(())
     }
 
