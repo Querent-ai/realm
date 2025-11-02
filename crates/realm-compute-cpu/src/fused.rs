@@ -1984,15 +1984,16 @@ pub fn fused_dequant_matmul_q2k(
                             break;
                         }
 
-                        // Extract 2-bit value
-                        let qs_idx = idx % QK_K / 2;
-                        let qh_idx = idx % QK_K / 8;
-                        let qs_bit = if (idx % QK_K).is_multiple_of(2) {
-                            block.qs[qs_idx] & 0x3
-                        } else {
-                            (block.qs[qs_idx] >> 2) & 0x3
-                        };
-                        let qh_bit = (block.qh[qh_idx] >> ((idx % QK_K) % 8)) & 1;
+                        // Position within the block (0 to QK_K-1)
+                        let idx_in_block = l * 16 + k_local;
+
+                        // Extract 2-bit value - use idx_in_block for block array indexing
+                        // qs stores 4 values per byte (2 bits each), qh stores 8 values per byte (1 bit each)
+                        let qs_idx = idx_in_block / 4;
+                        let qh_idx = idx_in_block / 8;
+                        let qs_bit_offset = (idx_in_block % 4) * 2;
+                        let qs_bit = (block.qs[qs_idx] >> qs_bit_offset) & 0x3;
+                        let qh_bit = (block.qh[qh_idx] >> (idx_in_block % 8)) & 1;
                         let quant_val = (qs_bit | (qh_bit << 2)) as i8 - 2;
                         let dequant = d * (scale_val as f32) * (quant_val as f32) + min;
 

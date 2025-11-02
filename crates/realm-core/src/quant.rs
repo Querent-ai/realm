@@ -569,14 +569,12 @@ pub fn dequantize_q2_k(block: &BlockQ2_K, output: &mut [f32]) -> Result<()> {
         for k in 0..16 {
             let idx = l * 16 + k;
 
-            // Extract 2-bit value: 1 bit from qs, 1 bit from qh
-            let qs_idx = idx / 2;
+            // Extract 2-bit value: 1 bit from qs (2 bits stored), 1 bit from qh
+            // qs stores 4 values per byte (2 bits each), qh stores 8 values per byte (1 bit each)
+            let qs_idx = idx / 4;
             let qh_idx = idx / 8;
-            let qs_bit = if idx % 2 == 0 {
-                block.qs[qs_idx] & 0x3
-            } else {
-                (block.qs[qs_idx] >> 2) & 0x3
-            };
+            let qs_bit_offset = (idx % 4) * 2;
+            let qs_bit = (block.qs[qs_idx] >> qs_bit_offset) & 0x3;
             let qh_bit = (block.qh[qh_idx] >> (idx % 8)) & 1;
             let quant_val = (qs_bit | (qh_bit << 2)) as i8 - 2;
 
