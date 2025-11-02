@@ -6,6 +6,7 @@ members = [
     "crates/realm-compute-gpu",
     "crates/realm-runtime",
     "crates/realm-wasm",
+    "crates/realm-node",
     "crates/realm-metrics",
     "cli",
     "examples/simple-realm-test",
@@ -24,7 +25,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/yourusername/realm"
-authors = ["Your Name <you@example.com>"]
+authors = ["Puneet Saraswat <puneet@querent.xyz>"]
 
 [workspace.dependencies]
 # Core inference primitives

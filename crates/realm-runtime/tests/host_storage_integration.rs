@@ -25,7 +25,7 @@ fn test_store_and_retrieve_model() {
     // Store model
     println!("💾 Storing model in HOST storage...");
     let model_id = GLOBAL_MODEL_STORAGE
-        .store_model(&gguf_bytes)
+        .store_model(&gguf_bytes, None)
         .expect("Failed to store model");
 
     println!("✅ Model stored with ID: {}", model_id);
@@ -107,7 +107,7 @@ fn test_storage_thread_safety() {
 
     // Store model
     let model_id = GLOBAL_MODEL_STORAGE
-        .store_model(&dummy_gguf)
+        .store_model(&dummy_gguf, None)
         .expect("Failed to store dummy model");
 
     // Spawn multiple threads accessing the same model

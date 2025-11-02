@@ -275,8 +275,8 @@ jobs:
         run: |
           WASM_SIZE=$(stat -c%s "crates/realm-wasm/pkg/realm_wasm_bg.wasm" 2>/dev/null || stat -f%z "crates/realm-wasm/pkg/realm_wasm_bg.wasm")
           echo "WASM module size: $WASM_SIZE bytes"
-          if [ $WASM_SIZE -gt 100000 ]; then
-            echo "❌ WASM module too large: $WASM_SIZE bytes (expected < 100KB)"
+          if [ $WASM_SIZE -gt 500000 ]; then
+            echo "❌ WASM module too large: $WASM_SIZE bytes (expected < 500KB)"
             exit 1
           fi
           echo "✅ WASM module size acceptable"

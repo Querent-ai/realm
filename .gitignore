@@ -29,6 +29,7 @@ dist/
 build/
 *.wasm
 *.wat
+*.node
 
 # Test artifacts
 *.profraw

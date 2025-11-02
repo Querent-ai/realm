@@ -610,7 +610,7 @@ fn store_model(mut cx: FunctionContext) -> JsResult<JsNumber> {
     let bytes = cx.borrow(&buffer, |data| data.as_slice::<u8>());
 
     // Store in global storage
-    match GLOBAL_MODEL_STORAGE.store_model(bytes) {
+    match GLOBAL_MODEL_STORAGE.store_model(bytes, None) {
         Ok(model_id) => Ok(cx.number(model_id as f64)),
         Err(e) => cx.throw_error(format!("Failed to store model: {}", e)),
     }

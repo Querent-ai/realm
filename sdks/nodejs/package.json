@@ -1,0 +1,22 @@
+{
+  "name": "@realm/sdk",
+  "version": "0.1.0",
+  "description": "Realm.ai Node.js SDK - Complete inference SDK with WASM + host-side storage",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "npm run build:wasm && npm run build:native",
+    "build:wasm": "cd ../../crates/realm-wasm && wasm-pack build --target nodejs --release --out-dir ../../../sdks/nodejs/pkg",
+    "build:native": "cd ../../crates/realm-node && npm run build",
+    "test": "node test-paris.js",
+    "test:paris": "node test-paris.js"
+  },
+  "dependencies": {
+    "@realm/realm-node": "file:../../crates/realm-node"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  }
+}
+

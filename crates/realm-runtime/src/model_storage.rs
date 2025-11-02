@@ -32,13 +32,11 @@ use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use realm_core::formats::gguf::ModelMeta;
 use realm_core::tensor::DataType;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tracing::{debug, info};
-
-/// Global model ID counter
-static NEXT_MODEL_ID: AtomicU32 = AtomicU32::new(1);
 
 /// Quantized tensor stored in host memory
 #[derive(Clone, Debug)]
@@ -99,6 +97,95 @@ impl StoredModel {
         }
     }
 
+    /// Extract TransformerConfig from metadata
+    pub fn extract_config(&self) -> realm_models::TransformerConfig {
+        let arch = &self.metadata.architecture;
+
+        realm_models::TransformerConfig {
+            vocab_size: self
+                .metadata
+                .metadata
+                .get(&format!("{}.vocab_size", arch))
+                .or_else(|| self.metadata.metadata.get("vocab_size"))
+                .and_then(|v| v.as_u32())
+                .unwrap_or(32000) as usize,
+
+            hidden_size: self
+                .metadata
+                .metadata
+                .get(&format!("{}.embedding_length", arch))
+                .or_else(|| self.metadata.metadata.get(&format!("{}.hidden_size", arch)))
+                .and_then(|v| v.as_u32())
+                .unwrap_or(2048) as usize,
+
+            num_layers: self
+                .metadata
+                .metadata
+                .get(&format!("{}.block_count", arch))
+                .or_else(|| self.metadata.metadata.get(&format!("{}.num_layers", arch)))
+                .and_then(|v| v.as_u32())
+                .unwrap_or(22) as usize,
+
+            num_heads: self
+                .metadata
+                .metadata
+                .get(&format!("{}.attention.head_count", arch))
+                .or_else(|| self.metadata.metadata.get(&format!("{}.num_heads", arch)))
+                .and_then(|v| v.as_u32())
+                .unwrap_or(32) as usize,
+
+            num_kv_heads: self
+                .metadata
+                .metadata
+                .get(&format!("{}.attention.head_count_kv", arch))
+                .or_else(|| {
+                    self.metadata
+                        .metadata
+                        .get(&format!("{}.num_kv_heads", arch))
+                })
+                .and_then(|v| v.as_u32())
+                .unwrap_or(4) as usize,
+
+            intermediate_size: self
+                .metadata
+                .metadata
+                .get(&format!("{}.feed_forward_length", arch))
+                .or_else(|| {
+                    self.metadata
+                        .metadata
+                        .get(&format!("{}.intermediate_size", arch))
+                })
+                .and_then(|v| v.as_u32())
+                .unwrap_or(5632) as usize,
+
+            max_seq_len: self
+                .metadata
+                .metadata
+                .get(&format!("{}.context_length", arch))
+                .or_else(|| self.metadata.metadata.get(&format!("{}.max_seq_len", arch)))
+                .and_then(|v| v.as_u32())
+                .unwrap_or(2048) as usize,
+
+            rms_norm_eps: self
+                .metadata
+                .metadata
+                .get(&format!("{}.attention.layer_norm_rms_epsilon", arch))
+                .or_else(|| self.metadata.metadata.get("rms_norm_eps"))
+                .and_then(|v| v.as_f32())
+                .unwrap_or(1e-5),
+
+            rope_theta: self
+                .metadata
+                .metadata
+                .get(&format!("{}.rope.freq_base", arch))
+                .or_else(|| self.metadata.metadata.get("rope_theta"))
+                .and_then(|v| v.as_f32())
+                .unwrap_or(10000.0),
+
+            attention_backend: realm_models::AttentionBackend::Auto,
+        }
+    }
+
     /// Add a tensor to the model
     pub fn add_tensor(&mut self, tensor: QuantizedTensor) {
         let size = tensor.size_bytes();
@@ -136,11 +223,13 @@ impl ModelStorage {
     /// # Arguments
     ///
     /// * `gguf_bytes` - Complete GGUF file bytes
+    /// * `model_id` - Optional model ID. If None, generates a deterministic ID from model hash.
+    ///   If Some, uses provided ID (must be unique or match existing model).
     ///
     /// # Returns
     ///
     /// Model ID handle on success
-    pub fn store_model(&self, gguf_bytes: &[u8]) -> Result<u32> {
+    pub fn store_model(&self, gguf_bytes: &[u8], model_id: Option<u32>) -> Result<u32> {
         info!("Storing model from {} bytes of GGUF data", gguf_bytes.len());
 
         // Parse GGUF header and metadata
@@ -150,9 +239,57 @@ impl ModelStorage {
             .parse_header()
             .context("Failed to parse GGUF header")?;
 
-        // Allocate new model ID
-        let model_id = NEXT_MODEL_ID.fetch_add(1, Ordering::SeqCst);
-        info!("Allocated model ID: {}", model_id);
+        // Determine model ID
+        let model_id = if let Some(requested_id) = model_id {
+            // Consumer-provided ID: validate uniqueness
+            let models = self.models.lock();
+            if models.contains_key(&requested_id) {
+                // Check if it's the same model (by hash)
+                let existing = models.get(&requested_id).unwrap();
+                let model_hash = Self::compute_model_hash(gguf_bytes)?;
+                let existing_hash = Self::compute_model_hash_for_stored(existing)?;
+
+                if model_hash == existing_hash {
+                    // Same model, reuse ID (model sharing)
+                    info!(
+                        "Reusing existing model ID {} (model hash match)",
+                        requested_id
+                    );
+                    requested_id
+                } else {
+                    return Err(anyhow!(
+                        "Model ID {} already exists with different model. Use a different ID or remove existing model.",
+                        requested_id
+                    ));
+                }
+            } else {
+                info!("Using consumer-provided model ID: {}", requested_id);
+                requested_id
+            }
+        } else {
+            // Auto-generate deterministic ID from model hash
+            let model_hash = Self::compute_model_hash(gguf_bytes)?;
+            let hash_based_id = Self::hash_to_model_id(&model_hash);
+
+            // Check if model already exists with this hash-based ID
+            let models = self.models.lock();
+            if let Some(existing) = models.get(&hash_based_id) {
+                let existing_hash = Self::compute_model_hash_for_stored(existing)?;
+                if existing_hash == model_hash {
+                    info!(
+                        "Model already stored with ID {} (hash match)",
+                        hash_based_id
+                    );
+                    return Ok(hash_based_id);
+                }
+            }
+
+            info!(
+                "Generated deterministic model ID {} from hash",
+                hash_based_id
+            );
+            hash_based_id
+        };
 
         // Create stored model
         let mut stored = StoredModel::new(model_id, metadata.clone());
@@ -259,6 +396,67 @@ impl ModelStorage {
     /// Get number of stored models
     pub fn model_count(&self) -> usize {
         self.models.lock().len()
+    }
+
+    /// Compute deterministic hash from GGUF bytes (uses metadata + tensor count)
+    fn compute_model_hash(gguf_bytes: &[u8]) -> Result<u64> {
+        use std::io::Cursor;
+        let cursor = Cursor::new(gguf_bytes);
+        let mut parser = realm_core::formats::gguf::GGUFParser::new(cursor);
+        let metadata = parser
+            .parse_header()
+            .context("Failed to parse GGUF header for hash computation")?;
+
+        let mut hasher = DefaultHasher::new();
+
+        // Hash model metadata (name, architecture, size, etc.)
+        metadata.architecture.hash(&mut hasher);
+        metadata.tensors.len().hash(&mut hasher);
+
+        // Hash tensor names and shapes (deterministic model signature)
+        for tensor in &metadata.tensors {
+            tensor.name.hash(&mut hasher);
+            tensor.shape.dims().len().hash(&mut hasher);
+            for &dim in tensor.shape.dims() {
+                dim.hash(&mut hasher);
+            }
+            // Hash dtype manually since it doesn't implement Hash
+            std::mem::discriminant(&tensor.dtype).hash(&mut hasher);
+        }
+
+        Ok(hasher.finish())
+    }
+
+    /// Compute hash for already-stored model
+    fn compute_model_hash_for_stored(model: &StoredModel) -> Result<u64> {
+        let mut hasher = DefaultHasher::new();
+
+        // Use metadata from stored model
+        model.metadata.architecture.hash(&mut hasher);
+        model.metadata.tensors.len().hash(&mut hasher);
+
+        for tensor in &model.metadata.tensors {
+            tensor.name.hash(&mut hasher);
+            tensor.shape.dims().len().hash(&mut hasher);
+            for &dim in tensor.shape.dims() {
+                dim.hash(&mut hasher);
+            }
+            // Hash dtype manually since it doesn't implement Hash
+            std::mem::discriminant(&tensor.dtype).hash(&mut hasher);
+        }
+
+        Ok(hasher.finish())
+    }
+
+    /// Convert hash to model ID (u32 range, avoid 0)
+    fn hash_to_model_id(hash: &u64) -> u32 {
+        // Use lower 32 bits, ensure non-zero
+        let id = (*hash as u32).max(1);
+        if id == 0 {
+            1 // Fallback for edge case
+        } else {
+            id
+        }
     }
 }
 

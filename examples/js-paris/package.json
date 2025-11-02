@@ -1,0 +1,12 @@
+{
+  "name": "realm-js-paris-example",
+  "version": "0.1.0",
+  "description": "Realm JS example: Load large model and generate Paris",
+  "type": "module",
+  "scripts": {
+    "test": "node test-paris.js"
+  },
+  "dependencies": {
+    "@wasmer/sdk": "^0.7.0"
+  }
+}
