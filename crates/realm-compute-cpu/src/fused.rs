@@ -207,7 +207,7 @@ fn q4k_accumulate_scalar(
 /// For each output element output[i, j]:
 /// 1. Loop over K dimension in Q4_K blocks (256 elements each)
 /// 2. For each block, extract hierarchical scales (d, dmin, 8 sub-scales)
-/// 3. Dequantize on-the-fly and accumulate: sum += dequant(W[j,k]) * input[i,k]
+/// 3. Dequantize on-the-fly and accumulate: sum += dequant(W\[j,k\]) * input\[i,k\]
 ///
 /// # Performance
 ///
