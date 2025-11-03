@@ -33,7 +33,7 @@ impl CandleGpuBackend {
         #[cfg(feature = "cuda")]
         {
             if let Ok(device) = Device::new_cuda(0) {
-                println!("🚀 Using CUDA GPU acceleration");
+                // println!("🚀 Using CUDA GPU acceleration");
                 return Ok(device);
             }
         }
@@ -42,13 +42,13 @@ impl CandleGpuBackend {
         #[cfg(feature = "metal")]
         {
             if let Ok(device) = Device::new_metal(0) {
-                println!("🚀 Using Metal GPU acceleration");
+                // println!("🚀 Using Metal GPU acceleration");
                 return Ok(device);
             }
         }
 
         // Fallback to CPU
-        println!("⚠️  No GPU available, using CPU");
+        // println!("⚠️  No GPU available, using CPU");
         Ok(Device::Cpu)
     }
 

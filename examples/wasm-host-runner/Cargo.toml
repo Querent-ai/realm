@@ -1,0 +1,11 @@
+[package]
+name = "wasm-host-runner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+realm-runtime = { path = "../../crates/realm-runtime", features = ["memory64-host"] }
+wasmtime = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = "0.3"

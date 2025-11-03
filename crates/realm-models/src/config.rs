@@ -1,9 +1,10 @@
 //! Transformer configuration structs
 
 use crate::attention_stub::AttentionBackend;
+use serde::{Deserialize, Serialize};
 
 /// Transformer configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct TransformerConfig {
     /// Vocabulary size
@@ -63,7 +64,7 @@ impl From<realm_core::TransformerConfigData> for TransformerConfig {
 }
 
 /// Generation configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationConfig {
     /// Maximum number of tokens to generate
     pub max_tokens: usize,

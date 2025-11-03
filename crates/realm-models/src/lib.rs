@@ -50,8 +50,9 @@ mod tests {
         let config = TransformerConfig::default();
         let weights = AttentionWeights::new(&config);
 
-        assert_eq!(weights.wq.len(), config.hidden_size * config.hidden_size);
-        assert_eq!(weights.wo.len(), config.hidden_size * config.hidden_size);
+        // With lazy allocation, weights are empty until load_from_gguf()
+        assert_eq!(weights.wq.len(), 0);
+        assert_eq!(weights.wo.len(), 0);
     }
 
     #[test]
@@ -59,14 +60,10 @@ mod tests {
         let config = TransformerConfig::default();
         let weights = FFNWeights::new(&config);
 
-        assert_eq!(
-            weights.w_gate.len(),
-            config.hidden_size * config.intermediate_size
-        );
-        assert_eq!(
-            weights.w_down.len(),
-            config.intermediate_size * config.hidden_size
-        );
+        // With lazy allocation, weights are empty until load_from_gguf()
+        assert_eq!(weights.w_gate.len(), 0);
+        assert_eq!(weights.w_up.len(), 0);
+        assert_eq!(weights.w_down.len(), 0);
     }
 
     #[test]
@@ -74,13 +71,13 @@ mod tests {
         let config = TransformerConfig::default();
         let model = Model::new(config.clone());
 
+        // Verify structure is created
         assert_eq!(model.layers.len(), config.num_layers);
         assert_eq!(model.kv_caches.len(), config.num_layers);
-        assert_eq!(
-            model.token_embeddings.len(),
-            config.vocab_size * config.hidden_size
-        );
-        assert_eq!(model.lm_head.len(), config.hidden_size * config.vocab_size);
+
+        // With lazy allocation, these are empty until load_from_gguf()
+        assert_eq!(model.token_embeddings.len(), 0);
+        assert_eq!(model.lm_head.len(), 0);
     }
 
     #[test]

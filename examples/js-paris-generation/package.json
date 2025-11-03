@@ -1,0 +1,14 @@
+{
+  "name": "realm-js-paris",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Realm WASM Paris generation via JS with host-side storage",
+  "main": "test-paris.js",
+  "scripts": {
+    "test": "node test-paris.js"
+  },
+  "dependencies": {
+    "realm-wasm": "file:../../pkg"
+  }
+}
+

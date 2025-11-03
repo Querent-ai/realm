@@ -1,0 +1,30 @@
+[package]
+name = "realm-metrics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Comprehensive metrics collection and export for Realm.ai inference"
+
+[features]
+default = []
+prometheus = ["dep:prometheus"]
+opentelemetry = ["dep:opentelemetry", "dep:opentelemetry-prometheus"]
+
+[dependencies]
+# Core dependencies
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+# Optional: Prometheus export
+prometheus = { version = "0.13", optional = true }
+
+# Optional: OpenTelemetry export
+opentelemetry = { version = "0.29", optional = true }
+opentelemetry-prometheus = { version = "0.29", optional = true }
+
+[dev-dependencies]
+criterion = { workspace = true }

@@ -183,9 +183,11 @@ impl MultiHeadAttention {
             let token_pos = start_pos + seq_idx;
 
             if debug_rope && seq_idx == 0 {
-                eprintln!(
-                    "  RoPE: token_pos={}, head_dim={}, theta={}",
-                    token_pos, head_dim, self.config.rope_theta
+                log::debug!(
+                    "RoPE: token_pos={}, head_dim={}, theta={}",
+                    token_pos,
+                    head_dim,
+                    self.config.rope_theta
                 );
             }
 
@@ -219,14 +221,16 @@ impl MultiHeadAttention {
                     tensor[idx1] = new_x1;
 
                     if debug_rope && head == 0 && i < 4 {
-                        eprintln!(
-                            "    head={}, i={}, freq={:.6}, angle={:.6}, cos={:.6}, sin={:.6}",
-                            head, i, freq, angle, cos, sin
+                        log::debug!(
+                            "head={}, i={}, freq={:.6}, angle={:.6}, cos={:.6}, sin={:.6}",
+                            head,
+                            i,
+                            freq,
+                            angle,
+                            cos,
+                            sin
                         );
-                        eprintln!(
-                            "      ({:.6}, {:.6}) -> ({:.6}, {:.6})",
-                            x0, x1, new_x0, new_x1
-                        );
+                        log::debug!("({:.6}, {:.6}) -> ({:.6}, {:.6})", x0, x1, new_x0, new_x1);
                     }
                 }
             }
@@ -434,15 +438,15 @@ pub struct AttentionWeights {
 
 #[allow(dead_code)]
 impl AttentionWeights {
-    pub fn new(config: &TransformerConfig) -> Self {
-        let hidden_size = config.hidden_size;
-        let kv_size = config.num_kv_heads * (hidden_size / config.num_heads);
-
+    pub fn new(_config: &TransformerConfig) -> Self {
+        // Lazy allocation: Don't pre-allocate weight vectors
+        // They will be allocated during load_from_gguf() based on actual tensor sizes
+        // This saves ~64MB per layer, crucial for WASM memory limits
         Self {
-            wq: WeightFormat::F32(vec![0.0; hidden_size * hidden_size]),
-            wk: WeightFormat::F32(vec![0.0; hidden_size * kv_size]),
-            wv: WeightFormat::F32(vec![0.0; hidden_size * kv_size]),
-            wo: WeightFormat::F32(vec![0.0; hidden_size * hidden_size]),
+            wq: WeightFormat::F32(Vec::new()),
+            wk: WeightFormat::F32(Vec::new()),
+            wv: WeightFormat::F32(Vec::new()),
+            wo: WeightFormat::F32(Vec::new()),
         }
     }
 }

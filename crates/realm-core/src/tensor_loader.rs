@@ -202,7 +202,7 @@ impl TensorLoader {
 
     fn dequantize_q4_0(
         &self,
-        tensor_name: &str,
+        _tensor_name: &str,
         data: &[u8],
         element_count: usize,
     ) -> Result<Vec<f32>> {
@@ -222,37 +222,25 @@ impl TensorLoader {
         let call_num = CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         if call_num < 5 {
-            eprintln!(
-                "[Q4_0 dequant call #{}] tensor='{}', BLOCK_SIZE={}, data.len()={}, element_count={}",
-                call_num,
-                tensor_name,
-                BLOCK_SIZE,
-                data.len(),
-                element_count
-            );
+            // eprintln!("[Q4_0 dequant call #{}] tensor='{}', BLOCK_SIZE={}, data.len()={}, element_count={}", call_num, tensor_name, BLOCK_SIZE, data.len(), element_count);
 
             // Check if size matches expected
             let expected_blocks = element_count / 32;
             let expected_bytes = expected_blocks * BLOCK_SIZE;
             if data.len() != expected_bytes {
-                eprintln!(
-                    "  WARNING: Size mismatch! Expected {} bytes but got {}",
-                    expected_bytes,
-                    data.len()
-                );
+                // eprintln!("  WARNING: Size mismatch! Expected {} bytes but got {}", expected_bytes, data.len());
             }
 
             // Dump first 18 bytes to see actual layout
             if !data.is_empty() {
-                eprintln!("  First block raw bytes:");
-                eprint!("    ");
-                for (i, &byte) in data.iter().take(18).enumerate() {
-                    eprint!("{:02x} ", byte);
-                    if i == 1 {
-                        eprint!("| "); // After scale (2 bytes)
-                    }
-                }
-                eprintln!();
+                // eprintln!("  First block raw bytes:");
+                // for (i, &byte) in data.iter().take(18).enumerate() {
+                //     eprint!("{:02x} ", byte);
+                //     if i == 1 {
+                //         eprint!("| "); // After scale (2 bytes)
+                //     }
+                // }
+                // eprintln!();
             }
         }
 
@@ -270,11 +258,8 @@ impl TensorLoader {
                     let has_nan = result[offset..end].iter().any(|&x| x.is_nan());
                     let has_inf = result[offset..end].iter().any(|&x| x.is_infinite());
                     if has_nan || has_inf {
-                        eprintln!(
-                            "WARNING: Q4_0 block {} produced nan={}, inf={}",
-                            block_idx, has_nan, has_inf
-                        );
-                        eprintln!("  Block quants[0]={:#x}", block.quants[0]);
+                        // eprintln!("WARNING: Q4_0 block {} produced nan={}, inf={}", block_idx, has_nan, has_inf);
+                        // eprintln!("  Block quants[0]={:#x}", block.quants[0]);
                     }
                 }
             }
@@ -308,13 +293,7 @@ impl TensorLoader {
 
         static FIRST_CALL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
         if FIRST_CALL.swap(false, std::sync::atomic::Ordering::Relaxed) {
-            eprintln!(
-                "Q6_K dequant: BLOCK_SIZE={}, data.len()={}, element_count={}, expected_blocks={}",
-                BLOCK_SIZE,
-                data.len(),
-                element_count,
-                element_count / QK_K
-            );
+            // eprintln!("Q6_K dequant: BLOCK_SIZE={}, data.len()={}, element_count={}, expected_blocks={}", BLOCK_SIZE, data.len(), element_count, element_count / QK_K);
         }
 
         for (block_idx, block_bytes) in data.chunks_exact(BLOCK_SIZE).enumerate() {
@@ -331,17 +310,8 @@ impl TensorLoader {
                     let has_nan = result[offset..end].iter().any(|&x| x.is_nan());
                     let has_inf = result[offset..end].iter().any(|&x| x.is_infinite());
                     if has_nan || has_inf {
-                        eprintln!(
-                            "WARNING: First Q6_K block produced nan={}, inf={}",
-                            has_nan, has_inf
-                        );
-                        eprintln!(
-                            "  Block: d={}, scale[0]={}, ql[0]={:#x}, qh[0]={:#x}",
-                            half::f16::from_bits(block.d).to_f32(),
-                            block.scales[0],
-                            block.ql[0],
-                            block.qh[0]
-                        );
+                        // eprintln!("WARNING: First Q6_K block produced nan={}, inf={}", has_nan, has_inf);
+                        // eprintln!("  Block: d={}, scale[0]={}, ql[0]={:#x}, qh[0]={:#x}", half::f16::from_bits(block.d).to_f32(), block.scales[0], block.ql[0], block.qh[0]);
                     }
                 }
             }
@@ -357,38 +327,31 @@ impl TensorLoader {
 
         static FIRST_CALL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
         if FIRST_CALL.swap(false, std::sync::atomic::Ordering::Relaxed) {
-            eprintln!(
-                "Q4_K dequant: BLOCK_SIZE={}, data.len()={}, element_count={}, expected_blocks={}",
-                BLOCK_SIZE,
-                data.len(),
-                element_count,
-                element_count / QK_K
-            );
+            // eprintln!("Q4_K dequant: BLOCK_SIZE={}, data.len()={}, element_count={}, expected_blocks={}", BLOCK_SIZE, data.len(), element_count, element_count / QK_K);
         }
 
         for (block_idx, block_bytes) in data.chunks_exact(BLOCK_SIZE).enumerate() {
             // Debug first block raw bytes
             if block_idx == 0 {
-                eprintln!("  First Q4_K block raw bytes (first 20):");
-                eprint!("    ");
-                for (i, &byte) in block_bytes.iter().take(20).enumerate() {
-                    eprint!("{:02x} ", byte);
-                    if i == 1 {
-                        eprint!("| "); // After d (2 bytes)
-                    } else if i == 3 {
-                        eprint!("| "); // After dmin (2 bytes)
-                    } else if i == 15 {
-                        eprint!("| "); // After scales (12 bytes)
-                    }
-                }
-                eprintln!();
+                // eprintln!("  First Q4_K block raw bytes (first 20):");
+                // for (i, &byte) in block_bytes.iter().take(20).enumerate() {
+                //     eprint!("{:02x} ", byte);
+                //     if i == 1 {
+                //         eprint!("| "); // After d (2 bytes)
+                //     } else if i == 3 {
+                //         eprint!("| "); // After dmin (2 bytes)
+                //     } else if i == 15 {
+                //         eprint!("| "); // After scales (12 bytes)
+                //     }
+                // }
+                // eprintln!();
 
                 // Show d and dmin as raw u16 values
-                let d_bytes = [block_bytes[0], block_bytes[1]];
-                let dmin_bytes = [block_bytes[2], block_bytes[3]];
-                let d_raw = u16::from_le_bytes(d_bytes);
-                let dmin_raw = u16::from_le_bytes(dmin_bytes);
-                eprintln!("    d_raw={:#06x}, dmin_raw={:#06x}", d_raw, dmin_raw);
+                let _d_bytes = [block_bytes[0], block_bytes[1]];
+                let _dmin_bytes = [block_bytes[2], block_bytes[3]];
+                let _d_raw = u16::from_le_bytes(_d_bytes);
+                let _dmin_raw = u16::from_le_bytes(_dmin_bytes);
+                // eprintln!("    d_raw={:#06x}, dmin_raw={:#06x}", _d_raw, _dmin_raw);
             }
 
             let block: BlockQ4_K = unsafe { std::ptr::read(block_bytes.as_ptr() as *const _) };
@@ -401,24 +364,12 @@ impl TensorLoader {
 
                 // Debug first block
                 if block_idx == 0 {
-                    let has_nan = result[offset..end].iter().any(|&x| x.is_nan());
-                    let has_inf = result[offset..end].iter().any(|&x| x.is_infinite());
-                    eprintln!(
-                        "  First Q4_K block: d={}, dmin={}, nan={}, inf={}",
-                        half::f16::from_bits(block.d).to_f32(),
-                        half::f16::from_bits(block.dmin).to_f32(),
-                        has_nan,
-                        has_inf
-                    );
-                    eprintln!(
-                        "  scales[0]={:#x}, qs[0]={:#x}",
-                        block.scales[0], block.qs[0]
-                    );
-                    let end_idx = (offset + 10).min(result_len);
-                    eprintln!(
-                        "  First 10 dequantized values: {:?}",
-                        &result[offset..end_idx]
-                    );
+                    let _has_nan = result[offset..end].iter().any(|&x| x.is_nan());
+                    let _has_inf = result[offset..end].iter().any(|&x| x.is_infinite());
+                    // eprintln!("  First Q4_K block: d={}, dmin={}, nan={}, inf={}", half::f16::from_bits(block.d).to_f32(), half::f16::from_bits(block.dmin).to_f32(), _has_nan, _has_inf);
+                    // eprintln!("  scales[0]={:#x}, qs[0]={:#x}", block.scales[0], block.qs[0]);
+                    let _end_idx = (offset + 10).min(result_len);
+                    // eprintln!("  First 10 dequantized values: {:?}", &result[offset.._end_idx]);
                 }
             }
         }

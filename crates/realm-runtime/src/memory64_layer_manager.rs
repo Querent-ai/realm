@@ -8,8 +8,8 @@
 //! background asynchronous prefetching of layers to minimize latency.
 
 use crate::memory64::Memory64Runtime;
-use crate::transformer::{TransformerConfig, TransformerLayer};
 use realm_core::error::{Error, Result};
+use realm_models::{TransformerConfig, TransformerLayer};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -131,11 +131,8 @@ impl Memory64LayerManager {
     ) {
         self.model_path = Some(model_path);
         self.layer_tensors = Some(layer_tensors);
-        println!("📁 Model path set for async loading: {:?}", self.model_path);
-        println!(
-            "📊 Tensor metadata for {} layers",
-            self.layer_tensors.as_ref().map(|t| t.len()).unwrap_or(0)
-        );
+        // println!("📁 Model path set for async loading: {:?}", self.model_path);
+        // println!("REMOVED");  //
     }
 
     /// Initialize async prefetch system (only with async-prefetch feature)
@@ -192,9 +189,9 @@ impl Memory64LayerManager {
         log::info!("🚀 Async prefetch system enabled");
 
         if self.model_path.is_some() {
-            println!("🚀 Async prefetch background thread started (with real GGUF data)");
+            // println!("🚀 Async prefetch background thread started (with real GGUF data)");
         } else {
-            println!("🚀 Async prefetch background thread started (placeholder mode)");
+            // println!("🚀 Async prefetch background thread started (placeholder mode)");
         }
     }
 
@@ -235,13 +232,13 @@ impl Memory64LayerManager {
 
                         #[cfg(feature = "log")]
                         log::info!("✅ Prefetched layer {} added to cache", layer_id);
-                        println!("✅ Prefetched layer {} ready", layer_id);
+                        // println!("✅ Prefetched layer {} ready", layer_id);
                     }
                 }
                 Err(e) => {
                     #[cfg(feature = "log")]
                     log::error!("❌ Prefetch failed for layer {}: {:?}", layer_id, e);
-                    eprintln!("❌ Prefetch failed for layer {}: {:?}", layer_id, e);
+                    // eprintln!("❌ Prefetch failed for layer {}: {:?}", layer_id, e);
                 }
             }
         }
@@ -286,7 +283,7 @@ impl Memory64LayerManager {
                     all_data.extend_from_slice(tensor_data);
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Failed to load tensor {}: {:?}", tensor_name, e);
+                    // eprintln!("⚠️  Failed to load tensor {}: {:?}", tensor_name, e);
                     // Continue with other tensors
                 }
             }
@@ -308,11 +305,8 @@ impl Memory64LayerManager {
     /// For production use with real model weights, call `set_model_data()` before `enable_async_prefetch()`.
     #[cfg(feature = "async-prefetch")]
     fn load_layer_data_static(config: &TransformerConfig, layer_id: u32) -> Result<Vec<f32>> {
-        eprintln!(
-            "⚠️  WARNING: Loading placeholder data for layer {} (set_model_data not called)",
-            layer_id
-        );
-        eprintln!("   For production use, call mem64_model.set_model_data() with real GGUF path");
+        // eprintln!("⚠️  WARNING: Loading placeholder data for layer {} (set_model_data not called)", layer_id);
+        // eprintln!("   For production use, call mem64_model.set_model_data() with real GGUF path");
 
         let hidden_size = config.hidden_size;
         let attention_size = hidden_size * hidden_size * 4;
@@ -388,7 +382,7 @@ impl Memory64LayerManager {
 
         self.stats.cache_misses += 1;
         // Load layer from Memory64 (synchronous fallback)
-        println!("🔄 Loading layer {} from Memory64 (sync)...", layer_id);
+        // println!("🔄 Loading layer {} from Memory64 (sync)...", layer_id);
 
         // In production, this would call the Memory64 runtime to load the layer
         // For now, we'll create a placeholder layer
@@ -433,7 +427,7 @@ impl Memory64LayerManager {
             *val = (layer_id as f32) * 0.1 + (i as f32) * 0.001;
         }
 
-        println!("   📦 Loaded {} bytes for layer {}", total_size, layer_id);
+        // println!("   📦 Loaded {} bytes for layer {}", total_size, layer_id);
         Ok(data)
     }
 
@@ -494,11 +488,7 @@ impl Memory64LayerManager {
                 .copy_from_slice(&data[offset..offset + hidden_size]);
         }
 
-        println!(
-            "✅ Layer {} loaded successfully ({} bytes)",
-            layer_id,
-            data.len()
-        );
+        // println!("REMOVED");  //
         Ok(layer)
     }
 
@@ -515,7 +505,7 @@ impl Memory64LayerManager {
             self.layer_cache.remove(&layer_id);
             self.stats.evictions += 1;
             self.stats.cached_layers = self.layer_cache.len();
-            println!("🗑️  Evicted layer {} from cache", layer_id);
+            // println!("🗑️  Evicted layer {} from cache", layer_id);
         }
     }
 
@@ -556,7 +546,7 @@ impl Memory64LayerManager {
             self.layer_cache.remove(&oldest_key);
             self.stats.evictions += 1;
             self.stats.cached_layers = self.layer_cache.len();
-            println!("🗑️  Evicted layer {} from cache", oldest_key);
+            // println!("🗑️  Evicted layer {} from cache", oldest_key);
         }
     }
 
@@ -575,11 +565,7 @@ impl Memory64LayerManager {
             self.prefetch_protected.insert(layer_id);
         }
 
-        println!(
-            "🛡️  Protected {} layers from eviction (prefetch distance: {})",
-            self.prefetch_protected.len(),
-            self.prefetch_distance
-        );
+        // println!("REMOVED");  //
     }
 
     /// Set prefetch distance for protection calculation
@@ -606,16 +592,16 @@ impl Memory64LayerManager {
     pub fn clear_cache(&mut self) {
         self.layer_cache.clear();
         self.stats.cached_layers = 0;
-        println!("🧹 Layer cache cleared");
+        // println!("🧹 Layer cache cleared");
     }
 
     /// Set the maximum cache size
     pub fn set_cache_size(&mut self, new_size: usize) {
-        let old_size = self.max_cache_size;
+        let _old_size = self.max_cache_size;
         self.max_cache_size = new_size;
         self.stats.max_cache_size = new_size;
 
-        println!("📊 Cache size changed: {} -> {} layers", old_size, new_size);
+        // println!("📊 Cache size changed: {} -> {} layers", _old_size, new_size);
 
         // Evict excess layers if new size is smaller
         if self.layer_cache.len() > new_size {
@@ -623,7 +609,7 @@ impl Memory64LayerManager {
             for _ in 0..excess {
                 self.evict_oldest_layer();
             }
-            println!("🗑️ Evicted {} excess layers", excess);
+            // println!("🗑️ Evicted {} excess layers", excess);
         }
     }
 
@@ -644,14 +630,12 @@ impl Memory64LayerManager {
         let max_layers_by_memory = (available_memory_mb / memory_per_layer_mb) as usize;
 
         // Cap at reasonable limits
-        let optimal_size = max_layers_by_memory.clamp(4, 16);
+        // println!("🧮 Optimal cache size calculation:");
+        // println!("   Available memory: {} MB", available_memory_mb);
+        // println!("   Memory per layer: {} MB", memory_per_layer_mb);
+        // println!("   Calculated optimal: {} layers", max_layers_by_memory.clamp(4, 16));
 
-        println!("🧮 Optimal cache size calculation:");
-        println!("   Available memory: {} MB", available_memory_mb);
-        println!("   Memory per layer: {} MB", memory_per_layer_mb);
-        println!("   Calculated optimal: {} layers", optimal_size);
-
-        optimal_size
+        max_layers_by_memory.clamp(4, 16)
     }
 
     /// Auto-configure cache size based on system memory

@@ -1,0 +1,14 @@
+[package]
+name = "metrics-demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+realm-metrics = { path = "../../crates/realm-metrics" }
+anyhow = "1.0"
+env_logger = "0.11"
+log = "0.4"
+
+[[bin]]
+name = "metrics-demo"
+path = "src/main.rs"

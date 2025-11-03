@@ -110,7 +110,10 @@ impl WasmModel {
         top_k: u32,
         repetition_penalty: f32,
     ) {
-        let mut config = self.config.lock().unwrap();
+        let mut config = self
+            .config
+            .lock()
+            .expect("Config mutex poisoned - thread panicked while holding lock");
         *config = realm_models::GenerationConfig {
             max_tokens,
             temperature,
@@ -126,8 +129,12 @@ impl WasmModel {
         let tokenizer = self.tokenizer.clone();
         let config = self.config.clone();
 
-        let mut model_guard = model.lock().unwrap();
-        let config_guard = config.lock().unwrap();
+        let mut model_guard = model
+            .lock()
+            .expect("Model mutex poisoned - thread panicked while holding lock");
+        let config_guard = config
+            .lock()
+            .expect("Config mutex poisoned - thread panicked while holding lock");
 
         model_guard
             .generate(prompt, &tokenizer, &config_guard)

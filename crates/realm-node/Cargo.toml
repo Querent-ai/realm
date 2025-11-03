@@ -1,0 +1,22 @@
+[package]
+name = "realm-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Node.js SDK for Realm.ai with host-side model storage"
+
+[lib]
+name = "realm_node"
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+neon-build = "0.10.1"
+
+[dependencies]
+neon = { version = "1.1.1", default-features = false, features = ["napi-8"] }
+realm-core = { workspace = true }
+realm-runtime = { workspace = true }
+realm-compute-cpu = { workspace = true }
+anyhow = { workspace = true }

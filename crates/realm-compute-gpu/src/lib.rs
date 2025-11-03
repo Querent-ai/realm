@@ -337,7 +337,7 @@ mod tests {
             assert!((result[2] - 49.0).abs() < 0.001);
             assert!((result[3] - 64.0).abs() < 0.001);
 
-            println!("✅ GPU matmul test passed!");
+            // println!("✅ GPU matmul test passed!");
         });
     }
 }

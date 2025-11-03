@@ -6,11 +6,16 @@ members = [
     "crates/realm-compute-gpu",
     "crates/realm-runtime",
     "crates/realm-wasm",
+    "crates/realm-node",
+    "crates/realm-metrics",
     "cli",
     "examples/simple-realm-test",
     "examples/multi-tenant",
     # "examples/end-to-end-inference",  # TODO: Fix HostContext imports
     "examples/paris-generation",
+    "examples/memory64-demo",
+    "examples/metrics-demo",
+    "examples/wasm-host-runner",
 ]
 
 resolver = "2"
@@ -20,7 +25,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/yourusername/realm"
-authors = ["Your Name <you@example.com>"]
+authors = ["Puneet Saraswat <puneet@querent.xyz>"]
 
 [workspace.dependencies]
 # Core inference primitives
@@ -30,6 +35,7 @@ realm-compute-cpu = { path = "crates/realm-compute-cpu" }
 realm-compute-gpu = { path = "crates/realm-compute-gpu" }
 realm-runtime = { path = "crates/realm-runtime" }
 realm-wasm = { path = "crates/realm-wasm" }
+realm-metrics = { path = "crates/realm-metrics" }
 
 # Core dependencies
 bytemuck = { version = "1.14", features = ["derive"] }
@@ -40,7 +46,13 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ndarray = "0.16"
 unicode-normalization = "0.1"
-rand = "0.9"
+rand = "0.8"
+log = "0.4"
+getrandom = { version = "0.2", features = ["js"] }
+wgpu = { version = "0.19", features = ["wgsl"] }
+wasm-bindgen-futures = "0.4"
+# Renamed package to activate getrandom 0.3 with js feature in wasm builds
+getrandom_03_js = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 
 # WASM runtime
 wasmtime = "38.0.3"

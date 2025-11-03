@@ -11,7 +11,7 @@ description = "WASM orchestrator module for Realm.ai"
 crate-type = ["cdylib", "rlib"]
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O", "--enable-bulk-memory"]
+wasm-opt = ["-O", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-simd"]
 
 [features]
 default = []
@@ -19,10 +19,18 @@ memory64 = []
 
 [dependencies]
 realm-core = { workspace = true }
+realm-models = { workspace = true }
+realm-compute-cpu = { workspace = true }
 wasm-bindgen = { workspace = true }
 js-sys = { workspace = true }
 web-sys = { workspace = true, features = ["console"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { workspace = true }
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = "0.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Ensure getrandom 0.3.x brought by rand 0.9 has the js feature enabled in wasm
+getrandom_03_js = { workspace = true }

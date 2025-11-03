@@ -14,6 +14,7 @@
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex; // No poisoning, faster than std::sync::Mutex
 use std::sync::Arc;
+use tracing::{error, info, warn};
 use wasmtime::{AsContext, Caller, Extern, Linker, Memory, MemoryType, Store};
 
 // Import Candle backends
@@ -408,12 +409,11 @@ impl Memory64Runtime {
     fn create_cpu_backend() -> Option<Arc<dyn CpuBackendTrait>> {
         match CandleCpuBackend::new() {
             Ok(backend) => {
-                eprintln!("✅ Memory64 Runtime: Candle CPU backend initialized");
+                info!("Memory64 Runtime: Candle CPU backend initialized");
                 Some(Arc::new(backend))
             }
             Err(e) => {
-                eprintln!("⚠️  Memory64 Runtime: Candle CPU backend failed: {}", e);
-                eprintln!("   WASM will use NaiveCpuBackend fallback");
+                warn!("Memory64 Runtime: Candle CPU backend failed: {}, WASM will use NaiveCpuBackend fallback", e);
                 None
             }
         }
@@ -426,11 +426,11 @@ impl Memory64Runtime {
 
         match CandleGpuBackend::new() {
             Ok(backend) => {
-                eprintln!("✅ Memory64 Runtime: Candle GPU backend initialized");
+                info!("Memory64 Runtime: Candle GPU backend initialized");
                 Some(Arc::new(backend))
             }
             Err(e) => {
-                eprintln!("⚠️  Memory64 Runtime: Candle GPU backend failed: {}", e);
+                warn!("Memory64 Runtime: Candle GPU backend failed: {}", e);
                 None
             }
         }
@@ -490,14 +490,14 @@ impl Memory64Runtime {
                 let layer = match state_guard.get_layer(layer_id) {
                     Ok(l) => l.clone(),
                     Err(e) => {
-                        eprintln!("❌ Layer {} not found: {}", layer_id, e); // ✅ FIX 4: Log error
+                        error!("Layer {} not found: {}", layer_id, e);
                         return -2;
                     }
                 };
 
                 if layer.size > max_size as usize {
-                    eprintln!(
-                        "❌ Buffer too small for layer {}: need {}, got {}",
+                    error!(
+                        "Buffer too small for layer {}: need {}, got {}",
                         layer_id, layer.size, max_size
                     );
                     return -3;
@@ -507,7 +507,7 @@ impl Memory64Runtime {
                 let wasm_memory = match caller.get_export("memory") {
                     Some(Extern::Memory(mem)) => mem,
                     _ => {
-                        eprintln!("❌ No WASM memory export available");
+                        error!("No WASM memory export available");
                         return -5;
                     }
                 };
@@ -518,15 +518,15 @@ impl Memory64Runtime {
                 let end_ptr = match (wasm_ptr as usize).checked_add(layer.size) {
                     Some(end) => end,
                     None => {
-                        eprintln!("❌ WASM pointer overflow: {} + {}", wasm_ptr, layer.size);
+                        error!("WASM pointer overflow: {} + {}", wasm_ptr, layer.size);
                         state_guard.stats.errors += 1;
                         return -6;
                     }
                 };
 
                 if end_ptr > wasm_mem_size {
-                    eprintln!(
-                        "❌ WASM pointer out of bounds: {} + {} > {}",
+                    error!(
+                        "WASM pointer out of bounds: {} + {} > {}",
                         wasm_ptr, layer.size, wasm_mem_size
                     );
                     state_guard.stats.errors += 1;
@@ -536,14 +536,14 @@ impl Memory64Runtime {
                 // Read from Memory64
                 let mut buffer = vec![0u8; layer.size];
                 if let Err(e) = state_guard.read(caller.as_context(), layer.offset, &mut buffer) {
-                    eprintln!("❌ Failed to read layer {}: {}", layer_id, e); // ✅ FIX 4: Log error
+                    error!("Failed to read layer {}: {}", layer_id, e);
                     state_guard.stats.errors += 1;
                     return -4;
                 }
 
                 // Write to WASM memory (already validated)
                 if let Err(e) = wasm_memory.write(&mut caller, wasm_ptr as usize, &buffer) {
-                    eprintln!("❌ Failed to write to WASM memory: {}", e);
+                    error!("Failed to write to WASM memory: {}", e);
                     state_guard.stats.errors += 1;
                     return -8;
                 }
@@ -569,7 +569,7 @@ impl Memory64Runtime {
                 let wasm_memory = match caller.get_export("memory") {
                     Some(Extern::Memory(mem)) => mem,
                     _ => {
-                        eprintln!("❌ No WASM memory export");
+                        error!("No WASM memory export");
                         return -3;
                     }
                 };
@@ -580,15 +580,15 @@ impl Memory64Runtime {
                 let end_ptr = match (wasm_ptr as usize).checked_add(size as usize) {
                     Some(end) => end,
                     None => {
-                        eprintln!("❌ WASM pointer overflow: {} + {}", wasm_ptr, size);
+                        error!("WASM pointer overflow: {} + {}", wasm_ptr, size);
                         state_guard.stats.errors += 1;
                         return -4;
                     }
                 };
 
                 if end_ptr > wasm_mem_size {
-                    eprintln!(
-                        "❌ WASM pointer out of bounds: {} + {} > {}",
+                    error!(
+                        "WASM pointer out of bounds: {} + {} > {}",
                         wasm_ptr, size, wasm_mem_size
                     );
                     state_guard.stats.errors += 1;
@@ -598,14 +598,14 @@ impl Memory64Runtime {
                 // Read from Memory64
                 let mut buffer = vec![0u8; size as usize];
                 if let Err(e) = state_guard.read(caller.as_context(), offset, &mut buffer) {
-                    eprintln!("❌ memory64_read failed at offset {}: {}", offset, e); // ✅ FIX 4
+                    error!("memory64_read failed at offset {}: {}", offset, e);
                     state_guard.stats.errors += 1;
                     return -2;
                 }
 
                 // Write to WASM memory
                 if let Err(e) = wasm_memory.write(&mut caller, wasm_ptr as usize, &buffer) {
-                    eprintln!("❌ Failed to write to WASM memory: {}", e);
+                    error!("Failed to write to WASM memory: {}", e);
                     state_guard.stats.errors += 1;
                     return -6;
                 }
@@ -659,7 +659,7 @@ impl Memory64Runtime {
                       -> i32 {
                     // Check if backend is available
                     if cpu_backend.is_none() {
-                        eprintln!("❌ Candle CPU backend not available");
+                        error!("Candle CPU backend not available");
                         return -1;
                     }
 
@@ -669,7 +669,7 @@ impl Memory64Runtime {
                     let wasm_memory = match caller.get_export("memory") {
                         Some(Extern::Memory(mem)) => mem,
                         _ => {
-                            eprintln!("❌ No WASM memory export");
+                            error!("No WASM memory export");
                             return -2;
                         }
                     };
@@ -687,12 +687,12 @@ impl Memory64Runtime {
                     let mut b_buffer = vec![0u8; b_size * 4];
 
                     if let Err(e) = wasm_memory.read(&caller, a_ptr as usize, &mut a_buffer) {
-                        eprintln!("❌ Failed to read matrix A: {}", e);
+                        error!("Failed to read matrix A: {}", e);
                         return -3;
                     }
 
                     if let Err(e) = wasm_memory.read(&caller, b_ptr as usize, &mut b_buffer) {
-                        eprintln!("❌ Failed to read matrix B: {}", e);
+                        error!("Failed to read matrix B: {}", e);
                         return -4;
                     }
 
@@ -711,7 +711,7 @@ impl Memory64Runtime {
                     let result = match backend.matmul(&a_f32, &b_f32, m_usize, k_usize, n_usize) {
                         Ok(r) => r,
                         Err(e) => {
-                            eprintln!("❌ Candle matmul failed: {}", e);
+                            error!("Candle matmul failed: {}", e);
                             return -5;
                         }
                     };
@@ -724,7 +724,7 @@ impl Memory64Runtime {
                     if let Err(e) =
                         wasm_memory.write(&mut caller, result_ptr as usize, &result_bytes)
                     {
-                        eprintln!("❌ Failed to write result: {}", e);
+                        error!("Failed to write result: {}", e);
                         return -6;
                     }
 
@@ -746,7 +746,7 @@ impl Memory64Runtime {
                       n: u32|
                       -> i32 {
                     if cpu_backend2.is_none() {
-                        eprintln!("❌ Candle CPU backend not available");
+                        error!("Candle CPU backend not available");
                         return -1;
                     }
 
@@ -755,7 +755,7 @@ impl Memory64Runtime {
                     let wasm_memory = match caller.get_export("memory") {
                         Some(Extern::Memory(mem)) => mem,
                         _ => {
-                            eprintln!("❌ No WASM memory export");
+                            error!("No WASM memory export");
                             return -2;
                         }
                     };
@@ -771,12 +771,12 @@ impl Memory64Runtime {
                     let mut b_buffer = vec![0u8; b_size * 4];
 
                     if let Err(e) = wasm_memory.read(&caller, a_ptr as usize, &mut a_buffer) {
-                        eprintln!("❌ Failed to read matrix A: {}", e);
+                        error!("Failed to read matrix A: {}", e);
                         return -3;
                     }
 
                     if let Err(e) = wasm_memory.read(&caller, b_ptr as usize, &mut b_buffer) {
-                        eprintln!("❌ Failed to read matrix B: {}", e);
+                        error!("Failed to read matrix B: {}", e);
                         return -4;
                     }
 
@@ -795,7 +795,7 @@ impl Memory64Runtime {
                     {
                         Ok(r) => r,
                         Err(e) => {
-                            eprintln!("❌ Candle matmul_transposed failed: {}", e);
+                            error!("Candle matmul_transposed failed: {}", e);
                             return -5;
                         }
                     };
@@ -806,11 +806,1141 @@ impl Memory64Runtime {
                     if let Err(e) =
                         wasm_memory.write(&mut caller, result_ptr as usize, &result_bytes)
                     {
-                        eprintln!("❌ Failed to write result: {}", e);
+                        error!("Failed to write result: {}", e);
                         return -6;
                     }
 
                     (m_usize * n_usize) as i32
+                },
+            )?;
+        }
+
+        // ========================================
+        // Model Storage Host Functions
+        // ========================================
+
+        // Host function: Store a model from GGUF bytes in HOST memory
+        // Parameters: gguf_ptr, gguf_len, model_id (WASM memory offsets)
+        //            model_id: 0 = auto-generate from hash, > 0 = use provided ID
+        // Returns: model_id on success (> 0), negative on error
+        linker.func_wrap(
+            "env",
+            "realm_store_model",
+            move |mut caller: Caller<'_, ()>, gguf_ptr: u32, gguf_len: u32, model_id: u32| -> i32 {
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_store_model: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                // Validate pointer bounds
+                let wasm_mem_size = wasm_memory.data_size(&caller);
+                let end_ptr = match (gguf_ptr as usize).checked_add(gguf_len as usize) {
+                    Some(end) => end,
+                    None => {
+                        error!(
+                            "realm_store_model: Pointer overflow: {} + {}",
+                            gguf_ptr, gguf_len
+                        );
+                        return -2;
+                    }
+                };
+
+                if end_ptr > wasm_mem_size {
+                    error!(
+                        "realm_store_model: Pointer out of bounds: {} + {} > {}",
+                        gguf_ptr, gguf_len, wasm_mem_size
+                    );
+                    return -3;
+                }
+
+                // Read GGUF bytes from WASM memory
+                let mut gguf_buffer = vec![0u8; gguf_len as usize];
+                if let Err(e) = wasm_memory.read(&caller, gguf_ptr as usize, &mut gguf_buffer) {
+                    error!("realm_store_model: Failed to read GGUF data: {}", e);
+                    return -4;
+                }
+
+                // Store model in HOST storage
+                use crate::model_storage::GLOBAL_MODEL_STORAGE;
+                let requested_id = if model_id == 0 {
+                    None // Auto-generate from hash
+                } else {
+                    Some(model_id) // Use consumer-provided ID
+                };
+
+                match GLOBAL_MODEL_STORAGE.store_model(&gguf_buffer, requested_id) {
+                    Ok(final_model_id) => {
+                        info!(
+                            "realm_store_model: Stored model {} ({} bytes, requested_id={:?})",
+                            final_model_id, gguf_len, requested_id
+                        );
+                        final_model_id as i32
+                    }
+                    Err(e) => {
+                        error!("realm_store_model: Failed to store model: {}", e);
+                        -5
+                    }
+                }
+            },
+        )?;
+
+        // Host function: Get tensor data from HOST storage (with automatic dequantization)
+        // Parameters: model_id, tensor_name_ptr, tensor_name_len, out_ptr, out_max_len
+        // Returns: actual tensor size in BYTES on success (f32 * 4), negative on error
+        //
+        // This function:
+        // 1. Retrieves quantized tensor from storage
+        // 2. Dequantizes to f32 automatically
+        // 3. Writes f32 array to WASM memory
+        linker.func_wrap(
+            "env",
+            "realm_get_tensor",
+            move |mut caller: Caller<'_, ()>,
+                  model_id: u32,
+                  tensor_name_ptr: u32,
+                  tensor_name_len: u32,
+                  out_ptr: u32,
+                  out_max_len: u32|
+                  -> i32 {
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_get_tensor: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                let wasm_mem_size = wasm_memory.data_size(&caller);
+
+                // Read tensor name from WASM memory
+                let name_end = match (tensor_name_ptr as usize).checked_add(tensor_name_len as usize)
+                {
+                    Some(end) => end,
+                    None => {
+                        error!("realm_get_tensor: Name pointer overflow");
+                        return -2;
+                    }
+                };
+
+                if name_end > wasm_mem_size {
+                    error!("realm_get_tensor: Name pointer out of bounds");
+                    return -3;
+                }
+
+                let mut name_buffer = vec![0u8; tensor_name_len as usize];
+                if let Err(e) = wasm_memory.read(&caller, tensor_name_ptr as usize, &mut name_buffer)
+                {
+                    error!("realm_get_tensor: Failed to read tensor name: {}", e);
+                    return -4;
+                }
+
+                let tensor_name = match std::str::from_utf8(&name_buffer) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("realm_get_tensor: Invalid UTF-8 in tensor name: {}", e);
+                        return -5;
+                    }
+                };
+
+                // Validate output pointer
+                let out_end = match (out_ptr as usize).checked_add(out_max_len as usize) {
+                    Some(end) => end,
+                    None => {
+                        error!("realm_get_tensor: Output pointer overflow");
+                        return -6;
+                    }
+                };
+
+                if out_end > wasm_mem_size {
+                    error!("realm_get_tensor: Output pointer out of bounds");
+                    return -7;
+                }
+
+                // Get tensor from HOST storage
+                use crate::model_storage::GLOBAL_MODEL_STORAGE;
+                let tensor = match GLOBAL_MODEL_STORAGE.get_tensor(model_id, tensor_name) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!(
+                            "realm_get_tensor: Failed to get tensor '{}' from model {}: {}",
+                            tensor_name, model_id, e
+                        );
+                        return -8;
+                    }
+                };
+
+                // Dequantize tensor to f32
+                use realm_core::quant::dequantize_tensor;
+                let element_count = tensor.element_count() as usize;
+                let dequantized = match dequantize_tensor(&tensor.data, tensor.dtype, element_count) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        error!(
+                            "realm_get_tensor: Failed to dequantize tensor '{}': {}",
+                            tensor_name, e
+                        );
+                        return -9;
+                    }
+                };
+
+                // Convert f32 array to bytes
+                let f32_bytes: Vec<u8> = dequantized
+                    .iter()
+                    .flat_map(|&f| f.to_le_bytes())
+                    .collect();
+
+                // Check if output buffer is large enough
+                if f32_bytes.len() > out_max_len as usize {
+                    error!(
+                        "realm_get_tensor: Buffer too small: need {} bytes, got {}",
+                        f32_bytes.len(),
+                        out_max_len
+                    );
+                    return -10;
+                }
+
+                // Write dequantized f32 data to WASM memory
+                if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, &f32_bytes) {
+                    error!("realm_get_tensor: Failed to write tensor data: {}", e);
+                    return -11;
+                }
+
+                info!(
+                    "realm_get_tensor: Loaded and dequantized tensor '{}' from model {} ({} elements, {} bytes)",
+                    tensor_name,
+                    model_id,
+                    element_count,
+                    f32_bytes.len()
+                );
+
+                f32_bytes.len() as i32
+            },
+        )?;
+
+        // Host function: Get model metadata (tensor count, total size)
+        // Parameters: model_id, out_tensor_count_ptr, out_total_size_ptr
+        // Returns: 0 on success, negative on error
+        linker.func_wrap(
+            "env",
+            "realm_get_model_info",
+            move |mut caller: Caller<'_, ()>,
+                  model_id: u32,
+                  out_tensor_count_ptr: u32,
+                  out_total_size_ptr: u32|
+                  -> i32 {
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_get_model_info: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                // Get model from storage
+                use crate::model_storage::GLOBAL_MODEL_STORAGE;
+                let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("realm_get_model_info: Model {} not found: {}", model_id, e);
+                        return -2;
+                    }
+                };
+
+                let tensor_count = model.tensor_count() as u32;
+                let total_size = model.total_size as u64;
+
+                // Write tensor_count (u32, 4 bytes)
+                let tensor_count_bytes = tensor_count.to_le_bytes();
+                if let Err(e) = wasm_memory.write(
+                    &mut caller,
+                    out_tensor_count_ptr as usize,
+                    &tensor_count_bytes,
+                ) {
+                    error!("realm_get_model_info: Failed to write tensor count: {}", e);
+                    return -3;
+                }
+
+                // Write total_size (u64, 8 bytes)
+                let total_size_bytes = total_size.to_le_bytes();
+                if let Err(e) =
+                    wasm_memory.write(&mut caller, out_total_size_ptr as usize, &total_size_bytes)
+                {
+                    error!("realm_get_model_info: Failed to write total size: {}", e);
+                    return -4;
+                }
+
+                info!(
+                    "realm_get_model_info: Model {} has {} tensors, {} bytes total",
+                    model_id, tensor_count, total_size
+                );
+
+                0 // Success
+            },
+        )?;
+
+        // Host function: Remove model from storage (cleanup)
+        // Parameters: model_id
+        // Returns: 0 on success, negative on error
+        linker.func_wrap(
+            "env",
+            "realm_remove_model",
+            move |_caller: Caller<'_, ()>, model_id: u32| -> i32 {
+                use crate::model_storage::GLOBAL_MODEL_STORAGE;
+                match GLOBAL_MODEL_STORAGE.remove_model(model_id) {
+                    Ok(()) => {
+                        info!("realm_remove_model: Removed model {}", model_id);
+                        0
+                    }
+                    Err(e) => {
+                        error!(
+                            "realm_remove_model: Failed to remove model {}: {}",
+                            model_id, e
+                        );
+                        -1
+                    }
+                }
+            },
+        )?;
+
+        // ========================================
+        // Transformer Layer Forward (HOST-SIDE COMPUTATION)
+        // ========================================
+        // This is THE KEY function: weights never enter WASM!
+        //
+        // Host function: Forward through a complete transformer layer
+        // - Loads weights from HOST storage (never copies to WASM)
+        // - Computes attention + FFN on HOST (with GPU acceleration)
+        // - Returns output to WASM (only activations, no weights)
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let cpu_backend = self.cpu_backend.clone();
+            linker.func_wrap(
+                "env",
+                "realm_forward_layer",
+                move |mut caller: Caller<'_, ()>,
+                      model_id: u32,
+                      layer_idx: u32,
+                      hidden_states_ptr: u32,
+                      hidden_states_len: u32,
+                      position: u32,
+                      out_ptr: u32| -> i32 {
+                    use crate::model_storage::GLOBAL_MODEL_STORAGE;
+
+                    // Check backend
+                    if cpu_backend.is_none() {
+                        error!("realm_forward_layer: CPU backend not available");
+                        return -1;
+                    }
+                    let _backend = cpu_backend.as_ref().unwrap();
+
+                    // Get WASM memory
+                    let wasm_memory = match caller.get_export("memory") {
+                        Some(Extern::Memory(mem)) => mem,
+                        _ => {
+                            error!("realm_forward_layer: No WASM memory export");
+                            return -2;
+                        }
+                    };
+
+                    // Read hidden states from WASM
+                    let hidden_size_bytes = (hidden_states_len as usize) * 4; // f32 = 4 bytes
+                    let mut hidden_buffer = vec![0u8; hidden_size_bytes];
+                    if let Err(e) = wasm_memory.read(&caller, hidden_states_ptr as usize, &mut hidden_buffer) {
+                        error!("realm_forward_layer: Failed to read hidden states: {}", e);
+                        return -3;
+                    }
+
+                    // Convert to f32
+                    let hidden_states: Vec<f32> = hidden_buffer
+                        .chunks_exact(4)
+                        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                        .collect();
+
+                    // Get model and config from storage
+                    let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!("realm_forward_layer: Model {} not found: {}", model_id, e);
+                            return -4;
+                        }
+                    };
+
+                    let config = model.extract_config();
+                    let hidden_size = config.hidden_size;
+                    let seq_len = hidden_states.len() / hidden_size;
+
+                    if !hidden_states.len().is_multiple_of(hidden_size) {
+                        error!("realm_forward_layer: Invalid hidden_states length: {} not divisible by hidden_size {}", hidden_states.len(), hidden_size);
+                        return -5;
+                    }
+
+                    // Initialize backends
+                    let candle_backend = realm_compute_cpu::CandleNeuralOpsBackend::new();
+                    use realm_compute_cpu::CandleCpuBackend;
+                    let cpu_backend = match CandleCpuBackend::new() {
+                        Ok(b) => b,
+                        Err(_) => {
+                            error!("realm_forward_layer: Failed to create CPU backend");
+                            return -31;
+                        }
+                    };
+
+                    // Load attention norm weights (small, can dequantize once)
+                    let attn_norm_tensor = match model.get_tensor(&format!("blk.{}.attn_norm.weight", layer_idx)) {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_forward_layer: attn_norm.weight not found for layer {}", layer_idx);
+                            return -6;
+                        }
+                    };
+
+                    let attn_norm = match realm_core::quant::dequantize_tensor(&attn_norm_tensor.data, attn_norm_tensor.dtype, hidden_size) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            error!("realm_forward_layer: Failed to dequantize attn_norm: {}", e);
+                            return -7;
+                        }
+                    };
+
+                    // 1. Attention block
+                    // Norm
+                    let normed = match candle_backend.rms_norm(&hidden_states, &attn_norm, config.rms_norm_eps, seq_len, hidden_size) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            error!("realm_forward_layer: RMS norm failed: {}", e);
+                            return -8;
+                        }
+                    };
+
+                    // Helper: Convert quantized tensor to WeightFormat (for fused ops)
+                    fn quantized_to_weight_format(tensor: &crate::model_storage::QuantizedTensor) -> std::result::Result<realm_models::WeightFormat, anyhow::Error> {
+                        use realm_core::quant::{
+                            BlockQ2_K, BlockQ3_K, BlockQ4_0, BlockQ4_1, BlockQ4_K, BlockQ5_0,
+                            BlockQ5_1, BlockQ5_K, BlockQ6_K, BlockQ8_0, BlockQ8_1, BlockQ8_K,
+                        };
+
+                        match tensor.dtype {
+                            realm_core::tensor::DataType::F32 => {
+                                let f32_data: Vec<f32> = tensor.data.chunks_exact(4)
+                                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                                    .collect();
+                                Ok(realm_models::WeightFormat::F32(f32_data))
+                            }
+                            realm_core::tensor::DataType::Q4_K => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ4_K>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ4_K) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q4K(blocks))
+                            }
+                            realm_core::tensor::DataType::Q5_K => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ5_K>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ5_K) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q5K(blocks))
+                            }
+                            realm_core::tensor::DataType::Q6_K => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ6_K>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ6_K) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q6K(blocks))
+                            }
+                            realm_core::tensor::DataType::Q8_K => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ8_K>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ8_K) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q8K(blocks))
+                            }
+                            realm_core::tensor::DataType::Q2_K => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ2_K>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ2_K) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q2K(blocks))
+                            }
+                            realm_core::tensor::DataType::Q3_K => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ3_K>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ3_K) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q3K(blocks))
+                            }
+                            realm_core::tensor::DataType::Q4_0 => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ4_0>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ4_0) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q40(blocks))
+                            }
+                            realm_core::tensor::DataType::Q4_1 => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ4_1>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ4_1) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q41(blocks))
+                            }
+                            realm_core::tensor::DataType::Q5_0 => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ5_0>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ5_0) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q50(blocks))
+                            }
+                            realm_core::tensor::DataType::Q5_1 => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ5_1>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ5_1) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q51(blocks))
+                            }
+                            realm_core::tensor::DataType::Q8_0 => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ8_0>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ8_0) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q80(blocks))
+                            }
+                            realm_core::tensor::DataType::Q8_1 => {
+                                const BLOCK_SIZE: usize = std::mem::size_of::<BlockQ8_1>();
+                                let num_blocks = tensor.data.len() / BLOCK_SIZE;
+                                let mut blocks = Vec::with_capacity(num_blocks);
+
+                                for block_data in tensor.data.chunks_exact(BLOCK_SIZE) {
+                                    let block = unsafe { std::ptr::read(block_data.as_ptr() as *const BlockQ8_1) };
+                                    blocks.push(block);
+                                }
+                                Ok(realm_models::WeightFormat::Q81(blocks))
+                            }
+                            _ => Err(anyhow::anyhow!("Unsupported dtype for weight format: {:?}", tensor.dtype))
+                        }
+                    }
+
+                    // Load attention weights (as WeightFormat for fused ops)
+                    let wq_tensor = match model.get_tensor(&format!("blk.{}.attn_q.weight", layer_idx)) {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_forward_layer: attn_q.weight not found for layer {}", layer_idx);
+                            return -15;
+                        }
+                    };
+                    let wq = match quantized_to_weight_format(wq_tensor) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            error!("realm_forward_layer: Failed to convert wq to WeightFormat: {}", e);
+                            return -15;
+                        }
+                    };
+
+                    let wk_tensor = match model.get_tensor(&format!("blk.{}.attn_k.weight", layer_idx)) {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_forward_layer: attn_k.weight not found for layer {}", layer_idx);
+                            return -16;
+                        }
+                    };
+                    let wk = match quantized_to_weight_format(wk_tensor) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            error!("realm_forward_layer: Failed to convert wk to WeightFormat: {}", e);
+                            return -17;
+                        }
+                    };
+
+                    let wv_tensor = match model.get_tensor(&format!("blk.{}.attn_v.weight", layer_idx)) {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_forward_layer: attn_v.weight not found for layer {}", layer_idx);
+                            return -18;
+                        }
+                    };
+                    let wv = match quantized_to_weight_format(wv_tensor) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            error!("realm_forward_layer: Failed to convert wv to WeightFormat: {}", e);
+                            return -19;
+                        }
+                    };
+
+                    let wo_tensor = match model.get_tensor(&format!("blk.{}.attn_output.weight", layer_idx)) {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_forward_layer: attn_output.weight not found for layer {}", layer_idx);
+                            return -20;
+                        }
+                    };
+                    let wo = match quantized_to_weight_format(wo_tensor) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            error!("realm_forward_layer: Failed to convert wo to WeightFormat: {}", e);
+                            return -21;
+                        }
+                    };
+
+                    // Create attention weights struct
+                    let attn_weights = realm_models::AttentionWeights {
+                        wq,
+                        wk,
+                        wv,
+                        wo,
+                    };
+
+                    // Forward attention using MultiHeadAttention (weights stay in HOST!)
+                    let attention = realm_models::MultiHeadAttention::new(config.clone());
+
+                    // KV cache management - use HOST-side storage
+                    use crate::kv_cache_storage::GLOBAL_KV_CACHE_STORAGE;
+                    let head_dim = config.hidden_size / config.num_heads;
+                    let kv_cache_arc = GLOBAL_KV_CACHE_STORAGE.get_or_create(
+                        model_id,
+                        layer_idx,
+                        config.max_seq_len,
+                        config.num_kv_heads,
+                        head_dim,
+                    );
+                    let mut kv_cache = kv_cache_arc.lock();
+
+                    // Note: kv_cache is already locked, we need to pass a mutable reference
+                    // Attention.forward expects &mut KVCache, so we dereference the MutexGuard
+                    let attn_output = match attention.forward(
+                        &normed,
+                        &attn_weights,
+                        &mut kv_cache, // Dereference MutexGuard to get &mut KVCache
+                        position as usize,
+                        Some(&cpu_backend as &dyn realm_compute_cpu::CpuBackendTrait),
+                        #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+                        None,
+                    ) {
+                        Ok(output) => output,
+                        Err(e) => {
+                            error!("realm_forward_layer: Attention forward failed: {}", e);
+                            return -9;
+                        }
+                    };
+
+                    // Residual connection
+                    let hidden = match candle_backend.add(&hidden_states, &attn_output, hidden_states.len()) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            error!("realm_forward_layer: Add failed: {}", e);
+                            return -10;
+                        }
+                    };
+
+                    // 2. FFN block
+                    // Load FFN norm
+                    let ffn_norm_tensor = match model.get_tensor(&format!("blk.{}.ffn_norm.weight", layer_idx)) {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_forward_layer: ffn_norm.weight not found for layer {}", layer_idx);
+                            return -11;
+                        }
+                    };
+                    let ffn_norm = match realm_core::quant::dequantize_tensor(&ffn_norm_tensor.data, ffn_norm_tensor.dtype, hidden_size) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            error!("realm_forward_layer: Failed to dequantize ffn_norm: {}", e);
+                            return -11;
+                        }
+                    };
+
+                    // FFN norm
+                    let ffn_normed = match candle_backend.rms_norm(&hidden, &ffn_norm, config.rms_norm_eps, seq_len, hidden_size) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            error!("realm_forward_layer: FFN RMS norm failed: {}", e);
+                            return -12;
+                        }
+                    };
+
+                    // Load FFN weights
+                    let w_gate_tensor = match model.get_tensor(&format!("blk.{}.ffn_gate.weight", layer_idx)) {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_forward_layer: ffn_gate.weight not found for layer {}", layer_idx);
+                            return -22;
+                        }
+                    };
+                    let w_gate = match quantized_to_weight_format(w_gate_tensor) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            error!("realm_forward_layer: Failed to convert w_gate to WeightFormat: {}", e);
+                            return -23;
+                        }
+                    };
+
+                    let w_up_tensor = match model.get_tensor(&format!("blk.{}.ffn_up.weight", layer_idx)) {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_forward_layer: ffn_up.weight not found for layer {}", layer_idx);
+                            return -24;
+                        }
+                    };
+                    let w_up = match quantized_to_weight_format(w_up_tensor) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            error!("realm_forward_layer: Failed to convert w_up to WeightFormat: {}", e);
+                            return -25;
+                        }
+                    };
+
+                    let w_down_tensor = match model.get_tensor(&format!("blk.{}.ffn_down.weight", layer_idx)) {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_forward_layer: ffn_down.weight not found for layer {}", layer_idx);
+                            return -26;
+                        }
+                    };
+                    let w_down = match quantized_to_weight_format(w_down_tensor) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            error!("realm_forward_layer: Failed to convert w_down to WeightFormat: {}", e);
+                            return -27;
+                        }
+                    };
+
+                    use realm_models::dispatch_matmul;
+
+                    // Gate projection: hidden_states @ w_gate^T
+                    // w_gate is already WeightFormat, dispatch_matmul handles it
+                    let gate = match dispatch_matmul(
+                        &ffn_normed,
+                        &w_gate,
+                        seq_len,
+                        hidden_size,
+                        config.intermediate_size,
+                        Some(&cpu_backend as &dyn realm_compute_cpu::CpuBackendTrait),
+                        #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+                        None,
+                    ) {
+                        Ok(g) => g,
+                        Err(e) => {
+                            error!("realm_forward_layer: Gate matmul failed: {}", e);
+                            return -28;
+                        }
+                    };
+
+                    // Up projection
+                    let up = match dispatch_matmul(
+                        &ffn_normed,
+                        &w_up,
+                        seq_len,
+                        hidden_size,
+                        config.intermediate_size,
+                        Some(&cpu_backend as &dyn realm_compute_cpu::CpuBackendTrait),
+                        #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+                        None,
+                    ) {
+                        Ok(u) => u,
+                        Err(e) => {
+                            error!("realm_forward_layer: Up matmul failed: {}", e);
+                            return -29;
+                        }
+                    };
+
+                    // SwiGLU: silu(gate) * up
+                    let mut activated = gate;
+                    for i in 0..activated.len() {
+                        let sigmoid = 1.0 / (1.0 + (-activated[i]).exp());
+                        let silu = activated[i] * sigmoid;
+                        activated[i] = silu * up[i];
+                    }
+
+                    // Down projection
+                    let ffn_output = match dispatch_matmul(
+                        &activated,
+                        &w_down,
+                        seq_len,
+                        config.intermediate_size,
+                        hidden_size,
+                        Some(&cpu_backend as &dyn realm_compute_cpu::CpuBackendTrait),
+                        #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+                        None,
+                    ) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            error!("realm_forward_layer: Down matmul failed: {}", e);
+                            return -30;
+                        }
+                    };
+
+                    // Residual connection
+                    let final_hidden = match candle_backend.add(&hidden, &ffn_output, hidden.len()) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            error!("realm_forward_layer: Final add failed: {}", e);
+                            return -13;
+                        }
+                    };
+
+                    // Write output back to WASM memory
+                    let output_bytes: Vec<u8> = final_hidden.iter()
+                        .flat_map(|&f| f.to_le_bytes())
+                        .collect();
+
+                    if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, &output_bytes) {
+                        error!("realm_forward_layer: Failed to write output: {}", e);
+                        return -14;
+                    }
+
+                    info!(
+                        "realm_forward_layer: Layer {} forward complete (seq_len={}, hidden_size={})",
+                        layer_idx, seq_len, hidden_size
+                    );
+
+                    (final_hidden.len() * 4) as i32 // Return bytes written
+                },
+            )?;
+        }
+
+        // ========================================
+        // Token Embedding (HOST-SIDE COMPUTATION)
+        // ========================================
+        // Embed token IDs into hidden states on HOST
+        // This avoids loading 262MB embeddings into WASM!
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _cpu_backend = self.cpu_backend.clone();
+            linker.func_wrap(
+                "env",
+                "realm_embed_tokens",
+                move |mut caller: Caller<'_, ()>,
+                      model_id: u32,
+                      token_ids_ptr: u32,
+                      token_ids_len: u32,
+                      out_ptr: u32|
+                      -> i32 {
+                    use crate::model_storage::GLOBAL_MODEL_STORAGE;
+
+                    // Get WASM memory
+                    let wasm_memory = match caller.get_export("memory") {
+                        Some(Extern::Memory(mem)) => mem,
+                        _ => {
+                            error!("realm_embed_tokens: No WASM memory export");
+                            return -1;
+                        }
+                    };
+
+                    // Read token IDs from WASM
+                    let token_ids_bytes = (token_ids_len as usize) * 4; // u32 = 4 bytes
+                    let mut token_ids_buffer = vec![0u8; token_ids_bytes];
+                    if let Err(e) =
+                        wasm_memory.read(&caller, token_ids_ptr as usize, &mut token_ids_buffer)
+                    {
+                        error!("realm_embed_tokens: Failed to read token IDs: {}", e);
+                        return -2;
+                    }
+
+                    // Convert to u32 array
+                    let token_ids: Vec<u32> = token_ids_buffer
+                        .chunks_exact(4)
+                        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                        .collect();
+
+                    // Get model and config
+                    let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!("realm_embed_tokens: Model {} not found: {}", model_id, e);
+                            return -3;
+                        }
+                    };
+
+                    let config = model.extract_config();
+                    let hidden_size = config.hidden_size;
+                    let seq_len = token_ids.len();
+                    let output_size = seq_len * hidden_size;
+
+                    // Load token embeddings from HOST storage
+                    let embedding_tensor = match model.get_tensor("token_embd.weight") {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_embed_tokens: token_embd.weight not found");
+                            return -4;
+                        }
+                    };
+
+                    // Dequantize embeddings (only what we need)
+                    // GGUF stores as [vocab_size, hidden_size]
+                    // We'll dequantize on-the-fly for each token
+                    let vocab_size = config.vocab_size;
+                    let _embedding_bytes_per_row = hidden_size * 4; // f32 = 4 bytes
+
+                    // Build hidden states by gathering embeddings for each token
+                    let mut hidden_states = vec![0.0f32; output_size];
+
+                    for (seq_idx, &token_id) in token_ids.iter().enumerate() {
+                        let out_start = seq_idx * hidden_size;
+                        let token_id_usize = token_id as usize;
+
+                        if token_id_usize >= vocab_size {
+                            warn!(
+                                "realm_embed_tokens: Token ID {} >= vocab_size {}",
+                                token_id_usize, vocab_size
+                            );
+                            continue;
+                        }
+
+                        // For quantized embeddings, we'd need to dequantize the specific row
+                        // For now, dequantize full embeddings (will optimize later)
+                        // TODO: Implement row-wise dequantization for efficiency
+                        let full_embeddings = match realm_core::quant::dequantize_tensor(
+                            &embedding_tensor.data,
+                            embedding_tensor.dtype,
+                            vocab_size * hidden_size,
+                        ) {
+                            Ok(e) => e,
+                            Err(e) => {
+                                error!(
+                                    "realm_embed_tokens: Failed to dequantize embeddings: {}",
+                                    e
+                                );
+                                return -5;
+                            }
+                        };
+
+                        // Copy embedding row for this token
+                        let emb_start = token_id_usize * hidden_size;
+                        let emb_end = emb_start + hidden_size;
+                        if emb_end <= full_embeddings.len() {
+                            hidden_states[out_start..out_start + hidden_size]
+                                .copy_from_slice(&full_embeddings[emb_start..emb_end]);
+                        }
+                    }
+
+                    // Write output back to WASM memory
+                    let output_bytes: Vec<u8> = hidden_states
+                        .iter()
+                        .flat_map(|&f| f.to_le_bytes())
+                        .collect();
+
+                    if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, &output_bytes)
+                    {
+                        error!("realm_embed_tokens: Failed to write output: {}", e);
+                        return -6;
+                    }
+
+                    info!(
+                        "realm_embed_tokens: Embedded {} tokens (hidden_size={})",
+                        seq_len, hidden_size
+                    );
+
+                    (output_size * 4) as i32 // Return bytes written
+                },
+            )?;
+        }
+
+        // ========================================
+        // Compute Logits (HOST-SIDE COMPUTATION)
+        // ========================================
+        // Apply final norm + LM head projection on HOST
+        // This avoids loading large LM head weights into WASM!
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _cpu_backend = self.cpu_backend.clone();
+            linker.func_wrap(
+                "env",
+                "realm_compute_logits",
+                move |mut caller: Caller<'_, ()>,
+                      model_id: u32,
+                      hidden_state_ptr: u32,
+                      hidden_state_len: u32,
+                      out_ptr: u32|
+                      -> i32 {
+                    use crate::model_storage::GLOBAL_MODEL_STORAGE;
+                    use realm_compute_cpu::CandleNeuralOpsBackend;
+
+                    // Get WASM memory
+                    let wasm_memory = match caller.get_export("memory") {
+                        Some(Extern::Memory(mem)) => mem,
+                        _ => {
+                            error!("realm_compute_logits: No WASM memory export");
+                            return -1;
+                        }
+                    };
+
+                    // Read hidden state from WASM
+                    let hidden_bytes = (hidden_state_len as usize) * 4; // f32 = 4 bytes
+                    let mut hidden_buffer = vec![0u8; hidden_bytes];
+                    if let Err(e) =
+                        wasm_memory.read(&caller, hidden_state_ptr as usize, &mut hidden_buffer)
+                    {
+                        error!("realm_compute_logits: Failed to read hidden state: {}", e);
+                        return -2;
+                    }
+
+                    // Convert to f32
+                    let mut hidden_state: Vec<f32> = hidden_buffer
+                        .chunks_exact(4)
+                        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                        .collect();
+
+                    // Get model and config
+                    let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!("realm_compute_logits: Model {} not found: {}", model_id, e);
+                            return -3;
+                        }
+                    };
+
+                    let config = model.extract_config();
+                    let hidden_size = config.hidden_size;
+
+                    if hidden_state.len() != hidden_size {
+                        error!(
+                            "realm_compute_logits: Invalid hidden_state length: {} != {}",
+                            hidden_state.len(),
+                            hidden_size
+                        );
+                        return -4;
+                    }
+
+                    // Initialize backend
+                    let candle_backend = CandleNeuralOpsBackend::new();
+
+                    // Load and apply output norm
+                    let output_norm_tensor = match model.get_tensor("output_norm.weight") {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_compute_logits: output_norm.weight not found");
+                            return -5;
+                        }
+                    };
+
+                    let output_norm = match realm_core::quant::dequantize_tensor(
+                        &output_norm_tensor.data,
+                        output_norm_tensor.dtype,
+                        hidden_size,
+                    ) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            error!(
+                                "realm_compute_logits: Failed to dequantize output_norm: {}",
+                                e
+                            );
+                            return -6;
+                        }
+                    };
+
+                    // Apply RMS norm
+                    hidden_state = match candle_backend.rms_norm(
+                        &hidden_state,
+                        &output_norm,
+                        config.rms_norm_eps,
+                        1, // seq_len = 1 for single token
+                        hidden_size,
+                    ) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            error!("realm_compute_logits: RMS norm failed: {}", e);
+                            return -7;
+                        }
+                    };
+
+                    // Load LM head weights
+                    let lm_head_tensor = match model.get_tensor("output.weight") {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_compute_logits: output.weight (lm_head) not found");
+                            return -8;
+                        }
+                    };
+
+                    // Dequantize LM head (vocab_size x hidden_size)
+                    let vocab_size = config.vocab_size;
+                    let lm_head = match realm_core::quant::dequantize_tensor(
+                        &lm_head_tensor.data,
+                        lm_head_tensor.dtype,
+                        vocab_size * hidden_size,
+                    ) {
+                        Ok(l) => l,
+                        Err(e) => {
+                            error!("realm_compute_logits: Failed to dequantize lm_head: {}", e);
+                            return -9;
+                        }
+                    };
+
+                    // Compute logits: hidden_state @ lm_head^T
+                    // LM head is [vocab_size, hidden_size], we want logits = [vocab_size]
+                    let mut logits = vec![0.0f32; vocab_size];
+                    for (i, logit) in logits.iter_mut().enumerate() {
+                        let weight_start = i * hidden_size;
+                        let mut sum = 0.0;
+                        for j in 0..hidden_size {
+                            sum += hidden_state[j] * lm_head[weight_start + j];
+                        }
+                        *logit = sum;
+                    }
+
+                    // Write output back to WASM memory
+                    let output_bytes: Vec<u8> =
+                        logits.iter().flat_map(|&f| f.to_le_bytes()).collect();
+
+                    if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, &output_bytes)
+                    {
+                        error!("realm_compute_logits: Failed to write output: {}", e);
+                        return -10;
+                    }
+
+                    info!("realm_compute_logits: Computed {} logits", vocab_size);
+
+                    (vocab_size * 4) as i32 // Return bytes written
                 },
             )?;
         }

@@ -6,8 +6,8 @@
 //!
 //! Inspired by Candle's logits processor implementation.
 
-use rand::distr::weighted::WeightedIndex;
-use rand::distr::Distribution;
+use rand::distributions::weighted::WeightedIndex;
+use rand::distributions::Distribution;
 use rand::SeedableRng;
 
 /// Sampling strategy for text generation

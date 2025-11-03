@@ -6,6 +6,7 @@
 use realm_core::error::Result;
 use realm_core::tokenizer::Tokenizer;
 use realm_models::Model;
+use tracing::{debug, info};
 
 /// Type alias for token callback function
 #[allow(dead_code)]
@@ -52,8 +53,8 @@ impl StreamingInference {
         let prompt_tokens = self.tokenizer.encode(prompt, true)?;
         self.tokens.extend(prompt_tokens);
 
-        println!("🚀 Starting streaming inference with prompt: {:?}", prompt);
-        println!("📝 Initial tokens: {:?}", self.tokens);
+        info!("Starting streaming inference with prompt: {:?}", prompt);
+        debug!("Initial tokens: {:?}", self.tokens);
 
         Ok(())
     }

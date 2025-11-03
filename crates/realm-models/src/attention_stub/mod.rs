@@ -1,4 +1,5 @@
 use realm_core::error::Result;
+use serde::{Deserialize, Serialize};
 
 /// Simple attention trait stub
 pub trait Attention: Send + Sync {
@@ -24,7 +25,7 @@ pub fn create_attention(_backend: AttentionBackend) -> Box<dyn Attention> {
     Box::new(StandardAttention)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttentionBackend {
     Standard,
     Flash,
