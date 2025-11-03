@@ -142,7 +142,10 @@ impl LogitsProcessor {
         logits
             .iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .max_by(|(_, a), (_, b)| {
+                // Use total_cmp for f32 which handles NaN correctly
+                a.total_cmp(b)
+            })
             .map(|(i, _)| i as u32)
             .unwrap_or(0)
     }
@@ -161,8 +164,8 @@ impl LogitsProcessor {
     fn sample_topp(&mut self, probs: &mut [f32], top_p: f32) -> Result<u32, String> {
         let mut indices: Vec<usize> = (0..probs.len()).collect();
 
-        // Sort by descending probability
-        indices.sort_by(|&i, &j| probs[j].partial_cmp(&probs[i]).unwrap());
+        // Sort by descending probability (using total_cmp to handle NaN)
+        indices.sort_by(|&i, &j| probs[j].total_cmp(&probs[i]));
 
         // Clamp smaller probabilities to zero
         let mut cumsum = 0.0;
@@ -195,8 +198,8 @@ impl LogitsProcessor {
 
         let mut indices: Vec<usize> = (0..probs.len()).collect();
 
-        // Partially sort to find top-k
-        indices.select_nth_unstable_by(top_k, |&i, &j| probs[j].partial_cmp(&probs[i]).unwrap());
+        // Partially sort to find top-k (using total_cmp to handle NaN)
+        indices.select_nth_unstable_by(top_k, |&i, &j| probs[j].total_cmp(&probs[i]));
 
         // Zero out probabilities outside top-k
         for &i in &indices[top_k..] {
@@ -227,8 +230,8 @@ impl LogitsProcessor {
 
         let mut indices: Vec<usize> = (0..probs.len()).collect();
 
-        // First apply top-k
-        indices.select_nth_unstable_by(top_k, |&i, &j| probs[j].partial_cmp(&probs[i]).unwrap());
+        // First apply top-k (using total_cmp to handle NaN)
+        indices.select_nth_unstable_by(top_k, |&i, &j| probs[j].total_cmp(&probs[i]));
 
         // Zero out probabilities outside top-k
         for &i in &indices[top_k..] {

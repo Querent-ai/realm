@@ -406,8 +406,6 @@ impl Realm {
 
     #[cfg(target_arch = "wasm32")]
     fn generate_with_host_storage(&mut self, prompt: String) -> Result<String, JsError> {
-        use realm_models::{AttentionWeights, FFNWeights, WeightFormat};
-
         let model_id = self
             .model_id
             .ok_or_else(|| JsError::new("Model not loaded in HOST. Call loadModel() first."))?;

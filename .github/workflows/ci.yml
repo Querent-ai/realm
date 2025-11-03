@@ -260,15 +260,14 @@ jobs:
           name: realm-wasm
           path: crates/realm-wasm/pkg/
 
-      - name: Check if integration tests can run
+      - name: Run integration tests
         run: |
-          if [ -f tests/integration_test.rs ]; then
-            echo "✅ Integration test file found"
-            # Try to compile it (don't run, just verify it compiles)
-            cargo test --test integration_test --no-run 2>&1 || echo "⚠️  Integration test compilation failed (expected if WASM module not available)"
-          else
-            echo "⚠️  No integration test file found"
-          fi
+          echo "Running integration tests..."
+          # Run metrics integration tests
+          cargo test --package realm-metrics --test integration_tests
+          # Run runtime integration tests
+          cargo test --package realm-runtime --test host_storage_integration
+          echo "✅ Integration tests completed"
         continue-on-error: true
 
       - name: Verify WASM module size

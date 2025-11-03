@@ -90,9 +90,9 @@ impl Memory64GGUFLoader {
 
         // Step 1: Parse GGUF header (only if not already parsed)
         // println!("📋 Parsing GGUF header...");
-        let meta = if parser.metadata().is_some() {
+        let meta = if let Some(existing_meta) = parser.metadata() {
             // Header already parsed, use existing metadata
-            parser.metadata().unwrap().clone()
+            existing_meta.clone()
         } else {
             // Parse header for the first time
             parser.parse_header()?
@@ -180,7 +180,10 @@ impl Memory64GGUFLoader {
     fn map_tensors_to_layers(&mut self, meta: &ModelMeta) -> Result<()> {
         // println!("🗺️  Mapping tensors to layers...");
 
-        let config = self.config.as_ref().unwrap();
+        let config = self
+            .config
+            .as_ref()
+            .ok_or_else(|| Error::ParseError("Config not initialized".to_string()))?;
         let mut current_offset = 0u64;
 
         // Process each tensor and map to appropriate layer
@@ -257,14 +260,20 @@ impl Memory64GGUFLoader {
     ) -> Result<()> {
         // println!("💾 Initializing lazy loading infrastructure...");
 
-        let _runtime = self.runtime.as_ref().unwrap();
+        let _runtime = self
+            .runtime
+            .as_ref()
+            .ok_or_else(|| Error::ParseError("Runtime not initialized".to_string()))?;
         let data_offset = parser.tensor_data_offset()?;
 
         // Create tensor loader for reading GGUF data (but don't load yet)
         let mut tensor_loader = TensorLoader::new(data_offset);
 
         // Register all tensors (metadata only, no actual data loading)
-        let meta = self.meta.as_ref().unwrap();
+        let meta = self
+            .meta
+            .as_ref()
+            .ok_or_else(|| Error::ParseError("Metadata not initialized".to_string()))?;
         for tensor in &meta.tensors {
             tensor_loader.register_tensor(tensor.name.clone(), tensor.clone(), tensor.offset);
         }
@@ -295,7 +304,10 @@ impl Memory64GGUFLoader {
         let mut tensor_loader = TensorLoader::new(data_offset);
 
         // Register the specific tensor
-        let meta = self.meta.as_ref().unwrap();
+        let meta = self
+            .meta
+            .as_ref()
+            .ok_or_else(|| Error::ParseError("Metadata not initialized".to_string()))?;
         if let Some(tensor) = meta.tensors.iter().find(|t| t.name == tensor_name) {
             tensor_loader.register_tensor(tensor.name.clone(), tensor.clone(), tensor.offset);
 
@@ -315,8 +327,16 @@ impl Memory64GGUFLoader {
     fn create_layer_manager(&mut self) -> Result<()> {
         // println!("🧠 Creating layer manager...");
 
-        let runtime = self.runtime.as_ref().unwrap().clone();
-        let config = self.config.as_ref().unwrap().clone();
+        let runtime = self
+            .runtime
+            .as_ref()
+            .ok_or_else(|| Error::ParseError("Runtime not initialized".to_string()))?
+            .clone();
+        let config = self
+            .config
+            .as_ref()
+            .ok_or_else(|| Error::ParseError("Config not initialized".to_string()))?
+            .clone();
 
         self.layer_manager = Some(Memory64LayerManager::new(
             runtime, config, 16, // Cache up to 16 layers for better performance
@@ -330,8 +350,15 @@ impl Memory64GGUFLoader {
     fn create_memory64_model(&mut self) -> Result<Memory64Model> {
         // println!("📋 Creating Memory64 model...");
 
-        let config = self.config.as_ref().unwrap().clone();
-        let layer_manager = self.layer_manager.take().unwrap();
+        let config = self
+            .config
+            .as_ref()
+            .ok_or_else(|| Error::ParseError("Config not initialized".to_string()))?
+            .clone();
+        let layer_manager = self
+            .layer_manager
+            .take()
+            .ok_or_else(|| Error::ParseError("Layer manager not initialized".to_string()))?;
 
         // Create placeholder components (in production, these would be loaded from Memory64)
         let token_embeddings = vec![0.0; config.vocab_size * config.hidden_size];
@@ -358,7 +385,11 @@ impl Memory64GGUFLoader {
     ) -> Result<Memory64Model> {
         // println!("📋 Loading standard model (no Memory64)...");
 
-        let config = self.config.as_ref().unwrap().clone();
+        let config = self
+            .config
+            .as_ref()
+            .ok_or_else(|| Error::ParseError("Config not initialized".to_string()))?
+            .clone();
 
         // Create a dummy layer manager for standard models
         let layout = MemoryLayout::single(1, "dummy")
