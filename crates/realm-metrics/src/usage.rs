@@ -456,6 +456,164 @@ impl UsageTracker {
         self.model_usage.clear();
         self.recent_usage.clear();
     }
+
+    /// Export usage metrics as samples for Prometheus export
+    pub fn export_samples(&self, base_labels: Vec<MetricLabel>) -> Vec<MetricSample> {
+        use crate::types::MetricValue;
+        let mut samples = Vec::new();
+
+        // Export total usage metrics
+        let mut total_labels = base_labels.clone();
+        total_labels.push(MetricLabel::new("name", "usage_input_tokens_total"));
+        samples.push(MetricSample {
+            value: MetricValue::Counter(self.total_usage.total_input_tokens),
+            timestamp: self.total_usage.period_end,
+            labels: total_labels.clone(),
+        });
+
+        total_labels.pop();
+        total_labels.push(MetricLabel::new("name", "usage_output_tokens_total"));
+        samples.push(MetricSample {
+            value: MetricValue::Counter(self.total_usage.total_output_tokens),
+            timestamp: self.total_usage.period_end,
+            labels: total_labels.clone(),
+        });
+
+        total_labels.pop();
+        total_labels.push(MetricLabel::new("name", "usage_tokens_total"));
+        samples.push(MetricSample {
+            value: MetricValue::Counter(self.total_usage.total_tokens),
+            timestamp: self.total_usage.period_end,
+            labels: total_labels.clone(),
+        });
+
+        total_labels.pop();
+        total_labels.push(MetricLabel::new("name", "usage_requests_total"));
+        samples.push(MetricSample {
+            value: MetricValue::Counter(self.total_usage.request_count),
+            timestamp: self.total_usage.period_end,
+            labels: total_labels.clone(),
+        });
+
+        total_labels.pop();
+        total_labels.push(MetricLabel::new("name", "usage_cost_usd"));
+        samples.push(MetricSample {
+            value: MetricValue::Gauge(self.total_usage.estimated_cost),
+            timestamp: self.total_usage.period_end,
+            labels: total_labels.clone(),
+        });
+
+        total_labels.pop();
+        total_labels.push(MetricLabel::new("name", "usage_avg_tokens_per_request"));
+        samples.push(MetricSample {
+            value: MetricValue::Gauge(self.total_usage.avg_tokens_per_request),
+            timestamp: self.total_usage.period_end,
+            labels: total_labels,
+        });
+
+        // Export per-tenant usage metrics
+        for (tenant_id, usage) in &self.tenant_usage {
+            let mut tenant_labels = base_labels.clone();
+            tenant_labels.push(MetricLabel::new("tenant", tenant_id.clone()));
+
+            tenant_labels.push(MetricLabel::new("name", "usage_input_tokens_total"));
+            samples.push(MetricSample {
+                value: MetricValue::Counter(usage.total_input_tokens),
+                timestamp: usage.period_end,
+                labels: tenant_labels.clone(),
+            });
+
+            tenant_labels.pop();
+            tenant_labels.push(MetricLabel::new("name", "usage_output_tokens_total"));
+            samples.push(MetricSample {
+                value: MetricValue::Counter(usage.total_output_tokens),
+                timestamp: usage.period_end,
+                labels: tenant_labels.clone(),
+            });
+
+            tenant_labels.pop();
+            tenant_labels.push(MetricLabel::new("name", "usage_cost_usd"));
+            samples.push(MetricSample {
+                value: MetricValue::Gauge(usage.estimated_cost),
+                timestamp: usage.period_end,
+                labels: tenant_labels.clone(),
+            });
+
+            tenant_labels.pop();
+            tenant_labels.push(MetricLabel::new("name", "usage_requests_total"));
+            samples.push(MetricSample {
+                value: MetricValue::Counter(usage.request_count),
+                timestamp: usage.period_end,
+                labels: tenant_labels,
+            });
+        }
+
+        // Export per-model usage metrics
+        for (model_name, usage) in &self.model_usage {
+            let mut model_labels = base_labels.clone();
+            model_labels.push(MetricLabel::new("model", model_name.clone()));
+
+            model_labels.push(MetricLabel::new("name", "usage_tokens_total"));
+            samples.push(MetricSample {
+                value: MetricValue::Counter(usage.total_tokens),
+                timestamp: usage.period_end,
+                labels: model_labels.clone(),
+            });
+
+            model_labels.pop();
+            model_labels.push(MetricLabel::new("name", "usage_cost_usd"));
+            samples.push(MetricSample {
+                value: MetricValue::Gauge(usage.estimated_cost),
+                timestamp: usage.period_end,
+                labels: model_labels,
+            });
+        }
+
+        samples
+    }
+
+    /// Get cache savings metrics for export
+    pub fn export_cache_savings(&self, base_labels: Vec<MetricLabel>) -> Vec<MetricSample> {
+        use crate::types::{now_millis, MetricValue};
+        let mut samples = Vec::new();
+        let timestamp = now_millis();
+
+        let mut total_cache_savings = 0.0;
+        let mut total_cache_read_tokens = 0u64;
+        let mut total_cache_creation_tokens = 0u64;
+
+        for (_, usage) in &self.recent_usage {
+            total_cache_read_tokens += usage.cache_read_input_tokens;
+            total_cache_creation_tokens += usage.cache_creation_input_tokens;
+            total_cache_savings += self.cost_config.calculate_cache_savings(usage);
+        }
+
+        let mut labels = base_labels.clone();
+        labels.push(MetricLabel::new("name", "cache_savings_usd"));
+        samples.push(MetricSample {
+            value: MetricValue::Gauge(total_cache_savings),
+            timestamp,
+            labels: labels.clone(),
+        });
+
+        labels.pop();
+        labels.push(MetricLabel::new("name", "cache_read_tokens_total"));
+        samples.push(MetricSample {
+            value: MetricValue::Counter(total_cache_read_tokens),
+            timestamp,
+            labels: labels.clone(),
+        });
+
+        labels.pop();
+        labels.push(MetricLabel::new("name", "cache_creation_tokens_total"));
+        samples.push(MetricSample {
+            value: MetricValue::Counter(total_cache_creation_tokens),
+            timestamp,
+            labels,
+        });
+
+        samples
+    }
 }
 
 #[cfg(test)]

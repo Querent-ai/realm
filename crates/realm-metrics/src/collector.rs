@@ -3,11 +3,13 @@
 //! This module provides the main `MetricsCollector` that aggregates all metric types
 //! and provides a unified interface for recording and exporting metrics.
 
+use crate::business::BusinessMetricsTracker;
 use crate::latency::{LatencyMetrics, LatencyTracker};
 use crate::quality::{QualityMetrics, QualityTracker};
 use crate::resource::{ResourceMetrics, ResourceTracker};
 use crate::throughput::ThroughputTracker;
 use crate::types::{CommonLabels, MetricSample};
+use crate::usage::{CostConfig, TokenUsage, UsageTracker};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -25,6 +27,10 @@ pub struct MetricsCollector {
     resource: Arc<Mutex<ResourceTracker>>,
     /// Throughput metrics tracker
     throughput: Arc<Mutex<ThroughputTracker>>,
+    /// Usage tracker for billing and cost metrics
+    usage: Arc<Mutex<UsageTracker>>,
+    /// Business metrics tracker for error rates, success tracking, client attribution
+    business: Arc<Mutex<BusinessMetricsTracker>>,
     /// Common labels applied to all metrics
     common_labels: CommonLabels,
     /// Per-tenant metrics (optional)
@@ -44,9 +50,18 @@ impl MetricsCollector {
             quality: Arc::new(Mutex::new(QualityTracker::new(window_size))),
             resource: Arc::new(Mutex::new(ResourceTracker::new(window_size))),
             throughput: Arc::new(Mutex::new(ThroughputTracker::new(window_size))),
+            usage: Arc::new(Mutex::new(UsageTracker::new(CostConfig::simple(1.0, 2.0)))),
+            business: Arc::new(Mutex::new(BusinessMetricsTracker::new())),
             common_labels: CommonLabels::new(),
             tenant_metrics: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Create a new metrics collector with usage cost configuration
+    pub fn with_cost_config(cost_config: CostConfig) -> Self {
+        let mut collector = Self::new();
+        collector.usage = Arc::new(Mutex::new(UsageTracker::new(cost_config)));
+        collector
     }
 
     /// Set common labels that will be applied to all metrics
@@ -157,6 +172,52 @@ impl MetricsCollector {
         Arc::clone(&self.throughput)
     }
 
+    // ========== Usage/Billing Metrics ==========
+
+    /// Record token usage for billing and cost tracking
+    pub fn record_usage(
+        &self,
+        usage: TokenUsage,
+        tenant_id: Option<&str>,
+        model_name: Option<&str>,
+    ) {
+        if let Ok(mut tracker) = self.usage.lock() {
+            tracker.record_usage(usage, tenant_id, model_name);
+        }
+    }
+
+    /// Get usage tracker for advanced usage
+    pub fn usage_tracker(&self) -> Arc<Mutex<UsageTracker>> {
+        Arc::clone(&self.usage)
+    }
+
+    // ========== Business Metrics ==========
+
+    /// Record a request for business metrics (success/failure, client attribution)
+    pub fn record_business_request(
+        &self,
+        status_code: u16,
+        api_key: Option<&str>,
+        client_id: Option<&str>,
+        tokens: Option<u64>,
+    ) {
+        if let Ok(mut tracker) = self.business.lock() {
+            tracker.record_request(status_code, api_key, client_id, tokens);
+        }
+    }
+
+    /// Record revenue (if charging customers)
+    pub fn record_revenue(&self, amount: f64, tenant_id: Option<&str>, client_id: Option<&str>) {
+        if let Ok(mut tracker) = self.business.lock() {
+            tracker.record_revenue(amount, tenant_id, client_id);
+        }
+    }
+
+    /// Get business metrics tracker for advanced usage
+    pub fn business_tracker(&self) -> Arc<Mutex<BusinessMetricsTracker>> {
+        Arc::clone(&self.business)
+    }
+
     // ========== Per-Tenant Metrics ==========
 
     /// Get or create metrics for a specific tenant
@@ -198,6 +259,18 @@ impl MetricsCollector {
 
         // Export throughput metrics
         if let Ok(tracker) = self.throughput.lock() {
+            samples.extend(tracker.export_samples(labels.clone()));
+        }
+
+        // Export usage/billing metrics
+        if let Ok(tracker) = self.usage.lock() {
+            samples.extend(tracker.export_samples(labels.clone()));
+            // Also export cache savings
+            samples.extend(tracker.export_cache_savings(labels.clone()));
+        }
+
+        // Export business metrics (error rates, client attribution)
+        if let Ok(tracker) = self.business.lock() {
             samples.extend(tracker.export_samples(labels));
         }
 

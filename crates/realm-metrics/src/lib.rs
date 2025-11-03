@@ -39,6 +39,7 @@
 //! let metrics_text = collector.export_prometheus();
 //! ```
 
+pub mod business;
 pub mod collector;
 pub mod export;
 pub mod latency;
@@ -49,6 +50,7 @@ pub mod types;
 pub mod usage;
 
 // Re-export core types
+pub use business::{BusinessMetricsTracker, ErrorType};
 pub use collector::MetricsCollector;
 pub use latency::{LatencyMetrics, LatencyTracker};
 pub use quality::{QualityMetrics, QualityTracker};

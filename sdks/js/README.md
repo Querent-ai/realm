@@ -1,6 +1,16 @@
-# Realm JavaScript/TypeScript SDK
+# Realm.ai JavaScript/TypeScript SDK
 
 Official JavaScript/TypeScript SDK for Realm multi-tenant LLM inference runtime.
+
+**Uses WASM-based architecture** - Each tenant gets isolated WASM execution with shared GPU compute.
+
+## Features
+
+✅ **WASM-based inference** - Direct WASM bindings for local inference  
+✅ **Model Registry** - Multiple models, switch between them  
+✅ **TypeScript Support** - Complete type definitions  
+✅ **HOST-side Storage** - Models stored in native memory, not WASM  
+✅ **Shared GPU** - Multiple models share GPU resources  
 
 ## Installation
 
@@ -8,158 +18,183 @@ Official JavaScript/TypeScript SDK for Realm multi-tenant LLM inference runtime.
 npm install @realm-ai/sdk
 ```
 
-## Usage
+## Quick Start
 
-### Basic Example
+### Basic Usage
 
 ```typescript
 import { Realm } from '@realm-ai/sdk';
+import * as fs from 'fs';
 
+// Initialize Realm
 const realm = new Realm({
-  modelPath: './models/llama-2-7b-chat.gguf',
-  maxTokens: 100,
-  temperature: 0.7
+  mode: 'local',
+  defaultModel: 'llama-7b',  // Optional: default model
 });
 
-const response = await realm.generate({
-  prompt: 'Hello, how are you?',
-  maxTokens: 50
+// Load model from GGUF file
+const modelBytes = fs.readFileSync('./models/llama-2-7b.gguf');
+await realm.loadModel(modelBytes, 'llama-7b');
+
+// Generate text
+const response = await realm.generate('What is the capital of France?', {
+  maxTokens: 50,
+  temperature: 0.7,
 });
 
-console.log(response.text);
+console.log(response.text); // "The capital of France is Paris."
+console.log(response.model); // "llama-7b"
 ```
 
-### Streaming
+### Multiple Models
 
 ```typescript
-const stream = realm.generateStream({
-  prompt: 'Write a story about...'
-});
+// Load multiple models
+await realm.loadModel(fs.readFileSync('./models/llama-7b.gguf'), 'llama-7b');
+await realm.loadModel(fs.readFileSync('./models/llama-13b.gguf'), 'llama-13b');
 
-for await (const token of stream) {
-  process.stdout.write(token);
+// Switch between models
+realm.useModel('llama-7b');
+const response1 = await realm.generate('Hello!');
+
+realm.useModel('llama-13b');
+const response2 = await realm.generate('Hello!');
+
+// Or specify model per request
+const response3 = await realm.generate('Hello!', {
+  model: 'llama-7b',  // Use specific model
+  maxTokens: 100,
+});
+```
+
+### Model Registry
+
+```typescript
+// List available models
+const models = realm.getModels();
+console.log(models);
+// [
+//   { id: 'llama-7b', name: 'llama-7b', loaded: true },
+//   { id: 'llama-13b', name: 'llama-13b', loaded: true }
+// ]
+
+// Check if model is loaded
+if (realm.isModelLoaded('llama-7b')) {
+  realm.useModel('llama-7b');
 }
 ```
 
-### Chat Completions
+### Configuration
 
 ```typescript
-const response = await realm.chat({
-  messages: [
-    { role: 'system', content: 'You are a helpful assistant.' },
-    { role: 'user', content: 'What is the capital of France?' }
-  ]
+// Set generation config
+realm.setConfig({
+  maxTokens: 200,
+  temperature: 0.7,
+  topK: 50,
+  topP: 0.9,
+  repetitionPenalty: 1.1,
 });
 
-console.log(response.message.content);
+// Or per-request
+const response = await realm.generate('Hello!', {
+  maxTokens: 100,
+  temperature: 0.8,
+});
 ```
 
 ## API Reference
 
 ### `Realm`
 
-Main class for interacting with Realm runtime.
+Main class for WASM-based inference.
 
 #### Constructor
 
 ```typescript
-new Realm(options: RealmOptions)
+new Realm(options?: RealmOptions)
 ```
 
 **Options:**
-- `modelPath: string` - Path to GGUF model file
-- `maxTokens?: number` - Maximum tokens to generate (default: 100)
-- `temperature?: number` - Sampling temperature (default: 0.7)
-- `topK?: number` - Top-k sampling (default: 50)
-- `topP?: number` - Top-p (nucleus) sampling (default: 0.9)
-- `gpu?: boolean` - Use GPU acceleration (default: false)
+- `mode?: 'local' | 'server'` - SDK mode (default: `'local'`)
+- `defaultModel?: string` - Default model ID to use
+- `wasmPath?: string` - Path to WASM module (optional)
+- `endpoint?: string` - Server endpoint (for 'server' mode, future)
 
 #### Methods
 
-##### `generate(options: GenerateOptions): Promise<GenerateResponse>`
+##### `init(wasmBytes?: Uint8Array): Promise<void>`
 
-Generate text completion.
+Initialize WASM module. Called automatically, but can be called explicitly.
+
+##### `loadModel(modelBytes: Uint8Array, modelId?: string): Promise<string>`
+
+Load a model from GGUF bytes. Returns model ID.
+
+##### `useModel(modelId: string): void`
+
+Switch to a model from the registry.
+
+##### `generate(prompt: string, options?: GenerationConfig): Promise<GenerationResponse>`
+
+Generate text from a prompt.
 
 **Options:**
-- `prompt: string` - Input prompt
-- `maxTokens?: number` - Override default maxTokens
-- `temperature?: number` - Override default temperature
-- `topK?: number` - Override default topK
-- `topP?: number` - Override default topP
+- `model?: string` - Model to use (overrides defaultModel)
+- `maxTokens?: number` - Maximum tokens
+- `temperature?: number` - Temperature (0.0-2.0)
+- `topK?: number` - Top-k sampling
+- `topP?: number` - Top-p sampling
+- `repetitionPenalty?: number` - Repetition penalty
 
-**Returns:**
-- `text: string` - Generated text
-- `tokens: number` - Number of tokens generated
-- `finishReason: string` - Why generation stopped
+##### `getModels(): ModelInfo[]`
 
-##### `generateStream(options: GenerateOptions): AsyncIterable<string>`
+Get list of models in registry.
 
-Generate text with streaming.
+##### `getCurrentModel(): string | null`
 
-##### `chat(options: ChatOptions): Promise<ChatResponse>`
+Get current model ID.
 
-Chat completion (OpenAI-compatible).
+##### `isModelLoaded(modelId?: string): boolean`
 
-##### `loadModel(modelPath: string): Promise<void>`
+Check if a model is loaded.
 
-Load a different model.
+##### `setConfig(config: GenerationConfig): void`
 
-##### `unload(): Promise<void>`
+Set generation configuration.
 
-Unload the current model and free resources.
+##### `vocabSize(): number`
 
-## Advanced Usage
+Get model vocabulary size.
 
-### Multi-Tenant Deployment
+##### `getModelConfig(): any`
 
-```typescript
-import { RealmServer } from '@realm-ai/sdk/server';
+Get model configuration as JSON.
 
-const server = new RealmServer({
-  port: 8080,
-  modelPath: './models/model.gguf',
-  maxTenants: 8
-});
+##### `dispose(): void`
 
-server.listen();
+Free resources and cleanup.
+
+## Architecture
+
+Realm uses **WASM sandboxing** with **HOST-side storage**:
+
+```
+JavaScript → WASM Module → Host Functions → GPU/Memory64
+                              ↓
+                         Shared Resources
 ```
 
-### Using with Express
+- **Models** stored in HOST memory (Memory64)
+- **WASM** handles orchestration (tokenization, sampling)
+- **GPU** shared across all WASM instances
+- **Multiple models** can be loaded simultaneously
 
-```typescript
-import express from 'express';
-import { Realm } from '@realm-ai/sdk';
+## Requirements
 
-const app = express();
-const realm = new Realm({ modelPath: './model.gguf' });
-
-app.post('/generate', async (req, res) => {
-  const { prompt } = req.body;
-  const response = await realm.generate({ prompt });
-  res.json(response);
-});
-
-app.listen(3000);
-```
-
-## Implementation Status
-
-⚠️ **Note**: This SDK is under active development. Current status:
-
-- [ ] Core API design
-- [ ] N-API bindings to Rust runtime
-- [ ] Streaming support
-- [ ] Chat completions
-- [ ] Multi-tenant server
-- [ ] TypeScript definitions
-- [ ] Unit tests
-- [ ] Integration tests
-- [ ] Documentation
-
-## Contributing
-
-See [CONTRIBUTING.md](../../CONTRIBUTING.md) for development guidelines.
+- Node.js >= 18.0.0
+- WASM bindings from `realm-wasm/pkg/` (included in package)
 
 ## License
 
-Dual licensed under MIT OR Apache-2.0, at your option.
+MIT OR Apache-2.0
