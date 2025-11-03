@@ -10,6 +10,7 @@ mod kv_cache;
 mod layer;
 mod matmul_dispatch;
 mod model;
+pub mod registry;
 mod sampling;
 mod weight_format;
 
@@ -21,6 +22,9 @@ pub use kv_cache::KVCache;
 pub use layer::TransformerLayer;
 pub use matmul_dispatch::*;
 pub use model::Model;
+pub use registry::{
+    ModelCapability, ModelEntry, ModelRegistry, ModelSource, Quantization, RegistryConfig,
+};
 pub use sampling::*;
 pub use weight_format::*;
 

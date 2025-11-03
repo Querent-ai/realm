@@ -71,7 +71,7 @@ enum Commands {
         local: bool,
     },
 
-    /// Start HTTP API server
+    /// Start WebSocket inference server
     Serve {
         /// Host to bind to
         #[arg(long, default_value = "127.0.0.1")]
@@ -81,9 +81,25 @@ enum Commands {
         #[arg(short, long, default_value = "8080")]
         port: u16,
 
-        /// Model to load
+        /// Path to WASM module (realm.wasm)
+        #[arg(short, long)]
+        wasm: PathBuf,
+
+        /// Model to load (GGUF file)
         #[arg(short, long)]
         model: PathBuf,
+
+        /// Metrics port
+        #[arg(long, default_value = "9090")]
+        metrics_port: u16,
+
+        /// Enable authentication
+        #[arg(long)]
+        auth: bool,
+
+        /// API keys file path (required when --auth is enabled)
+        #[arg(long)]
+        api_keys: Option<PathBuf>,
 
         /// Enable GPU
         #[arg(long)]
@@ -114,6 +130,99 @@ enum Commands {
         /// Use GPU
         #[arg(long)]
         gpu: bool,
+    },
+
+    /// Manage API keys
+    ApiKey {
+        #[command(subcommand)]
+        command: ApiKeyCommands,
+    },
+
+    /// Manage models
+    Models {
+        #[command(subcommand)]
+        command: ModelsCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ApiKeyCommands {
+    /// Generate a new API key
+    Generate {
+        /// Tenant ID for this key
+        #[arg(short, long)]
+        tenant: String,
+
+        /// Optional name for this key
+        #[arg(short, long)]
+        name: Option<String>,
+
+        /// API keys file path
+        #[arg(short, long, default_value = "api-keys.json")]
+        file: PathBuf,
+    },
+
+    /// List all API keys
+    List {
+        /// API keys file path
+        #[arg(short, long, default_value = "api-keys.json")]
+        file: PathBuf,
+
+        /// Filter by tenant ID
+        #[arg(short, long)]
+        tenant: Option<String>,
+    },
+
+    /// Disable an API key
+    Disable {
+        /// API key to disable
+        key: String,
+
+        /// API keys file path
+        #[arg(short, long, default_value = "api-keys.json")]
+        file: PathBuf,
+    },
+
+    /// Enable an API key
+    Enable {
+        /// API key to enable
+        key: String,
+
+        /// API keys file path
+        #[arg(short, long, default_value = "api-keys.json")]
+        file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum ModelsCommands {
+    /// List available models
+    List {
+        /// Filter by source (ollama, huggingface, all)
+        #[arg(short, long)]
+        source: Option<String>,
+
+        /// Filter by capability (chat, completion, embedding, etc.)
+        #[arg(short, long)]
+        capability: Option<String>,
+    },
+
+    /// Search for models
+    Search {
+        /// Search query
+        query: String,
+    },
+
+    /// Show model details
+    Info {
+        /// Model ID (e.g., "llama-2-7b-chat")
+        model: String,
+    },
+
+    /// Check if model is cached
+    Status {
+        /// Model spec (e.g., "llama-2-7b-chat:Q4_K_M")
+        model: String,
     },
 }
 
@@ -158,11 +267,25 @@ fn main() -> Result<()> {
         Commands::Serve {
             host,
             port,
+            wasm,
             model,
+            metrics_port,
+            auth,
+            api_keys,
             gpu,
             max_tenants,
         } => {
-            cmd_serve(host, port, model, gpu, max_tenants)?;
+            cmd_serve(
+                host,
+                port,
+                wasm,
+                model,
+                metrics_port,
+                auth,
+                api_keys,
+                gpu,
+                max_tenants,
+            )?;
         }
         Commands::Info => {
             cmd_info()?;
@@ -174,6 +297,12 @@ fn main() -> Result<()> {
             gpu,
         } => {
             cmd_bench(model, prompt_len, gen_len, gpu)?;
+        }
+        Commands::ApiKey { command } => {
+            cmd_api_key(command)?;
+        }
+        Commands::Models { command } => {
+            cmd_models(command)?;
         }
     }
 
@@ -321,32 +450,186 @@ fn cmd_list(local: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_serve(host: String, port: u16, model: PathBuf, gpu: bool, max_tenants: usize) -> Result<()> {
-    info!("🌐 {}", "Starting HTTP server".green().bold());
-    info!("📦 Model: {}", model.display());
-    info!("🔗 Binding to: {}:{}", host, port);
+#[tokio::main]
+#[allow(clippy::too_many_arguments)]
+async fn cmd_serve(
+    host: String,
+    port: u16,
+    wasm: PathBuf,
+    model: PathBuf,
+    metrics_port: u16,
+    auth: bool,
+    api_keys: Option<PathBuf>,
+    gpu: bool,
+    max_tenants: usize,
+) -> Result<()> {
+    use realm_models::registry::{ModelRegistry, RegistryConfig};
+    use realm_server::auth::ApiKeyStoreConfig;
+    use realm_server::metrics_server::MetricsServerConfig;
+    use realm_server::{
+        runtime_manager::{ModelConfig, RuntimeManager},
+        RealmServer, ServerConfig,
+    };
+    use std::sync::Arc;
+
+    // Resolve model path (support both paths and registry names)
+    let model_path = if model.exists() {
+        // Direct path provided
+        model
+    } else {
+        // Try to resolve from registry
+        let model_spec = model.to_string_lossy().to_string();
+        info!(
+            "Model path not found, checking registry for: {}",
+            model_spec
+        );
+
+        let registry_config = RegistryConfig::default();
+        let registry = ModelRegistry::new(registry_config)?;
+
+        match registry.resolve(&model_spec) {
+            Ok(path) => {
+                info!("✓ Model found in cache: {:?}", path);
+                path
+            }
+            Err(e) => {
+                eprintln!(
+                    "{} Could not resolve model: {}",
+                    "✗".red().bold(),
+                    model_spec
+                );
+                eprintln!("{}", e);
+                eprintln!();
+                eprintln!("{} Available options:", "ℹ".blue());
+                eprintln!(
+                    "  1. Download the model manually to: {}",
+                    registry.cache_dir().display()
+                );
+                eprintln!("  2. Use a different model: realm models list");
+                eprintln!("  3. Provide a direct path to a GGUF file");
+                return Ok(());
+            }
+        }
+    };
+
+    info!("🌐 {}", "Starting Realm WebSocket Server".green().bold());
+    info!("📦 WASM Module: {}", wasm.display());
+    info!("📦 Model: {}", model_path.display());
+    info!("🔗 WebSocket: ws://{}:{}", host, port);
+    info!("📊 Metrics: http://{}:{}/metrics", host, metrics_port);
     info!("👥 Max tenants: {}", max_tenants);
+    info!(
+        "🔐 Authentication: {}",
+        if auth { "enabled" } else { "disabled" }
+    );
     info!("💻 Backend: {}", if gpu { "GPU" } else { "CPU" });
     println!();
 
-    if !model.exists() {
+    // Check files exist
+    if !wasm.exists() {
         eprintln!(
-            "{} Model file not found: {}",
+            "{} WASM module not found: {}",
             "✗".red().bold(),
-            model.display()
+            wasm.display()
+        );
+        eprintln!("{} Build the WASM module first:", "ℹ".blue());
+        eprintln!("  cd crates/realm-wasm && wasm-pack build --target nodejs");
+        return Ok(());
+    }
+
+    // Model existence already checked during resolution above
+
+    // Validate authentication configuration
+    if auth && api_keys.is_none() {
+        eprintln!(
+            "{} Authentication enabled but no API keys file specified",
+            "✗".red().bold()
+        );
+        eprintln!("{} Use --api-keys to specify the API keys file", "ℹ".blue());
+        eprintln!("Example:");
+        eprintln!("  realm api-key generate --tenant tenant1 --file api-keys.json");
+        eprintln!(
+            "  realm serve --wasm realm.wasm --model model.gguf --auth --api-keys api-keys.json"
         );
         return Ok(());
     }
 
-    println!("{} Implementation coming soon!", "ℹ".blue());
-    println!("This will start an HTTP API server with:");
-    println!("  • POST /v1/completions - Generate completions");
-    println!("  • POST /v1/chat/completions - Chat completions");
-    println!("  • GET /v1/models - List loaded models");
-    println!("  • GET /health - Health check");
+    if auth {
+        if let Some(ref keys_file) = api_keys {
+            if !keys_file.exists() {
+                eprintln!(
+                    "{} API keys file not found: {}",
+                    "✗".red().bold(),
+                    keys_file.display()
+                );
+                eprintln!("{} Generate API keys first:", "ℹ".blue());
+                eprintln!(
+                    "  realm api-key generate --tenant tenant1 --file {:?}",
+                    keys_file
+                );
+                return Ok(());
+            }
+        }
+    }
+
+    println!("{}", "Starting server...".cyan().bold());
     println!();
-    println!("Each request will run in an isolated WASM sandbox");
-    println!("with shared GPU access through host functions.");
+
+    // Create runtime manager
+    let mut runtime_manager = RuntimeManager::new(wasm)?;
+
+    // Set default model
+    runtime_manager.set_default_model(ModelConfig {
+        model_path: model_path.clone(),
+        model_id: "default".to_string(),
+    });
+
+    let runtime_manager = Arc::new(runtime_manager);
+
+    // Create server with runtime manager
+    let dispatcher = realm_server::dispatcher::FunctionDispatcher::with_runtime(runtime_manager);
+
+    // Build server config
+    let config = ServerConfig {
+        host: host.clone(),
+        port,
+        enable_auth: auth,
+        max_connections: max_tenants,
+        metrics_config: Some(MetricsServerConfig {
+            host: host.clone(),
+            port: metrics_port,
+        }),
+        api_key_store_config: api_keys.map(|keys_file| ApiKeyStoreConfig {
+            keys_file: Some(keys_file),
+            in_memory_only: false,
+            ..Default::default()
+        }),
+        rate_limiter_config: Some(realm_server::rate_limiter::RateLimiterConfig::default()),
+    };
+
+    // Create server with runtime-enabled dispatcher
+    let server = RealmServer::with_dispatcher(config, dispatcher)?;
+
+    println!("{} Server ready!", "✓".green().bold());
+    println!();
+    println!("{}", "Available functions:".yellow().bold());
+    println!("  • generate(prompt, options) - Generate text");
+    println!("  • health() - Health check");
+    println!("  • metadata() - List available functions");
+    println!();
+    println!("{}", "Connect with wscat:".yellow().bold());
+    println!("  wscat -c ws://{}:{}", host, port);
+    println!();
+    println!("{}", "Example function call:".yellow().bold());
+    println!(
+        r#"  {{"id":"req_1","function":"generate","params":{{"prompt":"Hello","max_tokens":50}}}}"#
+    );
+    println!();
+    println!("{} Press Ctrl+C to stop", "ℹ".blue());
+    println!();
+
+    // Run server
+    server.run().await?;
 
     Ok(())
 }
@@ -424,4 +707,353 @@ fn num_cpus() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
+}
+
+fn cmd_api_key(command: ApiKeyCommands) -> Result<()> {
+    use realm_server::auth::{generate_api_key, ApiKey, ApiKeyStore, ApiKeyStoreConfig};
+
+    match command {
+        ApiKeyCommands::Generate { tenant, name, file } => {
+            info!("Generating API key for tenant: {}", tenant);
+
+            // Generate key
+            let key_value = generate_api_key("sk_live");
+            let mut api_key = ApiKey::new(&key_value, &tenant);
+
+            if let Some(ref key_name) = name {
+                api_key = api_key.with_name(key_name);
+            }
+
+            // Load or create store
+            let config = ApiKeyStoreConfig {
+                keys_file: Some(file.clone()),
+                in_memory_only: false,
+                ..Default::default()
+            };
+
+            let store = ApiKeyStore::new(config)?;
+            store.add_key(api_key)?;
+
+            println!("{} API key generated successfully!", "✓".green().bold());
+            println!();
+            println!("{}", "Details:".yellow().bold());
+            println!("  Tenant ID: {}", tenant);
+            if let Some(n) = name {
+                println!("  Name: {}", n);
+            }
+            println!("  Key: {}", key_value.cyan());
+            println!("  File: {}", file.display());
+            println!();
+            println!(
+                "{}",
+                "To authenticate WebSocket connections:".yellow().bold()
+            );
+            println!(r#"  {{"type":"auth","api_key":"{}"}}"#, key_value);
+            println!();
+            println!("{} Keep this key secure!", "⚠".yellow());
+
+            Ok(())
+        }
+
+        ApiKeyCommands::List { file, tenant } => {
+            if !file.exists() {
+                eprintln!(
+                    "{} API keys file not found: {}",
+                    "✗".red().bold(),
+                    file.display()
+                );
+                return Ok(());
+            }
+
+            info!("Listing API keys from: {:?}", file);
+
+            let config = ApiKeyStoreConfig {
+                keys_file: Some(file.clone()),
+                in_memory_only: false,
+                ..Default::default()
+            };
+
+            let store = ApiKeyStore::new(config)?;
+
+            let keys = if let Some(ref tenant_id) = tenant {
+                store.list_tenant_keys(tenant_id)
+            } else {
+                store.list_all_keys()
+            };
+
+            if keys.is_empty() {
+                println!("{} No API keys found", "ℹ".blue());
+                return Ok(());
+            }
+
+            println!("{}", "API Keys:".green().bold());
+            println!();
+
+            for key in keys {
+                let status = if key.enabled {
+                    "enabled".green()
+                } else {
+                    "disabled".red()
+                };
+
+                println!("{} Tenant: {}", "•".cyan(), key.tenant_id);
+                if let Some(ref name) = key.name {
+                    println!("  Name: {}", name);
+                }
+                println!("  Key: {}", key.key);
+                println!("  Status: {}", status);
+                if let Some(last_used) = key.last_used {
+                    use chrono::{DateTime, Utc};
+                    let dt: DateTime<Utc> =
+                        DateTime::from_timestamp(last_used, 0).unwrap_or_else(Utc::now);
+                    println!("  Last used: {}", dt.format("%Y-%m-%d %H:%M:%S UTC"));
+                }
+                println!();
+            }
+
+            Ok(())
+        }
+
+        ApiKeyCommands::Disable { key, file } => {
+            if !file.exists() {
+                eprintln!(
+                    "{} API keys file not found: {}",
+                    "✗".red().bold(),
+                    file.display()
+                );
+                return Ok(());
+            }
+
+            let config = ApiKeyStoreConfig {
+                keys_file: Some(file.clone()),
+                in_memory_only: false,
+                ..Default::default()
+            };
+
+            let store = ApiKeyStore::new(config)?;
+            store.disable_key(&key)?;
+
+            println!("{} API key disabled: {}", "✓".green().bold(), key);
+
+            Ok(())
+        }
+
+        ApiKeyCommands::Enable { key, file } => {
+            if !file.exists() {
+                eprintln!(
+                    "{} API keys file not found: {}",
+                    "✗".red().bold(),
+                    file.display()
+                );
+                return Ok(());
+            }
+
+            let config = ApiKeyStoreConfig {
+                keys_file: Some(file.clone()),
+                in_memory_only: false,
+                ..Default::default()
+            };
+
+            let store = ApiKeyStore::new(config)?;
+            store.enable_key(&key)?;
+
+            println!("{} API key enabled: {}", "✓".green().bold(), key);
+
+            Ok(())
+        }
+    }
+}
+
+fn cmd_models(command: ModelsCommands) -> Result<()> {
+    use realm_models::registry::{ModelCapability, ModelRegistry, RegistryConfig};
+
+    let config = RegistryConfig::default();
+    let registry = ModelRegistry::new(config)?;
+
+    match command {
+        ModelsCommands::List { source, capability } => {
+            info!("Listing models...");
+
+            let mut models = if let Some(cap_str) = capability {
+                let cap = match cap_str.to_lowercase().as_str() {
+                    "chat" => ModelCapability::Chat,
+                    "completion" => ModelCapability::Completion,
+                    "embedding" => ModelCapability::Embedding,
+                    "code" | "code-completion" => ModelCapability::CodeCompletion,
+                    "instruction" => ModelCapability::Instruction,
+                    _ => {
+                        eprintln!("{} Unknown capability: {}", "✗".red().bold(), cap_str);
+                        eprintln!("Valid capabilities: chat, completion, embedding, code-completion, instruction");
+                        return Ok(());
+                    }
+                };
+                registry.filter_by_capability(cap)
+            } else {
+                registry.list()
+            };
+
+            // Filter by source if specified
+            if let Some(ref src) = source {
+                models.retain(|m| match src.to_lowercase().as_str() {
+                    "ollama" => {
+                        matches!(m.source, realm_models::registry::ModelSource::Ollama { .. })
+                    }
+                    "huggingface" | "hf" => matches!(
+                        m.source,
+                        realm_models::registry::ModelSource::HuggingFace { .. }
+                    ),
+                    "http" => matches!(m.source, realm_models::registry::ModelSource::Http { .. }),
+                    "local" => {
+                        matches!(m.source, realm_models::registry::ModelSource::Local { .. })
+                    }
+                    "all" => true,
+                    _ => true,
+                });
+            }
+
+            if models.is_empty() {
+                println!("{} No models found", "ℹ".blue());
+                return Ok(());
+            }
+
+            println!("{}", "Available Models:".green().bold());
+            println!();
+
+            for model in models {
+                let cached = if registry.is_cached(&model.id) {
+                    "✓".green()
+                } else {
+                    " ".normal()
+                };
+
+                println!(
+                    "{} {} {}",
+                    cached,
+                    model.id.cyan().bold(),
+                    format!("({}B)", model.parameters).dimmed()
+                );
+                println!("   {}", model.description);
+                println!(
+                    "   Capabilities: {}",
+                    model
+                        .capabilities
+                        .iter()
+                        .map(|c| format!("{:?}", c))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                println!(
+                    "   Quantizations: {}",
+                    model
+                        .quantizations
+                        .iter()
+                        .map(|q| q.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                println!();
+            }
+
+            println!("{}", "Usage:".yellow().bold());
+            println!("  realm serve --model llama-2-7b-chat:Q4_K_M");
+            println!();
+            println!("{} Models marked with ✓ are cached locally", "ℹ".blue());
+
+            Ok(())
+        }
+
+        ModelsCommands::Search { query } => {
+            info!("Searching for: {}", query);
+
+            let models = registry.search(&query);
+
+            if models.is_empty() {
+                println!("{} No models found matching '{}'", "ℹ".blue(), query);
+                return Ok(());
+            }
+
+            println!("{} {}", "Search results for:".green().bold(), query.cyan());
+            println!();
+
+            for model in models {
+                let cached = if registry.is_cached(&model.id) {
+                    "✓".green()
+                } else {
+                    " ".normal()
+                };
+
+                println!("{} {}", cached, model.id.cyan().bold());
+                println!("   {}", model.description);
+                println!();
+            }
+
+            Ok(())
+        }
+
+        ModelsCommands::Info { model } => {
+            let entry = registry.get(&model);
+
+            if let Some(entry) = entry {
+                println!("{}", "Model Information:".green().bold());
+                println!();
+                println!("  ID: {}", entry.id.cyan());
+                println!("  Name: {}", entry.name);
+                println!("  Family: {}", entry.family);
+                println!("  Parameters: {}B", entry.parameters);
+                println!("  Context Length: {}", entry.context_length);
+                println!("  License: {}", entry.license);
+                println!();
+                println!("  Description:");
+                println!("    {}", entry.description);
+                println!();
+                println!("  Capabilities:");
+                for cap in &entry.capabilities {
+                    println!("    • {:?}", cap);
+                }
+                println!();
+                println!("  Available Quantizations:");
+                for quant in &entry.quantizations {
+                    println!("    • {}", quant.as_str());
+                }
+                println!();
+                println!("  Tags: {}", entry.tags.join(", "));
+                println!();
+                println!("{}", "Usage:".yellow().bold());
+                println!("  realm serve --model {}:Q4_K_M", entry.id);
+            } else {
+                eprintln!("{} Model not found: {}", "✗".red().bold(), model);
+                eprintln!();
+                eprintln!("Try: realm models search {}", model);
+            }
+
+            Ok(())
+        }
+
+        ModelsCommands::Status { model } => {
+            match registry.resolve(&model) {
+                Ok(path) => {
+                    println!("{} Model is cached", "✓".green().bold());
+                    println!("  Path: {}", path.display());
+
+                    if let Ok(metadata) = std::fs::metadata(&path) {
+                        let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+                        println!("  Size: {:.2} MB", size_mb);
+                    }
+                }
+                Err(e) => {
+                    println!("{} Model is not cached", "✗".yellow());
+                    println!("  {}", e);
+                    println!();
+                    println!("{}", "To use this model:".yellow().bold());
+                    println!(
+                        "  1. Download manually to: {}",
+                        registry.cache_dir().display()
+                    );
+                    println!("  2. Or use a different model from: realm models list");
+                }
+            }
+
+            Ok(())
+        }
+    }
 }

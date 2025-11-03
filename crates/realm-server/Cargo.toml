@@ -1,0 +1,43 @@
+[package]
+name = "realm-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# Workspace dependencies
+realm-core = { workspace = true }
+realm-models = { workspace = true }
+realm-runtime = { workspace = true, features = ["memory64-host"] }
+realm-metrics = { workspace = true }
+
+# WASM runtime
+wasmtime = { workspace = true }
+
+# WebSocket
+tokio = { workspace = true }
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Utilities
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = "0.4"
+rand = "0.8"
+
+[dev-dependencies]
+tokio-test = "0.4"

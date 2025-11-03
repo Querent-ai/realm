@@ -472,6 +472,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
+Enterprise and commercial use require a commercial license i.e. BSL-1.1. Contact us for details at <contact@querent.xyz>.
+
 Dual-licensed under MIT OR Apache-2.0 (your choice).
 
 **Why dual-license?** Maximum compatibility. Use Realm in proprietary software (MIT) or GPL projects (Apache-2.0).
@@ -495,6 +497,6 @@ And inspired by the philosophy: *Make it work, make it right, make it fast.*
 
 - **Discord**: [discord.gg/querent](https://discord.gg/querent)
 - **Twitter**: [@querent_ai](https://twitter.com/querent_ai)
-- **Email**: contact@querent.xyz
+- **Email**: <contact@querent.xyz>
 
 Built with 🦀 by engineers who believe infrastructure should be beautiful.
