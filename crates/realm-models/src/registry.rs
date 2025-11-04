@@ -3,6 +3,8 @@
 //! Automatic model discovery, downloading, and caching from various sources.
 
 use anyhow::{anyhow, Context, Result};
+#[cfg(feature = "download")]
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -402,6 +404,187 @@ impl ModelRegistry {
             "Model not cached: {}. Run 'realm models download {}' to download it.",
             spec,
             spec
+        ))
+    }
+
+    /// Download a model from its source to the cache directory
+    #[cfg(feature = "download")]
+    pub async fn download_model(&self, spec: &str) -> Result<PathBuf> {
+        // Parse spec and get model entry
+        let (model_id, quant) = if let Some((id, q)) = spec.split_once(':') {
+            let quant =
+                Quantization::parse(q).ok_or_else(|| anyhow!("Unknown quantization: {}", q))?;
+            (id, Some(quant))
+        } else {
+            (spec, None)
+        };
+
+        let entry = self
+            .get(model_id)
+            .ok_or_else(|| anyhow!("Model not found in registry: {}", model_id))?;
+
+        let quantization = quant.unwrap_or_else(|| entry.quantizations[0].clone());
+        let filename = entry.get_filename(&quantization);
+        let cached_path = self.config.cache_dir.join(&filename);
+
+        // Check if already cached
+        if cached_path.exists() {
+            info!("Model already cached: {:?}", cached_path);
+            return Ok(cached_path);
+        }
+
+        // Ensure cache directory exists
+        std::fs::create_dir_all(&self.config.cache_dir)
+            .context("Failed to create cache directory")?;
+
+        info!(
+            "Downloading model: {} ({})",
+            model_id,
+            quantization.as_str()
+        );
+        info!("Destination: {:?}", cached_path);
+
+        // Download based on source type
+        #[cfg(feature = "download")]
+        {
+            match &entry.source {
+                ModelSource::HuggingFace {
+                    repo_id,
+                    filename: hf_filename,
+                } => {
+                    self.download_from_huggingface(repo_id, hf_filename, &cached_path)
+                        .await?;
+                }
+                ModelSource::Http { url } => {
+                    self.download_from_url(url, &cached_path).await?;
+                }
+                ModelSource::Local { path } => {
+                    // Copy local file to cache
+                    std::fs::copy(path, &cached_path)
+                        .with_context(|| format!("Failed to copy local file: {:?}", path))?;
+                    info!("Copied local model to cache");
+                }
+                ModelSource::Ollama { model_name } => {
+                    return Err(anyhow!(
+                        "Ollama models must be pulled manually: ollama pull {}",
+                        model_name
+                    ));
+                }
+            }
+        }
+
+        #[cfg(not(feature = "download"))]
+        {
+            return Err(anyhow!(
+                "Download feature not enabled. Enable with 'download' feature flag."
+            ));
+        }
+
+        info!("✓ Model downloaded successfully: {:?}", cached_path);
+        Ok(cached_path)
+    }
+
+    /// Download a file from HuggingFace Hub
+    #[cfg(feature = "download")]
+    async fn download_from_huggingface(
+        &self,
+        repo_id: &str,
+        filename: &str,
+        output_path: &Path,
+    ) -> Result<()> {
+        // HuggingFace Hub URL format
+        let url = format!(
+            "https://huggingface.co/{}/resolve/main/{}",
+            repo_id, filename
+        );
+
+        info!("Downloading from HuggingFace: {}", url);
+        self.download_from_url(&url, output_path).await
+    }
+
+    /// Download a file from HTTP URL with progress
+    #[cfg(feature = "download")]
+    async fn download_from_url(&self, url: &str, output_path: &Path) -> Result<()> {
+        use reqwest::Client;
+        use std::io::Write;
+
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(3600)) // 1 hour timeout for large files
+            .build()
+            .context("Failed to create HTTP client")?;
+
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .context("Failed to send HTTP request")?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "HTTP request failed: {} {}",
+                response.status(),
+                response.status().canonical_reason().unwrap_or("Unknown")
+            ));
+        }
+
+        let total_size = response.content_length().unwrap_or(0);
+
+        info!(
+            "Download size: {} bytes ({:.2} MB)",
+            total_size,
+            total_size as f64 / 1_048_576.0
+        );
+
+        let mut file = std::fs::File::create(output_path)
+            .with_context(|| format!("Failed to create output file: {:?}", output_path))?;
+
+        let mut stream = response.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut last_progress = std::time::Instant::now();
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result.context("Failed to read chunk")?;
+
+            file.write_all(&chunk)
+                .context("Failed to write chunk to file")?;
+
+            downloaded += chunk.len() as u64;
+
+            // Print progress every 10MB or every 5 seconds
+            if last_progress.elapsed().as_secs() >= 5 || downloaded.is_multiple_of(10_485_760) {
+                if total_size > 0 {
+                    let percent = (downloaded as f64 / total_size as f64) * 100.0;
+                    info!(
+                        "Download progress: {:.1}% ({:.2} MB / {:.2} MB)",
+                        percent,
+                        downloaded as f64 / 1_048_576.0,
+                        total_size as f64 / 1_048_576.0
+                    );
+                } else {
+                    info!("Downloaded: {:.2} MB", downloaded as f64 / 1_048_576.0);
+                }
+                last_progress = std::time::Instant::now();
+            }
+        }
+
+        info!(
+            "✓ Download complete: {:.2} MB",
+            downloaded as f64 / 1_048_576.0
+        );
+        Ok(())
+    }
+
+    #[cfg(not(feature = "download"))]
+    async fn download_from_url(&self, _url: &str, _output_path: &Path) -> Result<()> {
+        Err(anyhow!(
+            "Download feature not enabled. Enable with 'download' feature flag."
+        ))
+    }
+
+    #[cfg(not(feature = "download"))]
+    pub async fn download_model(&self, _spec: &str) -> Result<PathBuf> {
+        Err(anyhow!(
+            "Download feature not enabled. Enable with 'download' feature flag."
         ))
     }
 

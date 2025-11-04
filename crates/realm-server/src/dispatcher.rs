@@ -3,7 +3,7 @@
 //! Dispatches function calls to the appropriate runtime handlers,
 //! similar to Polkadot's runtime dispatcher.
 
-use crate::orchestrator::ModelOrchestrator;
+use crate::orchestrator::{ModelOrchestrator, ModelType};
 use crate::protocol::{
     FunctionCall, FunctionMetadata, GenerationResult, ParamMetadata, RuntimeMetadata, TokenData,
 };
@@ -174,6 +174,28 @@ impl FunctionDispatcher {
                     returns: "RuntimeMetadata".to_string(),
                     streaming: false,
                 },
+                FunctionMetadata {
+                    name: "pipeline".to_string(),
+                    description: "Execute a multi-model pipeline".to_string(),
+                    params: vec![
+                        ParamMetadata {
+                            name: "pipeline".to_string(),
+                            param_type: "String".to_string(),
+                            description: "Pipeline name to execute".to_string(),
+                            required: true,
+                            default: None,
+                        },
+                        ParamMetadata {
+                            name: "input".to_string(),
+                            param_type: "Object".to_string(),
+                            description: "Input data for the pipeline".to_string(),
+                            required: true,
+                            default: None,
+                        },
+                    ],
+                    returns: "PipelineResult".to_string(),
+                    streaming: false,
+                },
             ],
         }
     }
@@ -205,6 +227,41 @@ impl FunctionDispatcher {
             options.max_tokens,
             options.stream
         );
+
+        // Use tenant_id or default for all paths
+        let tenant_id_str = tenant_id.as_deref().unwrap_or("default");
+
+        // Check if orchestrator is available and has a default model
+        // This allows using orchestrator for model routing
+        if let Some(ref orchestrator) = self.orchestrator {
+            // Try to use orchestrator with default completion model
+            if let Some(ref default_model) = orchestrator.get_default_model(&ModelType::Completion)
+            {
+                let prompt = options.prompt.clone();
+                match orchestrator
+                    .execute_model(default_model, tenant_id_str, prompt)
+                    .await
+                {
+                    Ok(text) => {
+                        let result = GenerationResult {
+                            text,
+                            tokens_generated: options.max_tokens,
+                            prompt_tokens: Some(options.prompt.split_whitespace().count()),
+                            cost_usd: None,
+                            time_ms: None,
+                        };
+                        return Ok(DispatchResult::Single(serde_json::to_value(result)?));
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Orchestrator execution failed, falling back to runtime: {}",
+                            e
+                        );
+                        // Fall through to runtime manager
+                    }
+                }
+            }
+        }
 
         // Check if we have a runtime manager
         if let Some(ref runtime_manager) = self.runtime_manager {
