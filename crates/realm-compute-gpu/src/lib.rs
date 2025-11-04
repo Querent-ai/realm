@@ -236,59 +236,248 @@ impl GpuBackendTrait for GpuBackend {
     }
     fn fused_dequant_matmul_q4k(
         &self,
-        _blocks: &[BlockQ4_K],
-        _input: &[f32],
-        _batch_size: usize,
-        _n: usize,
-        _k: usize,
+        blocks: &[BlockQ4_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
     ) -> Result<Vec<f32>> {
-        // TODO: Implement GPU fused Q4_K kernel
-        // For now, fall back to CPU implementation
-        Err(Error::Runtime(
-            "GPU Q4_K fused kernel not implemented yet".to_string(),
-        ))
+        use realm_core::quant::{dequantize_q4_k, QK_K};
+
+        // Validate inputs
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q4_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        // Dequantize weights on CPU: [n, k]
+        let mut dequantized_weights = vec![0.0f32; n * k];
+
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+
+                let dequant_offset = out_idx * k + k_block * QK_K;
+                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
+
+                dequantize_q4_k(block, dequant_slice)
+                    .map_err(|e| Error::Runtime(format!("Q4_K dequantization failed: {}", e)))?;
+            }
+        }
+
+        // Transpose weights: [n, k] -> [k, n] for matmul
+        let mut weights_transposed = vec![0.0f32; k * n];
+        for i in 0..n {
+            for j in 0..k {
+                weights_transposed[j * n + i] = dequantized_weights[i * k + j];
+            }
+        }
+
+        // Perform matmul on GPU: input [batch_size, k] @ weights_transposed [k, n] -> [batch_size, n]
+        self.matmul(
+            input,
+            &weights_transposed,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
     }
 
     fn fused_dequant_matmul_q5k(
         &self,
-        _blocks: &[BlockQ5_K],
-        _input: &[f32],
-        _batch_size: usize,
-        _n: usize,
-        _k: usize,
+        blocks: &[BlockQ5_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
     ) -> Result<Vec<f32>> {
-        // TODO: Implement GPU fused Q5_K kernel
-        Err(Error::Runtime(
-            "GPU Q5_K fused kernel not implemented yet".to_string(),
-        ))
+        use realm_core::quant::{dequantize_q5_k, QK_K};
+
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q5_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        // Dequantize on CPU, then GPU matmul
+        let mut dequantized_weights = vec![0.0f32; n * k];
+
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+
+                let dequant_offset = out_idx * k + k_block * QK_K;
+                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
+
+                dequantize_q5_k(block, dequant_slice)
+                    .map_err(|e| Error::Runtime(format!("Q5_K dequantization failed: {}", e)))?;
+            }
+        }
+
+        // Transpose and matmul
+        let mut weights_transposed = vec![0.0f32; k * n];
+        for i in 0..n {
+            for j in 0..k {
+                weights_transposed[j * n + i] = dequantized_weights[i * k + j];
+            }
+        }
+
+        self.matmul(
+            input,
+            &weights_transposed,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
     }
 
     fn fused_dequant_matmul_q6k(
         &self,
-        _blocks: &[BlockQ6_K],
-        _input: &[f32],
-        _batch_size: usize,
-        _n: usize,
-        _k: usize,
+        blocks: &[BlockQ6_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
     ) -> Result<Vec<f32>> {
-        // TODO: Implement GPU fused Q6_K kernel
-        Err(Error::Runtime(
-            "GPU Q6_K fused kernel not implemented yet".to_string(),
-        ))
+        use realm_core::quant::{dequantize_q6_k, QK_K};
+
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q6_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        // Dequantize on CPU, then GPU matmul
+        let mut dequantized_weights = vec![0.0f32; n * k];
+
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+
+                let dequant_offset = out_idx * k + k_block * QK_K;
+                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
+
+                dequantize_q6_k(block, dequant_slice)
+                    .map_err(|e| Error::Runtime(format!("Q6_K dequantization failed: {}", e)))?;
+            }
+        }
+
+        // Transpose and matmul
+        let mut weights_transposed = vec![0.0f32; k * n];
+        for i in 0..n {
+            for j in 0..k {
+                weights_transposed[j * n + i] = dequantized_weights[i * k + j];
+            }
+        }
+
+        self.matmul(
+            input,
+            &weights_transposed,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
     }
 
     fn fused_dequant_matmul_q8k(
         &self,
-        _blocks: &[BlockQ8_K],
-        _input: &[f32],
-        _batch_size: usize,
-        _n: usize,
-        _k: usize,
+        blocks: &[BlockQ8_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
     ) -> Result<Vec<f32>> {
-        // TODO: Implement GPU fused Q8_K kernel
-        Err(Error::Runtime(
-            "GPU Q8_K fused kernel not implemented yet".to_string(),
-        ))
+        use realm_core::quant::{dequantize_q8_k, QK_K};
+
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q8_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        // Dequantize on CPU, then GPU matmul
+        let mut dequantized_weights = vec![0.0f32; n * k];
+
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+
+                let dequant_offset = out_idx * k + k_block * QK_K;
+                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
+
+                dequantize_q8_k(block, dequant_slice)
+                    .map_err(|e| Error::Runtime(format!("Q8_K dequantization failed: {}", e)))?;
+            }
+        }
+
+        // Transpose and matmul
+        let mut weights_transposed = vec![0.0f32; k * n];
+        for i in 0..n {
+            for j in 0..k {
+                weights_transposed[j * n + i] = dequantized_weights[i * k + j];
+            }
+        }
+
+        self.matmul(
+            input,
+            &weights_transposed,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
     }
 
     fn name(&self) -> &'static str {

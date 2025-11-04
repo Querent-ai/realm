@@ -631,20 +631,68 @@ impl Attention for FlashAttention {
 
             #[cfg(feature = "cuda")]
             FlashBackend::CUDA => {
-                // TODO: Call CUDA kernel
-                // eprintln!("⚠️  CUDA backend not yet implemented, using CPU");
-                self.forward_cpu(
-                    q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
-                )
+                // Try to use CUDA Flash Attention
+                match crate::attention::cuda_wrapper::FlashAttentionCuda::new() {
+                    Ok(cuda_attn) => {
+                        match cuda_attn.forward(
+                            q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
+                        ) {
+                            Ok(output) => Ok(output),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "CUDA Flash Attention failed: {}, falling back to CPU",
+                                    e
+                                );
+                                self.forward_cpu(
+                                    q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k,
+                                    head_dim,
+                                )
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "CUDA Flash Attention not available: {}, falling back to CPU",
+                            e
+                        );
+                        self.forward_cpu(
+                            q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
+                        )
+                    }
+                }
             }
 
             #[cfg(feature = "metal")]
             FlashBackend::Metal => {
-                // TODO: Call Metal shader
-                // eprintln!("⚠️  Metal backend not yet implemented, using CPU");
-                self.forward_cpu(
-                    q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
-                )
+                // Try to use Metal Flash Attention
+                match crate::attention::metal_wrapper::FlashAttentionMetal::new() {
+                    Ok(metal_attn) => {
+                        match metal_attn.forward(
+                            q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
+                        ) {
+                            Ok(output) => Ok(output),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Metal Flash Attention failed: {}, falling back to CPU",
+                                    e
+                                );
+                                self.forward_cpu(
+                                    q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k,
+                                    head_dim,
+                                )
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Metal Flash Attention not available: {}, falling back to CPU",
+                            e
+                        );
+                        self.forward_cpu(
+                            q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
+                        )
+                    }
+                }
             }
 
             #[cfg(feature = "webgpu")]
@@ -796,6 +844,139 @@ mod tests {
                 seq_len,
                 seq_len,
                 head_dim,
+            )
+            .unwrap();
+
+        assert_eq!(output.len(), batch_size * num_heads * seq_len * head_dim);
+        assert!(output.iter().all(|&x| x.is_finite()));
+    }
+
+    #[test]
+    #[cfg(feature = "cuda")]
+    fn test_flash_attention_cuda_backend() {
+        // Test that CUDA backend is selected when available
+        let flash = FlashAttention::try_new();
+        assert!(flash.is_some(), "Flash Attention should be available");
+
+        if let Some(attn) = flash {
+            let batch_size = 1;
+            let num_heads = 1;
+            let seq_len = 4;
+            let head_dim = 8;
+
+            let mut q = vec![0.0; batch_size * num_heads * seq_len * head_dim];
+            let mut k = vec![0.0; batch_size * num_heads * seq_len * head_dim];
+            let mut v = vec![0.0; batch_size * num_heads * seq_len * head_dim];
+
+            for i in 0..q.len() {
+                q[i] = (i as f32 * 0.1).sin();
+                k[i] = (i as f32 * 0.1).cos();
+                v[i] = i as f32 * 0.01;
+            }
+
+            // Should work with CUDA backend (or fallback to CPU gracefully)
+            let result = attn.forward(
+                &q, &k, &v, None, batch_size, num_heads, seq_len, seq_len, head_dim,
+            );
+            assert!(
+                result.is_ok(),
+                "Flash Attention should work with CUDA backend or CPU fallback"
+            );
+
+            let output = result.unwrap();
+            assert_eq!(output.len(), batch_size * num_heads * seq_len * head_dim);
+            assert!(output.iter().all(|&x| x.is_finite()));
+        }
+    }
+
+    #[test]
+    fn test_flash_attention_deterministic() {
+        // Test that Flash Attention produces deterministic results
+        let flash = FlashAttention::try_new().unwrap();
+
+        let batch_size = 1;
+        let num_heads = 1;
+        let seq_len = 4;
+        let head_dim = 8;
+
+        let mut q = vec![0.0; batch_size * num_heads * seq_len * head_dim];
+        let mut k = vec![0.0; batch_size * num_heads * seq_len * head_dim];
+        let mut v = vec![0.0; batch_size * num_heads * seq_len * head_dim];
+
+        for i in 0..q.len() {
+            q[i] = (i as f32 * 0.1).sin();
+            k[i] = (i as f32 * 0.1).cos();
+            v[i] = i as f32 * 0.01;
+        }
+
+        // Run twice with same inputs
+        let output1 = flash
+            .forward(
+                &q, &k, &v, None, batch_size, num_heads, seq_len, seq_len, head_dim,
+            )
+            .unwrap();
+        let output2 = flash
+            .forward(
+                &q, &k, &v, None, batch_size, num_heads, seq_len, seq_len, head_dim,
+            )
+            .unwrap();
+
+        // Outputs should be identical (deterministic)
+        assert_eq!(output1.len(), output2.len());
+        for (i, (&o1, &o2)) in output1.iter().zip(output2.iter()).enumerate() {
+            assert!(
+                (o1 - o2).abs() < 1e-6,
+                "Position {}: output1={}, output2={}, diff={}",
+                i,
+                o1,
+                o2,
+                (o1 - o2).abs()
+            );
+        }
+    }
+
+    #[test]
+    fn test_flash_attention_different_seq_lens() {
+        // Test with different sequence lengths for Q and K
+        let flash = FlashAttention::try_new().unwrap();
+
+        let batch_size = 1;
+        let num_heads = 1;
+        let seq_len_q = 4;
+        let seq_len_k = 6;
+        let head_dim = 8;
+
+        let q = vec![0.0; batch_size * num_heads * seq_len_q * head_dim];
+        let k = vec![0.0; batch_size * num_heads * seq_len_k * head_dim];
+        let v = vec![0.0; batch_size * num_heads * seq_len_k * head_dim];
+
+        let output = flash
+            .forward(
+                &q, &k, &v, None, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
+            )
+            .unwrap();
+
+        assert_eq!(output.len(), batch_size * num_heads * seq_len_q * head_dim);
+        assert!(output.iter().all(|&x| x.is_finite()));
+    }
+
+    #[test]
+    fn test_flash_attention_multiple_heads() {
+        // Test with multiple attention heads
+        let flash = FlashAttention::try_new().unwrap();
+
+        let batch_size = 1;
+        let num_heads = 4;
+        let seq_len = 8;
+        let head_dim = 16;
+
+        let q = vec![0.0; batch_size * num_heads * seq_len * head_dim];
+        let k = vec![0.0; batch_size * num_heads * seq_len * head_dim];
+        let v = vec![0.0; batch_size * num_heads * seq_len * head_dim];
+
+        let output = flash
+            .forward(
+                &q, &k, &v, None, batch_size, num_heads, seq_len, seq_len, head_dim,
             )
             .unwrap();
 

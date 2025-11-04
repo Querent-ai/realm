@@ -8,6 +8,11 @@ pub mod config;
 pub mod flash;
 pub mod standard;
 
+#[cfg(feature = "cuda")]
+pub mod cuda_wrapper;
+#[cfg(feature = "metal")]
+pub mod metal_wrapper;
+
 use realm_core::error::Result;
 
 /// Attention mechanism trait
