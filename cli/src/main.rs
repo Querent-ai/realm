@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
@@ -143,6 +143,12 @@ enum Commands {
         #[command(subcommand)]
         command: ModelsCommands,
     },
+
+    /// Manage pipelines
+    Pipeline {
+        #[command(subcommand)]
+        command: PipelineCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -224,6 +230,44 @@ enum ModelsCommands {
         /// Model spec (e.g., "llama-2-7b-chat:Q4_K_M")
         model: String,
     },
+
+    /// Download a model from its source
+    Download {
+        /// Model spec (e.g., "llama-2-7b-chat:Q4_K_M")
+        model: String,
+
+        /// Output directory (optional, defaults to ~/.realm/models)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PipelineCommands {
+    /// List available pipelines
+    List {
+        /// Pipeline directory (defaults to ./pipelines)
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+    },
+
+    /// Show pipeline details
+    Info {
+        /// Path to pipeline file (YAML or JSON)
+        file: PathBuf,
+    },
+
+    /// Validate a pipeline definition
+    Validate {
+        /// Path to pipeline file (YAML or JSON)
+        file: PathBuf,
+    },
+
+    /// Load a pipeline into the orchestrator
+    Load {
+        /// Path to pipeline file (YAML or JSON)
+        file: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -259,7 +303,8 @@ fn main() -> Result<()> {
             file,
             output,
         } => {
-            cmd_download(model, file, output)?;
+            // cmd_download is async, run it in tokio runtime
+            tokio::runtime::Runtime::new()?.block_on(cmd_download_async(model, file, output))?;
         }
         Commands::List { local } => {
             cmd_list(local)?;
@@ -303,6 +348,9 @@ fn main() -> Result<()> {
         }
         Commands::Models { command } => {
             cmd_models(command)?;
+        }
+        Commands::Pipeline { command } => {
+            cmd_pipeline(command)?;
         }
     }
 
@@ -389,29 +437,73 @@ fn cmd_run(
     Ok(())
 }
 
-fn cmd_download(model: String, file: Option<String>, output: Option<PathBuf>) -> Result<()> {
-    info!("📥 {}", "Downloading model".green().bold());
-    info!("🔗 Model: {}", model);
+async fn cmd_download_async(
+    model: String,
+    file: Option<String>,
+    output: Option<PathBuf>,
+) -> Result<()> {
+    use realm_models::registry::{ModelRegistry, RegistryConfig};
 
-    if let Some(file) = &file {
-        info!("📄 File: {}", file);
-    }
-
-    let output_dir = output.unwrap_or_else(|| {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".realm")
-            .join("models")
-    });
-
-    info!("📁 Output: {}", output_dir.display());
+    println!("{}", "📥 Downloading Model".green().bold());
     println!();
 
-    println!("{} Implementation coming soon!", "ℹ".blue());
-    println!("This will download models from Hugging Face Hub");
-    println!(
-        "Example: realm download TheBloke/Llama-2-7B-Chat-GGUF --file llama-2-7b-chat.Q4_K_M.gguf"
-    );
+    // Create registry
+    let mut registry_config = RegistryConfig::default();
+    if let Some(output_dir) = output {
+        registry_config.cache_dir = output_dir;
+    }
+    let registry = ModelRegistry::new(registry_config)?;
+
+    // Check if model is in registry
+    let model_spec = if let Some(ref file) = file {
+        // If file is specified, try to construct full spec
+        format!("{}:{}", model, file)
+    } else {
+        model.clone()
+    };
+
+    // Check if already cached
+    if registry.is_cached(&model_spec) {
+        let cached_path = registry.resolve(&model_spec)?;
+        println!("{} Model already cached", "✓".green().bold());
+        println!("  Path: {}", cached_path.display());
+
+        if let Ok(metadata) = std::fs::metadata(&cached_path) {
+            let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+            println!("  Size: {:.2} MB", size_mb);
+        }
+        return Ok(());
+    }
+
+    // Try to download
+    println!("{} Downloading model: {}", "→".cyan(), model_spec);
+    println!();
+
+    match registry.download_model(&model_spec).await {
+        Ok(path) => {
+            println!();
+            println!("{} Download complete!", "✓".green().bold());
+            println!("  Path: {}", path.display());
+
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+                println!("  Size: {:.2} MB", size_mb);
+            }
+
+            println!();
+            println!("{} You can now use this model:", "ℹ".blue());
+            println!("  realm serve --wasm realm.wasm --model {}", model_spec);
+        }
+        Err(e) => {
+            eprintln!("{} Download failed: {}", "✗".red().bold(), e);
+            eprintln!();
+            eprintln!("{} Available options:", "ℹ".blue());
+            eprintln!("  1. Check if model exists in registry: realm models list");
+            eprintln!("  2. Download manually from HuggingFace Hub");
+            eprintln!("  3. Provide direct path to model file");
+            return Err(e);
+        }
+    }
 
     Ok(())
 }
@@ -579,15 +671,42 @@ async fn cmd_serve(
     let mut runtime_manager = RuntimeManager::new(wasm)?;
 
     // Set default model
+    let model_id = "default".to_string();
     runtime_manager.set_default_model(ModelConfig {
         model_path: model_path.clone(),
-        model_id: "default".to_string(),
+        model_id: model_id.clone(),
     });
 
     let runtime_manager = Arc::new(runtime_manager);
 
-    // Create server with runtime manager
-    let dispatcher = realm_server::dispatcher::FunctionDispatcher::with_runtime(runtime_manager);
+    // Create model orchestrator with runtime manager
+    use realm_server::orchestrator::{ModelOrchestrator, ModelSpec, ModelType};
+    let orchestrator = Arc::new(ModelOrchestrator::new(runtime_manager.clone()));
+
+    // Register the default model with orchestrator
+    // Extract model name from path for better identification
+    let model_name = model_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("default-model")
+        .to_string();
+
+    orchestrator
+        .register_model(ModelSpec::new(
+            model_id.clone(),
+            ModelType::Completion, // Default to completion, can be overridden
+            model_path.clone(),
+            model_name.clone(),
+        ))
+        .context("Failed to register default model with orchestrator")?;
+
+    info!("✓ Registered model '{}' with orchestrator", model_id);
+
+    // Create dispatcher with both runtime manager and orchestrator
+    let dispatcher = realm_server::dispatcher::FunctionDispatcher::with_runtime_and_orchestrator(
+        runtime_manager,
+        orchestrator,
+    );
 
     // Build server config
     let config = ServerConfig {
@@ -614,6 +733,7 @@ async fn cmd_serve(
     println!();
     println!("{}", "Available functions:".yellow().bold());
     println!("  • generate(prompt, options) - Generate text");
+    println!("  • pipeline(pipeline, input) - Execute multi-model pipeline");
     println!("  • health() - Health check");
     println!("  • metadata() - List available functions");
     println!();
@@ -1049,9 +1169,253 @@ fn cmd_models(command: ModelsCommands) -> Result<()> {
                         "  1. Download manually to: {}",
                         registry.cache_dir().display()
                     );
-                    println!("  2. Or use a different model from: realm models list");
+                    println!("  2. Or use: realm models download {}", model);
                 }
             }
+
+            Ok(())
+        }
+
+        ModelsCommands::Download { model, output } => {
+            // Create registry with custom output if specified
+            let mut registry_config = RegistryConfig::default();
+            if let Some(output_dir) = output {
+                registry_config.cache_dir = output_dir;
+            }
+            let registry = ModelRegistry::new(registry_config)?;
+
+            // Check if already cached
+            if registry.is_cached(&model) {
+                let cached_path = registry.resolve(&model)?;
+                println!("{} Model already cached", "✓".green().bold());
+                println!("  Path: {}", cached_path.display());
+
+                if let Ok(metadata) = std::fs::metadata(&cached_path) {
+                    let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+                    println!("  Size: {:.2} MB", size_mb);
+                }
+                return Ok(());
+            }
+
+            // Download
+            println!("{} Downloading model: {}", "→".cyan(), model);
+            println!();
+
+            let rt = tokio::runtime::Runtime::new()?;
+            match rt.block_on(registry.download_model(&model)) {
+                Ok(path) => {
+                    println!();
+                    println!("{} Download complete!", "✓".green().bold());
+                    println!("  Path: {}", path.display());
+
+                    if let Ok(metadata) = std::fs::metadata(&path) {
+                        let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+                        println!("  Size: {:.2} MB", size_mb);
+                    }
+
+                    println!();
+                    println!("{} You can now use this model:", "ℹ".blue());
+                    println!("  realm serve --wasm realm.wasm --model {}", model);
+                }
+                Err(e) => {
+                    eprintln!("{} Download failed: {}", "✗".red().bold(), e);
+                    eprintln!();
+                    eprintln!("{} Available options:", "ℹ".blue());
+                    eprintln!("  1. Check if model exists: realm models list");
+                    eprintln!("  2. Download manually from HuggingFace Hub");
+                    eprintln!("  3. Provide direct path to model file");
+                    return Err(e);
+                }
+            }
+
+            Ok(())
+        }
+    }
+}
+
+fn cmd_pipeline(command: PipelineCommands) -> Result<()> {
+    use colored::Colorize;
+    use realm_server::pipeline_dsl::PipelineDef;
+
+    match command {
+        PipelineCommands::List { dir } => {
+            let pipelines_dir = dir.unwrap_or_else(|| PathBuf::from("./pipelines"));
+
+            println!();
+            println!("{}", "Available Pipelines:".cyan().bold());
+            println!();
+
+            if !pipelines_dir.exists() {
+                println!(
+                    "  {} No pipelines directory found at: {}",
+                    "ℹ".blue(),
+                    pipelines_dir.display()
+                );
+                println!();
+                println!("{}", "Try creating a pipeline:".yellow().bold());
+                println!("  mkdir -p pipelines");
+                println!("  realm pipeline info examples/pipelines/simple-chat.yaml");
+                return Ok(());
+            }
+
+            // Find all YAML and JSON files
+            let entries = std::fs::read_dir(&pipelines_dir)?;
+            let mut pipeline_files = Vec::new();
+
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(ext) = path.extension() {
+                        if ext == "yaml" || ext == "yml" || ext == "json" {
+                            pipeline_files.push(path);
+                        }
+                    }
+                }
+            }
+
+            if pipeline_files.is_empty() {
+                println!(
+                    "  {} No pipeline files found in: {}",
+                    "ℹ".blue(),
+                    pipelines_dir.display()
+                );
+                return Ok(());
+            }
+
+            // Display each pipeline
+            for (i, path) in pipeline_files.iter().enumerate() {
+                if i > 0 {
+                    println!();
+                }
+
+                // Try to load and display pipeline info
+                let pipeline = if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                    PipelineDef::from_json(path)
+                } else {
+                    PipelineDef::from_yaml(path)
+                };
+
+                match pipeline {
+                    Ok(p) => {
+                        println!(
+                            "  {} {}",
+                            p.id.cyan().bold(),
+                            path.file_name().unwrap().to_string_lossy().dimmed()
+                        );
+                        println!("     {}", p.description);
+                        println!("     {} steps", p.steps.len());
+                    }
+                    Err(_) => {
+                        println!(
+                            "  {} {}",
+                            "⚠".yellow(),
+                            path.file_name().unwrap().to_string_lossy()
+                        );
+                        println!("     Invalid pipeline file");
+                    }
+                }
+            }
+
+            println!();
+            println!("{}", "Usage:".yellow().bold());
+            println!("  realm pipeline info <file>");
+            println!("  realm pipeline validate <file>");
+
+            Ok(())
+        }
+
+        PipelineCommands::Info { file } => {
+            let pipeline = if file.extension().and_then(|s| s.to_str()) == Some("json") {
+                PipelineDef::from_json(file)?
+            } else {
+                PipelineDef::from_yaml(file)?
+            };
+
+            println!();
+            println!("{}", "Pipeline Information:".cyan().bold());
+            println!();
+            println!("  ID: {}", pipeline.id.cyan().bold());
+            println!("  Name: {}", pipeline.name);
+            println!("  Description: {}", pipeline.description);
+            println!();
+            println!("  {} Steps:", "Steps:".yellow().bold());
+            for (i, step) in pipeline.steps.iter().enumerate() {
+                println!();
+                println!("    {}. {} ({})", i + 1, step.name.bold(), step.id.dimmed());
+                match &step.model {
+                    realm_server::pipeline_dsl::ModelSpec::Id { model } => {
+                        println!("       Model: {}", model.cyan());
+                    }
+                    realm_server::pipeline_dsl::ModelSpec::Type { model_type } => {
+                        println!("       Model Type: {}", model_type.yellow());
+                    }
+                }
+                println!("       Output: {}", step.output.green());
+            }
+            println!();
+
+            // Validate
+            match pipeline.validate() {
+                Ok(_) => {
+                    println!("{} Pipeline is valid", "✓".green().bold());
+                }
+                Err(e) => {
+                    println!("{} Validation error: {}", "✗".red().bold(), e);
+                }
+            }
+
+            Ok(())
+        }
+
+        PipelineCommands::Validate { file } => {
+            let pipeline = if file.extension().and_then(|s| s.to_str()) == Some("json") {
+                PipelineDef::from_json(file)?
+            } else {
+                PipelineDef::from_yaml(file)?
+            };
+
+            match pipeline.validate() {
+                Ok(_) => {
+                    println!(
+                        "{} Pipeline is valid: {}",
+                        "✓".green().bold(),
+                        pipeline.id.cyan().bold()
+                    );
+                    println!("  {} steps", pipeline.steps.len());
+                }
+                Err(e) => {
+                    eprintln!("{} Validation failed: {}", "✗".red().bold(), e);
+                    std::process::exit(1);
+                }
+            }
+
+            Ok(())
+        }
+
+        PipelineCommands::Load { file } => {
+            let pipeline = if file.extension().and_then(|s| s.to_str()) == Some("json") {
+                PipelineDef::from_json(file)?
+            } else {
+                PipelineDef::from_yaml(file)?
+            };
+
+            // Validate before loading
+            pipeline.validate()?;
+
+            // Convert to orchestrator pipeline
+            let _orch_pipeline = pipeline.to_pipeline()?;
+
+            println!(
+                "{} Pipeline loaded successfully: {}",
+                "✓".green().bold(),
+                pipeline.id.cyan().bold()
+            );
+            println!();
+            println!("{}", "Note:".yellow().bold());
+            println!("  Pipeline is validated but not registered with a running server.");
+            println!("  To use this pipeline:");
+            println!("    1. Start a server with: realm serve");
+            println!("    2. Register the pipeline via WebSocket API");
 
             Ok(())
         }

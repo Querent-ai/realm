@@ -20,7 +20,7 @@ webgpu = ["realm-runtime/webgpu", "realm-models/webgpu"]
 
 [dependencies]
 realm-core = { workspace = true }
-realm-models = { workspace = true }
+realm-models = { workspace = true, features = ["download"] }
 realm-runtime = { workspace = true, features = ["memory64-host"] }
 realm-server = { workspace = true }
 clap = { version = "4.5", features = ["derive", "cargo"] }
