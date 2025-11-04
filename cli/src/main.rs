@@ -733,6 +733,7 @@ async fn cmd_serve(
     println!();
     println!("{}", "Available functions:".yellow().bold());
     println!("  • generate(prompt, options) - Generate text");
+    println!("  • pipeline(pipeline, input) - Execute multi-model pipeline");
     println!("  • health() - Health check");
     println!("  • metadata() - List available functions");
     println!();
