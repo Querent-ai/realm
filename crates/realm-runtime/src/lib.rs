@@ -51,6 +51,15 @@ pub mod async_prefetch;
 // Attention implementations (Standard and Flash Attention)
 pub mod attention;
 
+// Continuous batching for dynamic request batching
+pub mod batching;
+
+// LoRA adapter support for per-tenant fine-tuning
+pub mod lora;
+
+// Speculative decoding for 2-3x speedup
+pub mod speculative;
+
 mod multi_memory;
 mod sampling;
 mod sharding;

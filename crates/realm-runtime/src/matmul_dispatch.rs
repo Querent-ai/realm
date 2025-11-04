@@ -264,4 +264,207 @@ mod tests {
         .unwrap();
         assert_eq!(output.len(), 256);
     }
+
+    #[test]
+    fn test_dispatch_q5k() {
+        use realm_core::quant::{BlockQ5_K, QK_K};
+
+        let input = vec![1.0f32; QK_K];
+        let block = BlockQ5_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            scales: [0i8; QK_K / 16],
+            qh: [0u8; QK_K / 8],
+            ql: [0u8; QK_K / 2],
+        };
+        let blocks = vec![block; 256]; // n=256, k=256
+        let weights = WeightFormat::Q5K(blocks);
+
+        let output = dispatch_matmul(
+            &input,
+            &weights,
+            1,
+            QK_K,
+            256,
+            None,
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            None,
+        )
+        .unwrap();
+        assert_eq!(output.len(), 256);
+    }
+
+    #[test]
+    fn test_dispatch_q6k() {
+        use realm_core::quant::{BlockQ6_K, QK_K};
+
+        let input = vec![1.0f32; QK_K];
+        let block = BlockQ6_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            ql: [0u8; QK_K / 2],
+            qh: [0u8; QK_K / 4],
+            scales: [0i8; QK_K / 16],
+        };
+        let blocks = vec![block; 256];
+        let weights = WeightFormat::Q6K(blocks);
+
+        let output = dispatch_matmul(
+            &input,
+            &weights,
+            1,
+            QK_K,
+            256,
+            None,
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            None,
+        )
+        .unwrap();
+        assert_eq!(output.len(), 256);
+    }
+
+    #[test]
+    fn test_dispatch_q8k() {
+        use realm_core::quant::{BlockQ8_K, QK_K};
+
+        let input = vec![1.0f32; QK_K];
+        let block = BlockQ8_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [0u8; QK_K / 8],
+            quants: [0i8; QK_K],
+        };
+        let blocks = vec![block; 256];
+        let weights = WeightFormat::Q8K(blocks);
+
+        let output = dispatch_matmul(
+            &input,
+            &weights,
+            1,
+            QK_K,
+            256,
+            None,
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            None,
+        )
+        .unwrap();
+        assert_eq!(output.len(), 256);
+    }
+
+    #[test]
+    fn test_dispatch_q2k() {
+        use realm_core::quant::{BlockQ2_K, QK_K};
+
+        let input = vec![1.0f32; QK_K];
+        let block = BlockQ2_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [0u8; QK_K / 16],
+            qh: [0u8; QK_K / 8],
+            qs: [0u8; QK_K / 4],
+        };
+        let blocks = vec![block; 256];
+        let weights = WeightFormat::Q2K(blocks);
+
+        let output = dispatch_matmul(
+            &input,
+            &weights,
+            1,
+            QK_K,
+            256,
+            None,
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            None,
+        )
+        .unwrap();
+        assert_eq!(output.len(), 256);
+    }
+
+    #[test]
+    fn test_dispatch_q3k() {
+        use realm_core::quant::{BlockQ3_K, QK_K};
+
+        let input = vec![1.0f32; QK_K];
+        let block = BlockQ3_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [0u8; QK_K / 8],
+            qh: [0u8; QK_K / 8],
+            qs: [0u8; QK_K / 2],
+        };
+        let blocks = vec![block; 256];
+        let weights = WeightFormat::Q3K(blocks);
+
+        let output = dispatch_matmul(
+            &input,
+            &weights,
+            1,
+            QK_K,
+            256,
+            None,
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            None,
+        )
+        .unwrap();
+        assert_eq!(output.len(), 256);
+    }
+
+    #[test]
+    fn test_dispatch_all_formats_batch_size_2() {
+        use realm_core::quant::{BlockQ4_K, QK_K};
+
+        // Test with batch_size = 2
+        let input = vec![1.0f32; 2 * QK_K];
+        let block = BlockQ4_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [0u8; 12],
+            qs: [0u8; QK_K / 2],
+        };
+        let blocks = vec![block; 256];
+        let weights = WeightFormat::Q4K(blocks);
+
+        let output = dispatch_matmul(
+            &input,
+            &weights,
+            2, // batch_size
+            QK_K,
+            256,
+            None,
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            None,
+        )
+        .unwrap();
+        assert_eq!(output.len(), 2 * 256);
+    }
+
+    #[test]
+    fn test_dispatch_f32_deterministic() {
+        // Test with known values for deterministic output
+        // Input: [1, 2, 3, 4] shape [1, 4]
+        // Weights: [[0.5, 0.5], [0.5, 0.5], [0.5, 0.5], [0.5, 0.5]] shape [4, 2] (stored transposed as [2, 4])
+        // Expected output: [1, 2, 3, 4] @ [[0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]]^T
+        // = [1*0.5+2*0.5+3*0.5+4*0.5, 1*0.5+2*0.5+3*0.5+4*0.5] = [5.0, 5.0]
+        let input = vec![1.0, 2.0, 3.0, 4.0];
+        // Weights are stored transposed: [n, k] -> weights are [2, 4] = 8 elements
+        let weights = WeightFormat::F32(vec![
+            0.5, 0.5, 0.5, 0.5, // First row of weights (transposed)
+            0.5, 0.5, 0.5, 0.5, // Second row of weights (transposed)
+        ]);
+
+        let output = dispatch_matmul(
+            &input,
+            &weights,
+            1, // batch_size
+            4, // k (input dimension)
+            2, // n (output dimension)
+            None,
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            None,
+        )
+        .unwrap();
+
+        // Expected: [1,2,3,4] @ [[0.5,0.5,0.5,0.5],[0.5,0.5,0.5,0.5]]^T = [5.0, 5.0]
+        assert_eq!(output.len(), 2);
+        assert!((output[0] - 5.0).abs() < 0.001);
+        assert!((output[1] - 5.0).abs() < 0.001);
+    }
 }

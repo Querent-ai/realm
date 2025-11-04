@@ -232,58 +232,270 @@ impl GpuBackendTrait for CandleGpuBackend {
     }
     fn fused_dequant_matmul_q4k(
         &self,
-        _blocks: &[BlockQ4_K],
-        _input: &[f32],
-        _batch_size: usize,
-        _n: usize,
-        _k: usize,
+        blocks: &[BlockQ4_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
     ) -> Result<Vec<f32>> {
-        // TODO: Implement GPU fused Q4_K kernel using Candle
-        Err(Error::Runtime(
-            "Candle GPU Q4_K fused kernel not implemented yet".to_string(),
-        ))
+        use realm_core::quant::{dequantize_q4_k, QK_K};
+
+        // Validate inputs
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q4_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        // Dequantize weights: [n, k] -> f32 weights matrix
+        // This can be done on CPU or GPU - for now, dequantize on CPU then upload to GPU
+        let mut dequantized_weights = vec![0.0f32; n * k];
+
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+
+                let dequant_offset = out_idx * k + k_block * QK_K;
+                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
+
+                dequantize_q4_k(block, dequant_slice)
+                    .map_err(|e| Error::Runtime(format!("Q4_K dequantization failed: {}", e)))?;
+            }
+        }
+
+        // Upload to GPU and perform matmul
+        let weights_tensor = self
+            .f32_to_tensor(&dequantized_weights, &[n, k])
+            .map_err(|e| Error::Runtime(format!("Failed to create weights tensor: {}", e)))?;
+
+        let input_tensor = self
+            .f32_to_tensor(input, &[batch_size, k])
+            .map_err(|e| Error::Runtime(format!("Failed to create input tensor: {}", e)))?;
+
+        // Transpose weights: [n, k] -> [k, n] for matmul
+        let weights_t = weights_tensor
+            .t()
+            .map_err(|e| Error::Runtime(format!("Failed to transpose weights: {}", e)))?;
+
+        // Input @ Weights^T: [batch_size, k] @ [k, n] -> [batch_size, n]
+        let result_tensor = self
+            .matmul(&input_tensor, &weights_t)
+            .map_err(|e| Error::Runtime(format!("GPU matmul failed: {}", e)))?;
+
+        // Convert back to f32
+        self.tensor_to_f32(&result_tensor)
+            .map_err(|e| Error::Runtime(format!("Failed to convert result: {}", e)))
     }
 
     fn fused_dequant_matmul_q5k(
         &self,
-        _blocks: &[BlockQ5_K],
-        _input: &[f32],
-        _batch_size: usize,
-        _n: usize,
-        _k: usize,
+        blocks: &[BlockQ5_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
     ) -> Result<Vec<f32>> {
-        // TODO: Implement GPU fused Q5_K kernel using Candle
-        Err(Error::Runtime(
-            "Candle GPU Q5_K fused kernel not implemented yet".to_string(),
-        ))
+        use realm_core::quant::{dequantize_q5_k, QK_K};
+
+        // Validate inputs
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q5_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        // Dequantize weights on CPU, then upload to GPU
+        let mut dequantized_weights = vec![0.0f32; n * k];
+
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+
+                let dequant_offset = out_idx * k + k_block * QK_K;
+                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
+
+                dequantize_q5_k(block, dequant_slice)
+                    .map_err(|e| Error::Runtime(format!("Q5_K dequantization failed: {}", e)))?;
+            }
+        }
+
+        // Upload to GPU and perform matmul
+        let weights_tensor = self
+            .f32_to_tensor(&dequantized_weights, &[n, k])
+            .map_err(|e| Error::Runtime(format!("Failed to create weights tensor: {}", e)))?;
+
+        let input_tensor = self
+            .f32_to_tensor(input, &[batch_size, k])
+            .map_err(|e| Error::Runtime(format!("Failed to create input tensor: {}", e)))?;
+
+        let weights_t = weights_tensor
+            .t()
+            .map_err(|e| Error::Runtime(format!("Failed to transpose weights: {}", e)))?;
+
+        let result_tensor = self
+            .matmul(&input_tensor, &weights_t)
+            .map_err(|e| Error::Runtime(format!("GPU matmul failed: {}", e)))?;
+
+        self.tensor_to_f32(&result_tensor)
+            .map_err(|e| Error::Runtime(format!("Failed to convert result: {}", e)))
     }
 
     fn fused_dequant_matmul_q6k(
         &self,
-        _blocks: &[BlockQ6_K],
-        _input: &[f32],
-        _batch_size: usize,
-        _n: usize,
-        _k: usize,
+        blocks: &[BlockQ6_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
     ) -> Result<Vec<f32>> {
-        // TODO: Implement GPU fused Q6_K kernel using Candle
-        Err(Error::Runtime(
-            "Candle GPU Q6_K fused kernel not implemented yet".to_string(),
-        ))
+        use realm_core::quant::{dequantize_q6_k, QK_K};
+
+        // Validate inputs
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q6_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        // Dequantize weights on CPU, then upload to GPU
+        let mut dequantized_weights = vec![0.0f32; n * k];
+
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+
+                let dequant_offset = out_idx * k + k_block * QK_K;
+                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
+
+                dequantize_q6_k(block, dequant_slice)
+                    .map_err(|e| Error::Runtime(format!("Q6_K dequantization failed: {}", e)))?;
+            }
+        }
+
+        // Upload to GPU and perform matmul
+        let weights_tensor = self
+            .f32_to_tensor(&dequantized_weights, &[n, k])
+            .map_err(|e| Error::Runtime(format!("Failed to create weights tensor: {}", e)))?;
+
+        let input_tensor = self
+            .f32_to_tensor(input, &[batch_size, k])
+            .map_err(|e| Error::Runtime(format!("Failed to create input tensor: {}", e)))?;
+
+        let weights_t = weights_tensor
+            .t()
+            .map_err(|e| Error::Runtime(format!("Failed to transpose weights: {}", e)))?;
+
+        let result_tensor = self
+            .matmul(&input_tensor, &weights_t)
+            .map_err(|e| Error::Runtime(format!("GPU matmul failed: {}", e)))?;
+
+        self.tensor_to_f32(&result_tensor)
+            .map_err(|e| Error::Runtime(format!("Failed to convert result: {}", e)))
     }
 
     fn fused_dequant_matmul_q8k(
         &self,
-        _blocks: &[BlockQ8_K],
-        _input: &[f32],
-        _batch_size: usize,
-        _n: usize,
-        _k: usize,
+        blocks: &[BlockQ8_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
     ) -> Result<Vec<f32>> {
-        // TODO: Implement GPU fused Q8_K kernel using Candle
-        Err(Error::Runtime(
-            "Candle GPU Q8_K fused kernel not implemented yet".to_string(),
-        ))
+        use realm_core::quant::{dequantize_q8_k, QK_K};
+
+        // Validate inputs
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q8_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        // Dequantize weights on CPU, then upload to GPU
+        let mut dequantized_weights = vec![0.0f32; n * k];
+
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+
+                let dequant_offset = out_idx * k + k_block * QK_K;
+                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
+
+                dequantize_q8_k(block, dequant_slice)
+                    .map_err(|e| Error::Runtime(format!("Q8_K dequantization failed: {}", e)))?;
+            }
+        }
+
+        // Upload to GPU and perform matmul
+        let weights_tensor = self
+            .f32_to_tensor(&dequantized_weights, &[n, k])
+            .map_err(|e| Error::Runtime(format!("Failed to create weights tensor: {}", e)))?;
+
+        let input_tensor = self
+            .f32_to_tensor(input, &[batch_size, k])
+            .map_err(|e| Error::Runtime(format!("Failed to create input tensor: {}", e)))?;
+
+        let weights_t = weights_tensor
+            .t()
+            .map_err(|e| Error::Runtime(format!("Failed to transpose weights: {}", e)))?;
+
+        let result_tensor = self
+            .matmul(&input_tensor, &weights_t)
+            .map_err(|e| Error::Runtime(format!("GPU matmul failed: {}", e)))?;
+
+        self.tensor_to_f32(&result_tensor)
+            .map_err(|e| Error::Runtime(format!("Failed to convert result: {}", e)))
     }
 
     fn name(&self) -> &'static str {
@@ -362,5 +574,279 @@ mod tests {
             output_rms,
             input_rms
         );
+    }
+
+    #[test]
+    fn test_matmul_transposed() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        // A: [2, 3], B: [2, 3] -> result should be A @ B^T = [2, 2]
+        let a = backend
+            .f32_to_tensor(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3])
+            .unwrap();
+        let b = backend
+            .f32_to_tensor(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3])
+            .unwrap();
+
+        let result = backend.matmul_transposed(&a, &b).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        // Expected: [[1*1+2*2+3*3, 1*4+2*5+3*6], [4*1+5*2+6*3, 4*4+5*5+6*6]]
+        // = [[14, 32], [32, 77]]
+        assert_eq!(result_vec.len(), 4);
+        assert!((result_vec[0] - 14.0).abs() < 0.001);
+        assert!((result_vec[1] - 32.0).abs() < 0.001);
+        assert!((result_vec[2] - 32.0).abs() < 0.001);
+        assert!((result_vec[3] - 77.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_silu() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        // SiLU(x) = x * sigmoid(x)
+        let x = backend.f32_to_tensor(&[0.0, 1.0, -1.0, 2.0], &[4]).unwrap();
+        let result = backend.silu(&x).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec.len(), 4);
+        // SiLU(0) = 0
+        assert!((result_vec[0]).abs() < 0.001);
+        // SiLU(1) ≈ 0.731
+        assert!((result_vec[1] - 0.731).abs() < 0.01);
+        // SiLU(-1) ≈ -0.269
+        assert!((result_vec[2] - (-0.269)).abs() < 0.01);
+        // All values should be finite
+        for val in &result_vec {
+            assert!(val.is_finite(), "SiLU produced non-finite value: {}", val);
+        }
+    }
+
+    #[test]
+    fn test_softmax() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        // Test softmax on simple input
+        let x = backend.f32_to_tensor(&[1.0, 2.0, 3.0], &[3]).unwrap();
+        let result = backend.softmax(&x).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec.len(), 3);
+        // Sum should be approximately 1.0
+        let sum: f32 = result_vec.iter().sum();
+        assert!(
+            (sum - 1.0).abs() < 0.01,
+            "Softmax sum should be 1.0, got {}",
+            sum
+        );
+        // All values should be positive
+        for val in &result_vec {
+            assert!(*val > 0.0, "Softmax produced negative value: {}", val);
+            assert!(
+                val.is_finite(),
+                "Softmax produced non-finite value: {}",
+                val
+            );
+        }
+    }
+
+    #[test]
+    fn test_add() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        let a = backend.f32_to_tensor(&[1.0, 2.0, 3.0], &[3]).unwrap();
+        let b = backend.f32_to_tensor(&[4.0, 5.0, 6.0], &[3]).unwrap();
+
+        let result = backend.add(&a, &b).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec, vec![5.0, 7.0, 9.0]);
+    }
+
+    #[test]
+    fn test_mul() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        let a = backend.f32_to_tensor(&[1.0, 2.0, 3.0], &[3]).unwrap();
+        let b = backend.f32_to_tensor(&[4.0, 5.0, 6.0], &[3]).unwrap();
+
+        let result = backend.mul(&a, &b).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec, vec![4.0, 10.0, 18.0]);
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q4k() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ4_K, QK_K};
+
+        // Create minimal test: n=256, k=256 (one block per output)
+        let n = 256;
+        let k = 256;
+        let batch_size = 1;
+
+        // Create dummy Q4_K blocks (all zeros for simplicity)
+        let block = BlockQ4_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [0u8; 12],
+            qs: [0u8; QK_K / 2],
+        };
+        let num_blocks = n * (k / QK_K);
+        let blocks = vec![block; num_blocks];
+
+        // Create input
+        let input = vec![1.0f32; batch_size * k];
+
+        // Should succeed (even if result is zero)
+        let result = backend.fused_dequant_matmul_q4k(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q4k_invalid_shape() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ4_K, QK_K};
+
+        let n = 256;
+        let k = 255; // Not a multiple of QK_K (256)
+        let batch_size = 1;
+
+        let block = BlockQ4_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [0u8; 12],
+            qs: [0u8; QK_K / 2],
+        };
+        let blocks = vec![block; 10];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        // Should fail with InvalidShape error
+        let result = backend.fused_dequant_matmul_q4k(&blocks, &input, batch_size, n, k);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q5k() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ5_K, QK_K};
+
+        let n = 256;
+        let k = 256;
+        let batch_size = 1;
+
+        let block = BlockQ5_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            scales: [0i8; QK_K / 16],
+            qh: [0u8; QK_K / 8],
+            ql: [0u8; QK_K / 2],
+        };
+        let num_blocks = n * (k / QK_K);
+        let blocks = vec![block; num_blocks];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend.fused_dequant_matmul_q5k(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q6k() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ6_K, QK_K};
+
+        let n = 256;
+        let k = 256;
+        let batch_size = 1;
+
+        let block = BlockQ6_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            ql: [0u8; QK_K / 2],
+            qh: [0u8; QK_K / 4],
+            scales: [0i8; QK_K / 16],
+        };
+        let num_blocks = n * (k / QK_K);
+        let blocks = vec![block; num_blocks];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend.fused_dequant_matmul_q6k(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q8k() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ8_K, QK_K};
+
+        let n = 256;
+        let k = 256;
+        let batch_size = 1;
+
+        let block = BlockQ8_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [0u8; QK_K / 8],
+            quants: [0i8; QK_K],
+        };
+        let num_blocks = n * (k / QK_K);
+        let blocks = vec![block; num_blocks];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend.fused_dequant_matmul_q8k(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
+    fn test_backend_name() {
+        let backend = CandleGpuBackend::new().unwrap();
+        let name = backend.name();
+        // Should return one of: "CUDA", "Metal", or "CPU"
+        assert!(name == "CUDA" || name == "Metal" || name == "CPU");
+    }
+
+    #[test]
+    fn test_tensor_conversion() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        // Test f32_to_tensor and tensor_to_f32 round-trip
+        let original = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let tensor = backend.f32_to_tensor(&original, &[5]).unwrap();
+        let converted = backend.tensor_to_f32(&tensor).unwrap();
+
+        assert_eq!(original, converted);
+    }
+
+    #[test]
+    fn test_matmul_large() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        // Test larger matrix multiplication
+        let size = 64;
+        let a_data: Vec<f32> = (0..size * size).map(|i| (i % 10) as f32).collect();
+        let b_data: Vec<f32> = (0..size * size).map(|i| ((i * 2) % 10) as f32).collect();
+
+        let a = backend.f32_to_tensor(&a_data, &[size, size]).unwrap();
+        let b = backend.f32_to_tensor(&b_data, &[size, size]).unwrap();
+
+        let result = backend.matmul(&a, &b).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec.len(), size * size);
+        // Check no NaN or inf
+        for val in &result_vec {
+            assert!(val.is_finite(), "Large matmul produced non-finite value");
+        }
     }
 }

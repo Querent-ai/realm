@@ -16,7 +16,7 @@
     "@realm/realm-node": "file:../../crates/realm-node"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0"
+    "@types/node": "^24.10.0"
   }
 }
 

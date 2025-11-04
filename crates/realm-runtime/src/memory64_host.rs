@@ -24,6 +24,8 @@ use realm_compute_cpu::{CandleCpuBackend, CpuBackendTrait};
 #[cfg(all(not(target_arch = "wasm32"), any(feature = "cuda", feature = "metal")))]
 use realm_compute_gpu::GpuBackendTrait;
 
+use realm_core::error::Error;
+
 /// Memory access statistics for monitoring (thread-safe)
 #[derive(Debug, Clone, Default)]
 pub struct MemoryStats {
@@ -426,7 +428,11 @@ impl Memory64Runtime {
 
         match CandleGpuBackend::new() {
             Ok(backend) => {
-                info!("Memory64 Runtime: Candle GPU backend initialized");
+                let backend_name = backend.name();
+                info!(
+                    "Memory64 Runtime: Candle GPU backend initialized ({})",
+                    backend_name
+                );
                 Some(Arc::new(backend))
             }
             Err(e) => {
@@ -637,14 +643,16 @@ impl Memory64Runtime {
         )?;
 
         // ========================================
-        // Candle CPU Backend Host Functions
+        // Candle Backend Host Functions (GPU-first, CPU fallback)
         // ========================================
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // Host function: Matrix multiplication using Candle CPU backend
+            // Host function: Matrix multiplication using GPU (if available) or CPU backend
             // Parameters: a_ptr, b_ptr, result_ptr, m, k, n (all as WASM memory offsets)
-            // Returns: 0 on success, negative on error
+            // Returns: result_size on success, negative on error
+            #[cfg(all(not(target_arch = "wasm32"), any(feature = "cuda", feature = "metal")))]
+            let gpu_backend = self.gpu_backend.clone();
             let cpu_backend = self.cpu_backend.clone();
             linker.func_wrap(
                 "env",
@@ -657,14 +665,6 @@ impl Memory64Runtime {
                       k: u32,
                       n: u32|
                       -> i32 {
-                    // Check if backend is available
-                    if cpu_backend.is_none() {
-                        error!("Candle CPU backend not available");
-                        return -1;
-                    }
-
-                    let backend = cpu_backend.as_ref().unwrap();
-
                     // Get WASM memory
                     let wasm_memory = match caller.get_export("memory") {
                         Some(Extern::Memory(mem)) => mem,
@@ -707,11 +707,43 @@ impl Memory64Runtime {
                         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                         .collect();
 
-                    // Perform matrix multiplication
-                    let result = match backend.matmul(&a_f32, &b_f32, m_usize, k_usize, n_usize) {
+                    // Try GPU first, fallback to CPU
+                    #[cfg(all(
+                        not(target_arch = "wasm32"),
+                        any(feature = "cuda", feature = "metal")
+                    ))]
+                    let result = if let Some(gpu) = &gpu_backend {
+                        match gpu.matmul(&a_f32, &b_f32, m as u32, k as u32, n as u32) {
+                            Ok(r) => Ok(r),
+                            Err(e) => {
+                                warn!("GPU matmul failed, falling back to CPU: {}", e);
+                                if let Some(cpu) = &cpu_backend {
+                                    cpu.matmul(&a_f32, &b_f32, m_usize, k_usize, n_usize)
+                                } else {
+                                    Err(Error::Runtime("No compute backend available".to_string()))
+                                }
+                            }
+                        }
+                    } else {
+                        // No GPU, try CPU
+                        if let Some(cpu) = &cpu_backend {
+                            cpu.matmul(&a_f32, &b_f32, m_usize, k_usize, n_usize)
+                        } else {
+                            Err(Error::Runtime("No compute backend available".to_string()))
+                        }
+                    };
+
+                    #[cfg(not(any(feature = "cuda", feature = "metal")))]
+                    let result = if let Some(cpu) = &cpu_backend {
+                        cpu.matmul(&a_f32, &b_f32, m_usize, k_usize, n_usize)
+                    } else {
+                        Err(Error::Runtime("No compute backend available".to_string()))
+                    };
+
+                    let result = match result {
                         Ok(r) => r,
                         Err(e) => {
-                            error!("Candle matmul failed: {}", e);
+                            error!("Matmul failed: {}", e);
                             return -5;
                         }
                     };
@@ -732,7 +764,9 @@ impl Memory64Runtime {
                 },
             )?;
 
-            // Host function: Transposed matrix multiplication using Candle CPU backend
+            // Host function: Transposed matrix multiplication using GPU (if available) or CPU backend
+            #[cfg(all(not(target_arch = "wasm32"), any(feature = "cuda", feature = "metal")))]
+            let gpu_backend2 = self.gpu_backend.clone();
             let cpu_backend2 = self.cpu_backend.clone();
             linker.func_wrap(
                 "env",
@@ -745,13 +779,6 @@ impl Memory64Runtime {
                       k: u32,
                       n: u32|
                       -> i32 {
-                    if cpu_backend2.is_none() {
-                        error!("Candle CPU backend not available");
-                        return -1;
-                    }
-
-                    let backend = cpu_backend2.as_ref().unwrap();
-
                     let wasm_memory = match caller.get_export("memory") {
                         Some(Extern::Memory(mem)) => mem,
                         _ => {
@@ -790,12 +817,52 @@ impl Memory64Runtime {
                         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                         .collect();
 
-                    let result = match backend
-                        .matmul_transposed(&a_f32, &b_f32, m_usize, k_usize, n_usize)
-                    {
+                    // Try GPU first, fallback to CPU
+                    // Note: GPU backend doesn't have matmul_transposed, so we transpose B manually
+                    #[cfg(all(
+                        not(target_arch = "wasm32"),
+                        any(feature = "cuda", feature = "metal")
+                    ))]
+                    let result = if let Some(gpu) = &gpu_backend2 {
+                        // Transpose B manually: [n, k] -> [k, n]
+                        let mut b_transposed = vec![0.0f32; k_usize * n_usize];
+                        for i in 0..n_usize {
+                            for j in 0..k_usize {
+                                b_transposed[j * n_usize + i] = b_f32[i * k_usize + j];
+                            }
+                        }
+                        // Now do A @ B^T = A @ B_transposed
+                        match gpu.matmul(&a_f32, &b_transposed, m as u32, k as u32, n as u32) {
+                            Ok(r) => Ok(r),
+                            Err(e) => {
+                                warn!("GPU matmul_transposed failed, falling back to CPU: {}", e);
+                                if let Some(cpu) = &cpu_backend2 {
+                                    cpu.matmul_transposed(&a_f32, &b_f32, m_usize, k_usize, n_usize)
+                                } else {
+                                    Err(Error::Runtime("No compute backend available".to_string()))
+                                }
+                            }
+                        }
+                    } else {
+                        // No GPU, try CPU
+                        if let Some(cpu) = &cpu_backend2 {
+                            cpu.matmul_transposed(&a_f32, &b_f32, m_usize, k_usize, n_usize)
+                        } else {
+                            Err(Error::Runtime("No compute backend available".to_string()))
+                        }
+                    };
+
+                    #[cfg(not(any(feature = "cuda", feature = "metal")))]
+                    let result = if let Some(cpu) = &cpu_backend2 {
+                        cpu.matmul_transposed(&a_f32, &b_f32, m_usize, k_usize, n_usize)
+                    } else {
+                        Err(Error::Runtime("No compute backend available".to_string()))
+                    };
+
+                    let result = match result {
                         Ok(r) => r,
                         Err(e) => {
-                            error!("Candle matmul_transposed failed: {}", e);
+                            error!("Matmul_transposed failed: {}", e);
                             return -5;
                         }
                     };

@@ -35,3 +35,4 @@ parking_lot = "0.12"
 memmap2 = "0.9"
 rand = { workspace = true }
 lazy_static = "1.4"
+half = { workspace = true }

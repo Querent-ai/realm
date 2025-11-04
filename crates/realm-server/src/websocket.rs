@@ -277,9 +277,19 @@ impl WebSocketHandler {
                     }
                 }
 
-                // Dispatch function call
+                // Dispatch function call with authenticated tenant ID if available
                 let request_id = call.id.clone();
-                match self.dispatcher.dispatch(call).await {
+                let result = if let Some(ref auth_tenant_id) = self.tenant_id {
+                    // Use authenticated tenant ID (from API key) - highest priority
+                    self.dispatcher
+                        .dispatch_with_auth(call, auth_tenant_id)
+                        .await
+                } else {
+                    // No authentication - use client-provided or auto-assigned
+                    self.dispatcher.dispatch(call).await
+                };
+
+                match result {
                     Ok(result) => {
                         self.handle_dispatch_result(ws, request_id, result).await?;
                     }
