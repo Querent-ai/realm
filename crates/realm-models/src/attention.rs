@@ -4,14 +4,14 @@ use realm_compute_cpu::{matmul_f32, matmul_transposed};
 use realm_core::error::Result;
 
 #[cfg(feature = "webgpu")]
-use realm_gpu::GpuBackend;
+use realm_compute_gpu::GpuBackend;
 
 use super::{KVCache, TransformerConfig};
 use crate::matmul_dispatch::dispatch_matmul;
 use crate::weight_format::WeightFormat;
 
 #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
-use realm_gpu::GpuBackendTrait;
+use realm_compute_gpu::GpuBackendTrait;
 
 /// Multi-head attention layer
 #[allow(dead_code)]

@@ -49,6 +49,7 @@ pub struct Model {
     tenant_id: Option<String>,
     // NOTE: Memory64 support moved to realm-runtime::memory64_model
     // Use Memory64ModelLoader from realm-runtime for large model loading
+    // NOTE: LoRA integration is handled at runtime layer level via realm-runtime::lora
 }
 
 /// Transpose a matrix stored in row-major order

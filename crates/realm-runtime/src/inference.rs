@@ -64,6 +64,8 @@ pub struct InferenceSession {
     generated_tokens: Vec<u32>,
     /// Logits processor for sampling
     logits_processor: crate::sampling::LogitsProcessor,
+    /// Optional speculative decoding configuration
+    speculative_config: Option<crate::speculative::SpeculativeConfig>,
 }
 
 impl InferenceSession {
@@ -87,7 +89,17 @@ impl InferenceSession {
             stop_tokens: Vec::new(),
             generated_tokens: Vec::new(),
             logits_processor,
+            speculative_config: None,
         }
+    }
+
+    /// Enable speculative decoding with configuration
+    pub fn with_speculative_decoding(
+        mut self,
+        config: crate::speculative::SpeculativeConfig,
+    ) -> Self {
+        self.speculative_config = Some(config);
+        self
     }
 
     /// Set stop tokens for generation
