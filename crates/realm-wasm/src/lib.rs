@@ -339,7 +339,7 @@ impl Realm {
                 .map_err(|e| JsError::new(&format!("Failed to parse header again: {}", e)))?;
 
             model
-                .load_from_gguf(&mut tensor_loader, &mut parser)
+                .load_from_gguf(&mut tensor_loader, &mut parser, None, None)
                 .map_err(|e| JsError::new(&format!("Failed to load model weights: {}", e)))?;
 
             self.model = Some(model);
