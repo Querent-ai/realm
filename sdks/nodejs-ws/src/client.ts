@@ -21,7 +21,8 @@ export class RealmWebSocketClient {
   private ws: WebSocket | null = null;
   private url: string;
   private apiKey?: string;
-  private tenantId?: string;
+  private tenantId: string;
+  private model: string;
   private reconnect: boolean;
   private reconnectInterval: number;
   private timeout: number;
@@ -36,13 +37,39 @@ export class RealmWebSocketClient {
   private eventCallbacks: Map<string, EventCallback[]> = new Map();
   private errorCallbacks: ErrorCallback[] = [];
 
-  constructor(options: RealmClientOptions = {}) {
+  constructor(options: RealmClientOptions) {
+    if (!options.model) {
+      throw new Error("Model name or URL is required. Provide 'model' in options.");
+    }
+
     this.url = options.url || "ws://localhost:8080";
     this.apiKey = options.apiKey;
-    this.tenantId = options.tenantId;
+    this.model = options.model;
+    
+    // Auto-assign tenant ID if not provided
+    this.tenantId = options.tenantId || uuidv4();
+    
+    if (!options.tenantId) {
+      console.log(`Auto-assigned tenant ID: ${this.tenantId}`);
+    }
+
     this.reconnect = options.reconnect ?? true;
     this.reconnectInterval = options.reconnectInterval ?? 5000;
     this.timeout = options.timeout ?? 30000;
+  }
+
+  /**
+   * Get the current tenant ID (auto-assigned or provided)
+   */
+  getTenantId(): string {
+    return this.tenantId;
+  }
+
+  /**
+   * Get the model name/URL
+   */
+  getModel(): string {
+    return this.model;
   }
 
   /**
@@ -243,6 +270,7 @@ export class RealmWebSocketClient {
   async generate(options: GenerationOptions): Promise<GenerationResult> {
     const response = await this.callFunction("generate", {
       prompt: options.prompt,
+      model: this.model, // Include model in request
       max_tokens: options.max_tokens ?? 100,
       temperature: options.temperature ?? 0.7,
       stream: options.stream ?? false,

@@ -13,14 +13,19 @@ npm install @realm-ai/ws-client
 ```typescript
 import { RealmWebSocketClient } from "@realm-ai/ws-client";
 
+// Simple usage - model is required, tenant ID auto-assigned
 const client = new RealmWebSocketClient({
   url: "ws://localhost:8080",
+  model: "llama-2-7b", // Model name or URL (required)
   apiKey: "your-api-key", // Optional
-  tenantId: "my-tenant",  // Optional
+  // tenantId: "my-tenant",  // Optional - auto-assigned if not provided
 });
 
 // Connect
 await client.connect();
+
+// Get your auto-assigned tenant ID
+console.log("Tenant ID:", client.getTenantId());
 
 // Generate text
 const result = await client.generate({
@@ -49,15 +54,21 @@ client.disconnect();
 ### Constructor
 
 ```typescript
-new RealmWebSocketClient(options?: {
+new RealmWebSocketClient(options: {
+  model: string;                   // Model name or URL (required)
   url?: string;                    // WebSocket URL (default: "ws://localhost:8080")
   apiKey?: string;                 // API key for authentication
-  tenantId?: string;               // Tenant ID for multi-tenancy
+  tenantId?: string;               // Tenant ID - auto-assigned if not provided
   reconnect?: boolean;              // Auto-reconnect (default: true)
   reconnectInterval?: number;       // Reconnect interval in ms (default: 5000)
   timeout?: number;                // Request timeout in ms (default: 30000)
 })
 ```
+
+**Note:** The `model` parameter can be:
+- A model name (e.g., `"llama-2-7b"`) - resolved from common model directories
+- A file path (e.g., `"./models/tinyllama.gguf"`)
+- A URL (e.g., `"https://example.com/model.gguf"`) - URL download coming soon
 
 ### Methods
 

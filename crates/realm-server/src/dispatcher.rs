@@ -20,6 +20,10 @@ pub struct GenerateOptions {
     /// Input prompt
     pub prompt: String,
 
+    /// Model name or URL (optional - uses default if not provided)
+    #[serde(default)]
+    pub model: Option<String>,
+
     /// Maximum tokens to generate
     #[serde(default = "default_max_tokens")]
     pub max_tokens: usize,
@@ -205,7 +209,37 @@ impl FunctionDispatcher {
         info!("Dispatching function: {} (id: {})", call.function, call.id);
 
         match call.function.as_str() {
-            "generate" => self.handle_generate(call.params, call.tenant_id).await,
+            "generate" => {
+                self.handle_generate(call.params, call.tenant_id, None)
+                    .await
+            }
+            "pipeline" => self.handle_pipeline(call.params, call.tenant_id).await,
+            "health" => self.handle_health().await,
+            "metadata" => self.handle_metadata().await,
+            _ => Err(anyhow!("Unknown function: {}", call.function)),
+        }
+    }
+
+    /// Dispatch a function call with authenticated tenant ID (from API key)
+    pub async fn dispatch_with_auth(
+        &self,
+        call: FunctionCall,
+        authenticated_tenant_id: &str,
+    ) -> Result<DispatchResult> {
+        info!(
+            "Dispatching function: {} (id: {}) for authenticated tenant: {}",
+            call.function, call.id, authenticated_tenant_id
+        );
+
+        match call.function.as_str() {
+            "generate" => {
+                self.handle_generate(
+                    call.params,
+                    call.tenant_id,
+                    Some(authenticated_tenant_id.to_string()),
+                )
+                .await
+            }
             "pipeline" => self.handle_pipeline(call.params, call.tenant_id).await,
             "health" => self.handle_health().await,
             "metadata" => self.handle_metadata().await,
@@ -214,10 +248,12 @@ impl FunctionDispatcher {
     }
 
     /// Handle generate function
+    /// Priority: authenticated_tenant_id > client_tenant_id > auto-assigned
     async fn handle_generate(
         &self,
         params: serde_json::Value,
-        tenant_id: Option<String>,
+        client_tenant_id: Option<String>,
+        authenticated_tenant_id: Option<String>,
     ) -> Result<DispatchResult> {
         let options: GenerateOptions = serde_json::from_value(params)?;
 
@@ -228,8 +264,33 @@ impl FunctionDispatcher {
             options.stream
         );
 
-        // Use tenant_id or default for all paths
-        let tenant_id_str = tenant_id.as_deref().unwrap_or("default");
+        // Security priority: authenticated_tenant_id (from API key) > client_tenant_id > auto-assigned
+        let tenant_id_str = if let Some(ref auth_id) = authenticated_tenant_id {
+            // Highest priority: tenant ID from API key authentication (secure)
+            info!("Using authenticated tenant ID: {}", auth_id);
+            auth_id.as_str()
+        } else if let Some(ref client_id) = client_tenant_id {
+            // Medium priority: client-provided tenant ID (validate format)
+            warn!(
+                "Using client-provided tenant ID: {}. For production, use API key authentication.",
+                client_id
+            );
+            // Validate format
+            crate::runtime_manager::RuntimeManager::validate_tenant_id(client_id)?;
+            client_id.as_str()
+        } else {
+            // Lowest priority: auto-assigned (development/testing only)
+            warn!("No tenant ID provided, using 'default'. For production, use API key authentication.");
+            "default"
+        };
+
+        // If model is provided in options, use it
+        if let Some(ref model) = options.model {
+            if let Some(ref runtime_manager) = self.runtime_manager {
+                // Create/ensure runtime with the specified model
+                runtime_manager.get_or_create_runtime_with_model(tenant_id_str, model)?;
+            }
+        }
 
         // Check if orchestrator is available and has a default model
         // This allows using orchestrator for model routing
@@ -267,7 +328,7 @@ impl FunctionDispatcher {
         if let Some(ref runtime_manager) = self.runtime_manager {
             // Try to use actual WASM runtime
             let options_clone = options.clone();
-            let tenant_id_for_runtime = tenant_id.clone();
+            let tenant_id_for_runtime = Some(tenant_id_str.to_string());
             match self
                 .handle_generate_with_runtime(
                     runtime_manager.clone(),

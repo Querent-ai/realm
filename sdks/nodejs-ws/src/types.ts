@@ -77,11 +77,19 @@ export interface RuntimeMetadata {
 }
 
 export interface RealmClientOptions {
+  /** WebSocket server URL (default: "ws://localhost:8080") */
   url?: string;
+  /** API key for authentication (required for production) */
   apiKey?: string;
+  /** Model name or URL (e.g., "llama-2-7b", "https://example.com/model.gguf") */
+  model: string;
+  /** Tenant ID - auto-assigned if not provided */
   tenantId?: string;
+  /** Enable automatic reconnection (default: true) */
   reconnect?: boolean;
+  /** Reconnection interval in milliseconds (default: 5000) */
   reconnectInterval?: number;
+  /** Request timeout in milliseconds (default: 30000) */
   timeout?: number;
 }
 
