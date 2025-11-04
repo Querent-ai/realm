@@ -1,0 +1,22 @@
+# Simple Chat Pipeline
+# A basic single-model chat pipeline
+
+id: simple-chat
+name: Simple Chat Pipeline
+description: Basic chat interaction with a single model
+
+inputs:
+  message:
+    type: string
+    description: User message to send to the chat model
+    required: true
+
+steps:
+  - id: chat
+    name: Chat Response
+    model: llama-2-7b-chat
+    input: "input"
+    output: response
+
+outputs:
+  response: response

@@ -8,6 +8,7 @@ members = [
     "crates/realm-wasm",
     "crates/realm-node",
     "crates/realm-metrics",
+    "crates/realm-server",
     "cli",
     "examples/simple-realm-test",
     "examples/multi-tenant",
@@ -16,6 +17,7 @@ members = [
     "examples/memory64-demo",
     "examples/metrics-demo",
     "examples/wasm-host-runner",
+    "examples/websocket-server",
 ]
 
 resolver = "2"
@@ -36,6 +38,7 @@ realm-compute-gpu = { path = "crates/realm-compute-gpu" }
 realm-runtime = { path = "crates/realm-runtime" }
 realm-wasm = { path = "crates/realm-wasm" }
 realm-metrics = { path = "crates/realm-metrics" }
+realm-server = { path = "crates/realm-server" }
 
 # Core dependencies
 bytemuck = { version = "1.14", features = ["derive"] }
