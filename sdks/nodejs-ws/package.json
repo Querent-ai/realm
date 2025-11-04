@@ -1,0 +1,32 @@
+{
+  "name": "@realm-ai/ws-client",
+  "version": "0.1.0",
+  "description": "WebSocket client SDK for Realm.ai multi-tenant LLM inference server",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node dist/examples/basic.js"
+  },
+  "keywords": [
+    "realm",
+    "llm",
+    "inference",
+    "websocket",
+    "multi-tenant"
+  ],
+  "author": "Realm.ai",
+  "license": "MIT OR Apache-2.0",
+  "dependencies": {
+    "ws": "^8.16.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/ws": "^8.5.10",
+    "@types/uuid": "10.0.0",
+    "typescript": "^5.3.3"
+  }
+}
+
