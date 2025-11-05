@@ -86,9 +86,7 @@ impl Default for DistributedConfig {
 /// Distributed inference coordinator
 pub struct DistributedCoordinator {
     config: DistributedConfig,
-    #[allow(dead_code)] // Used in rank() calculation (TODO)
     node_id: String,
-    #[allow(dead_code)] // Used in rank() calculation (TODO)
     gpu_id: usize,
 }
 

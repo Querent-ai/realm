@@ -14,7 +14,6 @@ use crate::GpuBackendTrait;
 pub struct CandleGpuBackend {
     device: Device,
     /// Mixed precision configuration (optional)
-    #[allow(dead_code)]
     precision_config: Option<crate::mixed_precision::MixedPrecisionConfig>,
 }
 

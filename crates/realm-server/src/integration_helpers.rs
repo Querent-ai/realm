@@ -48,7 +48,7 @@ pub fn load_draft_model_if_configured(
         
         let cursor = Cursor::new(&model_bytes);
         let mut parser = GGUFParser::new(cursor);
-        let meta = parser.parse_header()
+        parser.parse_header()
             .context("Failed to parse draft model GGUF header")?;
         
         // Extract config
