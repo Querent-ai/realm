@@ -14,6 +14,18 @@ pub use candle_backend::CandleGpuBackend;
 pub mod gpu_backend_trait;
 pub use gpu_backend_trait::GpuBackendTrait;
 
+// Export advanced GPU features
+pub mod distributed;
+pub mod fused_kernels;
+pub mod mixed_precision;
+
+pub use distributed::{
+    create_model_shards, DistributedConfig, DistributedCoordinator, DistributionStrategy,
+    GpuDevice, ModelShardConfig, NodeInfo,
+};
+pub use fused_kernels::{FusedKernelConfig, Precision};
+pub use mixed_precision::{MixedPrecisionConfig, PrecisionMode};
+
 /// GPU backend for accelerated inference
 pub struct GpuBackend {
     device: wgpu::Device,
