@@ -83,6 +83,8 @@ impl ModelSpec {
             config: ModelConfig {
                 model_path,
                 model_id,
+                draft_model_path: None,
+                draft_model_id: None,
             },
         }
     }

@@ -673,6 +673,8 @@ async fn cmd_serve(
     // Set default model
     let model_id = "default".to_string();
     runtime_manager.set_default_model(ModelConfig {
+        draft_model_path: None,
+        draft_model_id: None,
         model_path: model_path.clone(),
         model_id: model_id.clone(),
     });

@@ -19,6 +19,12 @@ pub struct ModelConfig {
 
     /// Model ID for reference
     pub model_id: String,
+
+    /// Optional draft model path for speculative decoding
+    pub draft_model_path: Option<PathBuf>,
+
+    /// Optional draft model ID for speculative decoding
+    pub draft_model_id: Option<String>,
 }
 
 /// WASM runtime instance for a tenant
@@ -40,6 +46,9 @@ pub struct TenantRuntime {
 
     /// Optional LoRA adapter ID for this tenant
     lora_adapter_id: Option<String>,
+
+    /// Optional draft model configuration for speculative decoding
+    draft_model_config: Option<ModelConfig>,
 }
 
 impl TenantRuntime {
@@ -83,6 +92,7 @@ impl TenantRuntime {
             model_config: None,
             tenant_id,
             lora_adapter_id: None,
+            draft_model_config: None,
         })
     }
 
@@ -230,6 +240,11 @@ impl TenantRuntime {
     pub fn host_context(&self) -> &HostContext {
         &self.host_context
     }
+
+    /// Get draft model configuration (if configured for speculative decoding)
+    pub fn draft_model_config(&self) -> Option<&ModelConfig> {
+        self.draft_model_config.as_ref()
+    }
 }
 
 /// Runtime manager for multiple tenants
@@ -287,6 +302,12 @@ impl RuntimeManager {
     /// Set default model configuration
     pub fn set_default_model(&mut self, config: ModelConfig) {
         info!("Set default model: {:?}", config.model_path);
+        if let Some(ref draft_path) = config.draft_model_path {
+            info!(
+                "Draft model configured for speculative decoding: {:?}",
+                draft_path
+            );
+        }
         self.default_model = Some(config);
     }
 
@@ -342,6 +363,19 @@ impl RuntimeManager {
                 // Load default model if configured
                 if let Some(ref model_config) = self.default_model {
                     runtime.load_model(model_config.clone())?;
+
+                    // Store draft model config if available
+                    if let Some(ref draft_path) = model_config.draft_model_path {
+                        runtime.draft_model_config = Some(ModelConfig {
+                            model_path: draft_path.clone(),
+                            model_id: model_config
+                                .draft_model_id
+                                .clone()
+                                .unwrap_or_else(|| format!("{}_draft", model_config.model_id)),
+                            draft_model_path: None,
+                            draft_model_id: None,
+                        });
+                    }
                 }
 
                 // Insert atomically
@@ -413,8 +447,27 @@ impl RuntimeManager {
                 let model_config = ModelConfig {
                     model_path: model_path.clone(),
                     model_id: model.to_string(),
+                    draft_model_path: None,
+                    draft_model_id: None,
                 };
-                runtime.load_model(model_config)?;
+                runtime.load_model(model_config.clone())?;
+
+                // Check if draft model is configured for speculative decoding
+                if let Some(ref draft_path) = model_config.draft_model_path {
+                    info!(
+                        "Draft model configured for speculative decoding: {:?}",
+                        draft_path
+                    );
+                    runtime.draft_model_config = Some(ModelConfig {
+                        model_path: draft_path.clone(),
+                        model_id: model_config
+                            .draft_model_id
+                            .clone()
+                            .unwrap_or_else(|| format!("{}_draft", model)),
+                        draft_model_path: None,
+                        draft_model_id: None,
+                    });
+                }
 
                 // Set LoRA adapter if configured for this tenant
                 let tenant_adapters = self.tenant_lora_adapters.lock().unwrap();
@@ -610,6 +663,8 @@ mod tests {
         let config = ModelConfig {
             model_path: PathBuf::from("/path/to/model.gguf"),
             model_id: "test-model".to_string(),
+            draft_model_path: None,
+            draft_model_id: None,
         };
 
         assert_eq!(config.model_id, "test-model");

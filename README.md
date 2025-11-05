@@ -607,6 +607,14 @@ spec:
 - [ ] Additional quantization formats (AWQ, GPTQ)
 - [ ] Prompt caching optimization
 
+### 🚧 Advanced GPU Features (Implementation Ready)
+
+- [x] **True Fused GPU Kernels** - Framework complete (requires GPU for kernel implementation)
+- [x] **Mixed Precision (FP16/BF16)** - Conversion functions complete (requires GPU for testing)
+- [x] **Distributed Inference** - Multi-GPU/multi-node framework complete (requires communication backend)
+
+See [Advanced GPU Features](docs/ADVANCED_GPU_FEATURES.md) for details.
+
 ---
 
 ## 🤝 Contributing

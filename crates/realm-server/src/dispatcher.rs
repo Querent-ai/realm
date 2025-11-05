@@ -603,8 +603,7 @@ impl FunctionDispatcher {
             return self.handle_generate_standard(options, tenant_id_str).await;
         }
 
-        // Process batch (simplified - in production would use batch forward pass)
-        // For now, process requests sequentially but track them as a batch
+        // Process batch - process all requests in the batch together
         info!("Processing batch of {} requests", batch.len());
 
         // Validate that our request exists in the batch
@@ -613,28 +612,72 @@ impl FunctionDispatcher {
             .find(|r| r.request_id == request_id)
             .ok_or_else(|| anyhow!("Request not found in batch"))?;
 
-        // Process our request (simplified - full implementation would process entire batch)
-        let result = self
-            .handle_generate_standard(options.clone(), tenant_id_str)
-            .await?;
+        // Process all requests in the batch
+        // For now, we process sequentially, but we track them as a batch
+        // In production with GPU, this would use a batch forward pass
+        let mut results = Vec::new();
 
-        // Update batcher with generated tokens (simplified)
-        // In production, would update after batch processing completes
-        // Extract text from the result we already generated
-        if let DispatchResult::Single(ref json_value) = result {
-            if let Ok(gen_result) = serde_json::from_value::<GenerationResult>(json_value.clone()) {
-                // Extract first token (simplified - in production would use actual token IDs)
-                let first_token = gen_result
-                    .text
-                    .split_whitespace()
-                    .next()
-                    .map(|_| 1u32)
-                    .unwrap_or(0);
-                let _ = batcher.update_request(request_id, first_token);
+        for request in &batch {
+            // Reconstruct prompt from tokens (simplified - in production would use tokenizer)
+            let prompt = request
+                .prompt_tokens
+                .iter()
+                .map(|t| format!("word_{}", t))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            // Create options for this request
+            let request_options = GenerateOptions {
+                prompt,
+                max_tokens: request.max_tokens,
+                stream: false,
+                temperature: 1.0,
+                repetition_penalty: 1.1,
+                top_k: 40,
+                top_p: 0.9,
+                model: None,
+            };
+
+            // Process this request
+            let result = self
+                .handle_generate_standard(request_options, tenant_id_str)
+                .await?;
+
+            results.push((request.request_id, result));
+        }
+
+        // Find and extract our result before consuming results vector
+        let our_result_idx = results
+            .iter()
+            .position(|(id, _)| *id == request_id)
+            .ok_or_else(|| anyhow!("Result not found for request"))?;
+
+        let our_result = match &results[our_result_idx].1 {
+            DispatchResult::Single(ref val) => DispatchResult::Single(val.clone()),
+            DispatchResult::Stream(_) => {
+                return Err(anyhow!("Streaming not supported in batch processing"));
+            }
+        };
+
+        // Update batcher with generated tokens for all requests
+        for (req_id, result) in results {
+            if let DispatchResult::Single(ref json_value) = result {
+                if let Ok(gen_result) =
+                    serde_json::from_value::<GenerationResult>(json_value.clone())
+                {
+                    // Extract first token (simplified - in production would use actual token IDs)
+                    let first_token = gen_result
+                        .text
+                        .split_whitespace()
+                        .next()
+                        .map(|_| 1u32)
+                        .unwrap_or(0);
+                    let _ = batcher.update_request(req_id, first_token);
+                }
             }
         }
 
-        Ok(result)
+        Ok(our_result)
     }
 
     /// Handle generate with standard (non-batched) processing

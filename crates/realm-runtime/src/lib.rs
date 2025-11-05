@@ -56,6 +56,7 @@ pub mod batching;
 
 // LoRA adapter support for per-tenant fine-tuning
 pub mod lora;
+pub mod lora_integration;
 
 // Speculative decoding for 2-3x speedup
 pub mod speculative;
