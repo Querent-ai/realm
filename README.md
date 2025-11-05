@@ -159,7 +159,8 @@ cargo run --release -p paris-generation \
 ```
 
 **Expected output:**
-```
+
+```txt
 ✅ Response: The capital of France is Paris.
 ✅ Input tokens: 40, Output tokens: 7
 ✅ Total time: 1.2s
@@ -241,7 +242,7 @@ print(result['text'])  # "Paris"
 | **Speculative Decoding** | 🟡 Beta | Framework integrated |
 | **Metrics** | 🟡 Beta | Prometheus export |
 
-**Overall Production Readiness: 9.4/10**
+#### **Overall Production Readiness: 9.4/10**
 
 See [Production Readiness Audit](docs/PRODUCTION_READINESS_AUDIT.md) for detailed assessment.
 
@@ -503,14 +504,16 @@ make check
 
 ### GPU Configuration
 
-**CUDA (NVIDIA)**
+#### **CUDA (NVIDIA)**
+
 ```bash
 export CUDA_COMPUTE_CAP=75  # RTX 2080, T4
 export CUDA_COMPUTE_CAP=80  # A100
 cargo build --release --features cuda
 ```
 
-**Metal (Apple)**
+#### **Metal (Apple)**
+
 ```bash
 export METAL_PERFORMANCE=high
 cargo build --release --features metal
@@ -616,24 +619,67 @@ spec:
 
 See [Advanced GPU Features](docs/ADVANCED_GPU_FEATURES.md) for details.
 
+---
+
+## 🎯 Vision & Future Roadmap
+
+### 🖥️ Desktop Application
+
+**Tauri Standalone App** - Cross-platform desktop application for local inference
+
+- Native GUI with model management
+- Local inference without server setup
+- Model browser and marketplace integration
+- Resource monitoring and optimization
+- **Status**: Planned
+
+### ☁️ Infrastructure & Deployment
+
+#### Terraform Modules
+
+- AWS deployment (EC2, ECS, EKS)
+- GCP deployment (GCE, GKE)
+- Azure deployment (VM, AKS)
+- Multi-cloud configurations
+- **Status**: Planned
+
+#### Helm Charts
+
+- Kubernetes deployment templates
+- Auto-scaling configurations
+- Multi-tenant resource management
+- GPU node scheduling
+- **Status**: Planned
+
+#### Docker & Orchestration
+
+- Docker Compose for local development
+- Production-ready container images
+- Multi-service orchestration
+- **Status**: Planned
+
 ### 📋 Planned Features
 
 #### API & Infrastructure
+
 - [ ] HTTP REST API (OpenAI-compatible endpoints)
 - [ ] Web dashboard (Grafana/custom UI)
 - [ ] Server-Sent Events (SSE) for HTTP streaming
 
 #### SDKs & Clients
+
 - [ ] Go SDK (WebSocket client)
 - [ ] Additional quantization formats (AWQ, GPTQ)
 
 #### Desktop & Deployment
+
 - [ ] **Tauri Desktop App** - Standalone GUI application for local inference
 - [ ] **Terraform Modules** - Infrastructure as Code for cloud deployment
 - [ ] **Helm Charts** - Kubernetes deployment templates
 - [ ] **Docker Compose** - Multi-service local development setup
 
 #### Optimization & Features
+
 - [ ] Prompt caching optimization
 - [ ] Advanced model quantization (AWQ, GPTQ)
 - [ ] Multi-model pipeline DSL enhancements
@@ -699,7 +745,7 @@ Built with production-grade Rust and inspired by:
 
 - **Discord**: [Join our community](https://discord.gg/querent)
 - **Twitter**: [@querent_ai](https://twitter.com/querent_ai)
-- **Email**: contact@querent.xyz
+- **Email**: <contact@querent.xyz>
 - **GitHub**: [Issues](https://github.com/querent-ai/realm/issues) • [Discussions](https://github.com/querent-ai/realm/discussions)
 
 ---
