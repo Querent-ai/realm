@@ -1,0 +1,5 @@
+# Paris Generation Example - Python WebSocket SDK
+# Install the Realm Python SDK from the parent directory
+
+-e ../../../sdks/python-ws
+

@@ -1,0 +1,47 @@
+🚀 Realm Paris Generation - Python SDK
+
+Auto-assigned tenant ID: 290b218a-fd04-47b0-b8b1-e5d366e7ea98
+📡 Connecting to Realm server...
+✅ Connected!
+
+🏥 Checking server health...
+❌ Error: 'ClientConnection' object has no attribute 'closed'
+Traceback (most recent call last):
+  File "/home/puneet/realm/examples/paris/python-sdk/main.py", line 34, in main
+    health = await client.health()
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/puneet/realm/sdks/python-ws/realm/client.py", line 299, in health
+    response = await self._call_function("health", {})
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/puneet/realm/sdks/python-ws/realm/client.py", line 192, in _call_function
+    if not self._ws or self._ws.closed:
+                       ^^^^^^^^^^^^^^^
+AttributeError: 'ClientConnection' object has no attribute 'closed'. Did you mean: 'close'?
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/puneet/realm/examples/paris/python-sdk/main.py", line 73, in main
+    sys.exit(1)
+SystemExit: 1
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/puneet/realm/examples/paris/python-sdk/main.py", line 80, in <module>
+    asyncio.run(main())
+  File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/base_events.py", line 687, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/home/puneet/realm/examples/paris/python-sdk/main.py", line 75, in main
+    await client.disconnect()
+  File "/home/puneet/realm/sdks/python-ws/realm/client.py", line 349, in disconnect
+    if self._ws and not self._ws.closed:
+                        ^^^^^^^^^^^^^^^
+AttributeError: 'ClientConnection' object has no attribute 'closed'. Did you mean: 'close'?

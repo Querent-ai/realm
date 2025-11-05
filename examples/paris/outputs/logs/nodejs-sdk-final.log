@@ -1,0 +1,14 @@
+🚀 Realm Paris Generation - Node.js SDK
+
+Auto-assigned tenant ID: 044c5c38-1483-4913-88b3-ee828920397a
+📡 Connecting to Realm server...
+Connected to Realm server
+✅ Connected!
+
+🏥 Checking server health...
+   Status: healthy
+
+🎯 Generating response to: "What is the capital of France?"
+   (Expected: "Paris")
+
+❌ Error: Failed to instantiate WASM module

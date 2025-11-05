@@ -168,13 +168,15 @@ impl InferenceSession {
     /// This is the real inference method that uses the transformer model.
     ///
     /// # Arguments
-    /// * `model` - The transformer model to use for inference
+    /// * `model` - The transformer model to use for inference (target model)
+    /// * `draft_model` - Optional draft model for speculative decoding
     ///
     /// # Returns
     /// Next token ID, or None if generation is complete
     pub fn next_token_with_model(
         &mut self,
         model: &mut realm_models::Model,
+        draft_model: Option<&mut realm_models::Model>,
     ) -> Result<Option<u32>> {
         // Check if already complete
         if self.is_complete() {
@@ -196,8 +198,36 @@ impl InferenceSession {
         let mut input_tokens = self.prompt_tokens.clone();
         input_tokens.extend_from_slice(&self.generated_tokens);
 
-        // Run model forward pass
-        let logits = model.forward(&input_tokens, input_tokens.len() - 1)?;
+        // Use speculative decoding if enabled and draft model is available
+        // Clone config only when needed to avoid borrow checker issues
+        let (logits, pre_accepted_tokens) = if let Some(ref config) = self.speculative_config {
+            if let Some(draft) = draft_model {
+                // Speculative decoding: draft model generates tokens, target model verifies
+                // Clone config to avoid borrow issues when calling &mut self method
+                let config = config.clone();
+                self.speculative_decode_step(&input_tokens, draft, model, &config)?
+            } else {
+                // Speculative decoding enabled but no draft model, fall back to standard
+                let logits = model.forward(&input_tokens, input_tokens.len() - 1)?;
+                (logits, Vec::new())
+            }
+        } else {
+            // Standard inference
+            let logits = model.forward(&input_tokens, input_tokens.len() - 1)?;
+            (logits, Vec::new())
+        };
+
+        // If speculative decoding accepted tokens, add them to generated tokens
+        for token in &pre_accepted_tokens {
+            // Check stop tokens before adding
+            if self.stop_tokens.contains(token) {
+                self.state = GenerationState::Stopped;
+                return Ok(None);
+            }
+            self.token_buffer.push_back(*token);
+            self.generated_tokens.push(*token);
+            self.tokens_generated += 1;
+        }
 
         // Extract logits for last position
         let vocab_size = model.config.vocab_size;
@@ -255,6 +285,87 @@ impl InferenceSession {
     /// Get prompt tokens
     pub fn prompt_tokens(&self) -> &[u32] {
         &self.prompt_tokens
+    }
+
+    /// Perform one step of speculative decoding
+    ///
+    /// Algorithm:
+    /// 1. Draft model generates k tokens quickly
+    /// 2. Target model verifies draft tokens
+    /// 3. Accept tokens until first rejection
+    ///
+    /// Returns: (final_logits, accepted_tokens)
+    fn speculative_decode_step(
+        &mut self,
+        input_tokens: &[u32],
+        draft_model: &mut realm_models::Model,
+        target_model: &mut realm_models::Model,
+        config: &crate::speculative::SpeculativeConfig,
+    ) -> Result<(Vec<f32>, Vec<u32>)> {
+        // Step 1: Draft model generates k tokens
+        let draft_k = config.draft_k.min(config.max_draft_tokens);
+        let mut draft_tokens = Vec::new();
+        let mut current_input = input_tokens.to_vec();
+
+        // Generate draft tokens using draft model
+        for _ in 0..draft_k {
+            if current_input.len() >= 2048 {
+                break; // Prevent sequence length overflow
+            }
+
+            let logits = draft_model.forward(&current_input, current_input.len() - 1)?;
+            let vocab_size = draft_model.config.vocab_size;
+            let mut last_logits = logits[logits.len() - vocab_size..].to_vec();
+
+            // Sample token from draft model
+            let token_id = self
+                .logits_processor
+                .sample(&mut last_logits)
+                .map_err(realm_core::error::Error::ParseError)?;
+
+            draft_tokens.push(token_id);
+            current_input.push(token_id);
+        }
+
+        if draft_tokens.is_empty() {
+            // No draft tokens generated, fall back to target model
+            let logits = target_model.forward(input_tokens, input_tokens.len() - 1)?;
+            return Ok((logits, Vec::new()));
+        }
+
+        // Step 2: Target model verifies draft tokens
+        // We verify by checking if target model would generate the same tokens
+        // For simplicity, we verify one token at a time
+        let mut accepted_tokens = Vec::new();
+        let mut verify_input = input_tokens.to_vec();
+
+        for draft_token in &draft_tokens {
+            // Get target model's prediction for this position
+            let target_logits = target_model.forward(&verify_input, verify_input.len() - 1)?;
+            let vocab_size = target_model.config.vocab_size;
+            let mut last_logits = target_logits[target_logits.len() - vocab_size..].to_vec();
+
+            // Sample from target model
+            let target_token = self
+                .logits_processor
+                .sample(&mut last_logits)
+                .map_err(realm_core::error::Error::ParseError)?;
+
+            if target_token == *draft_token {
+                // Draft token accepted
+                accepted_tokens.push(*draft_token);
+                verify_input.push(*draft_token);
+            } else {
+                // Draft token rejected, use target model's token
+                accepted_tokens.push(target_token);
+                verify_input.push(target_token);
+                break; // Stop after first rejection
+            }
+        }
+
+        // Step 3: Return logits for the next token and accepted tokens
+        let final_logits = target_model.forward(&verify_input, verify_input.len() - 1)?;
+        Ok((final_logits, accepted_tokens))
     }
 }
 

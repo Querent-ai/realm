@@ -89,7 +89,7 @@ impl WasmModel {
             .map_err(|e| JsValue::from_str(&format!("Failed to re-parse: {}", e)))?;
 
         model
-            .load_from_gguf(&mut tensor_loader, &mut parser)
+            .load_from_gguf(&mut tensor_loader, &mut parser, None, None)
             .map_err(|e| JsValue::from_str(&format!("Failed to load weights: {}", e)))?;
 
         web_sys::console::log_1(&"✅ Browser model loaded successfully!".into());

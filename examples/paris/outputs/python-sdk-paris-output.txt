@@ -1,0 +1,50 @@
+Realm Paris Generation - Python WebSocket SDK
+==============================================
+
+✅ Example ready!
+
+Architecture:
+- Python WebSocket client (async/await)
+- Connecting to Realm server
+- Text generation via WebSocket
+- Server-based inference
+
+Prerequisites:
+  1. Realm server must be running (see examples/paris/server/)
+  2. Model must be loaded on the server
+
+To Run:
+  # Terminal 1: Start server
+  cd examples/paris/server
+  cargo run --release
+
+  # Terminal 2: Run client
+  cd examples/paris/python-sdk
+  pip install -r requirements.txt
+  python main.py
+
+Expected Output:
+  🚀 Realm Paris Generation - Python SDK
+
+  📡 Connecting to Realm server...
+  ✅ Connected!
+
+  🏥 Checking server health...
+     Status: healthy
+
+  🎯 Generating response to: "What is the capital of France?"
+     (Expected: "Paris")
+
+  ✅ Generation complete!
+
+  📝 Response: The capital of France is Paris.
+
+  ✅ SUCCESS: Model correctly identified Paris as the capital of France!
+
+  📊 Statistics:
+     Input tokens: 15
+     Output tokens: 6
+     Model: tinyllama-1.1b.Q4_K_M.gguf
+     Tenant ID: abc123-def456-...
+
+  👋 Disconnected

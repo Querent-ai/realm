@@ -279,10 +279,21 @@ impl Model {
     }
 
     /// Load weights from GGUF tensors
+    ///
+    /// # Arguments
+    /// * `tensor_loader` - Tensor loader for reading GGUF tensors
+    /// * `parser` - GGUF parser
+    /// * `lora_manager` - Optional LoRA manager (type-erased to avoid circular dependency)
+    /// * `lora_adapter_id` - Optional LoRA adapter ID to apply
+    ///
+    /// Note: LoRA application is currently a placeholder. For full LoRA support,
+    /// apply adapters after loading via realm-runtime's LoRAManager.
     pub fn load_from_gguf<R: std::io::Read + std::io::Seek>(
         &mut self,
         tensor_loader: &mut realm_core::tensor_loader::TensorLoader,
         parser: &mut realm_core::formats::gguf::GGUFParser<R>,
+        _lora_manager: Option<&dyn std::any::Any>, // LoRAManager (type-erased to avoid dependency)
+        _lora_adapter_id: Option<&str>,
     ) -> Result<()> {
         use realm_core::error::Error;
 
@@ -407,6 +418,7 @@ impl Model {
             };
 
             if let Ok(wq) = tensor_loader.load_tensor(&wq_name, parser) {
+                // LoRA application happens post-loading in realm-runtime layer
                 // Use GGUF weights directly - no transpose needed
                 // matmul_transposed will handle the orientation efficiently
                 layer.attention_weights.wq = crate::weight_format::WeightFormat::F32(wq.to_vec());
@@ -421,6 +433,7 @@ impl Model {
                 warn!("Failed to load {}", wq_name);
             }
             if let Ok(wk) = tensor_loader.load_tensor(&wk_name, parser) {
+                // LoRA application happens post-loading in realm-runtime layer
                 // Use GGUF weights directly - no transpose needed
                 // matmul_transposed will handle the orientation efficiently
                 layer.attention_weights.wk = crate::weight_format::WeightFormat::F32(wk.to_vec());
@@ -435,6 +448,7 @@ impl Model {
                 warn!("Failed to load {}", wk_name);
             }
             if let Ok(wv) = tensor_loader.load_tensor(&wv_name, parser) {
+                // LoRA application happens post-loading in realm-runtime layer
                 // Use GGUF weights directly - no transpose needed
                 // matmul_transposed will handle the orientation efficiently
                 layer.attention_weights.wv = crate::weight_format::WeightFormat::F32(wv.to_vec());
@@ -449,6 +463,7 @@ impl Model {
                 warn!("Failed to load {}", wv_name);
             }
             if let Ok(wo) = tensor_loader.load_tensor(&wo_name, parser) {
+                // LoRA application happens post-loading in realm-runtime layer
                 layer.attention_weights.wo = crate::weight_format::WeightFormat::F32(wo.to_vec());
                 if log::log_enabled!(log::Level::Debug) {
                     if let crate::weight_format::WeightFormat::F32(ref data) =
@@ -478,6 +493,7 @@ impl Model {
             let ffn_down_name = format!("blk.{}.ffn_down.weight", layer_idx);
 
             if let Ok(gate) = tensor_loader.load_tensor(&ffn_gate_name, parser) {
+                // LoRA application happens post-loading in realm-runtime layer
                 // Lazy allocation: Allocate if empty
                 if layer.ffn_weights.w_gate.is_empty() {
                     layer.ffn_weights.w_gate = vec![0.0; gate.len()];
@@ -485,6 +501,7 @@ impl Model {
                 layer.ffn_weights.w_gate.copy_from_slice(gate);
             }
             if let Ok(up) = tensor_loader.load_tensor(&ffn_up_name, parser) {
+                // LoRA application happens post-loading in realm-runtime layer
                 // Lazy allocation: Allocate if empty
                 if layer.ffn_weights.w_up.is_empty() {
                     layer.ffn_weights.w_up = vec![0.0; up.len()];
@@ -492,6 +509,7 @@ impl Model {
                 layer.ffn_weights.w_up.copy_from_slice(up);
             }
             if let Ok(down) = tensor_loader.load_tensor(&ffn_down_name, parser) {
+                // LoRA application happens post-loading in realm-runtime layer
                 // Lazy allocation: Allocate if empty
                 if layer.ffn_weights.w_down.is_empty() {
                     layer.ffn_weights.w_down = vec![0.0; down.len()];

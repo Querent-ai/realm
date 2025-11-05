@@ -89,7 +89,7 @@ impl Memory64ModelLoader {
         parser: &mut GGUFParser<R>,
     ) -> Result<Model> {
         let mut model = Model::new(self.config.clone());
-        model.load_from_gguf(tensor_loader, parser)?;
+        model.load_from_gguf(tensor_loader, parser, None, None)?;
         Ok(model)
     }
 
@@ -119,7 +119,7 @@ impl Memory64ModelLoader {
         //
         // For now, we'll load weights normally but mark the model for Memory64 usage.
         // The caller should call store_model_weights_to_memory64() after getting a Store.
-        model.load_from_gguf(tensor_loader, parser)?;
+        model.load_from_gguf(tensor_loader, parser, None, None)?;
 
         // Note: To actually store weights in Memory64, call:
         //   loader.store_model_weights_to_memory64(&mut store, &model)?;

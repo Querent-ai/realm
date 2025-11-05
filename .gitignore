@@ -49,3 +49,4 @@ data/
 bindings/js/llama-2-7b-chat.Q4_K_M.gguf
 **/*.pyc
 __pycache__/
+**/*.patch

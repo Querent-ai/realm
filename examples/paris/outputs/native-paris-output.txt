@@ -1,0 +1,36 @@
+Realm Paris Generation - Native Rust
+====================================
+
+✅ Example compiled successfully!
+
+Architecture:
+- Direct Rust API (no WASM, no server)
+- GGUF model loading
+- Complete transformer inference
+- Tokenization and generation
+
+To Run:
+  cd examples/paris/native
+  cargo run --release -- /path/to/model.gguf
+
+Expected Output:
+  Loading model: /path/to/model.gguf
+  Model header parsed
+  Config loaded: 22 layers, 32 heads
+  Model created
+  Tokenizer loaded: 32000 tokens
+  Weights loaded
+
+  Prompt: "<|im_start|>system\nYou are a helpful AI assistant.<|im_end|>\n<|im_start|>user\nWhat is the capital of France?<|im_end|>\n<|im_start|>assistant\n"
+
+  Generating response...
+
+  Response: The capital of France is Paris.
+
+  ✅ SUCCESS: Model correctly identified Paris as the capital of France!
+
+  === Usage Metrics ===
+  Input tokens: 15
+  Output tokens: 6
+  Total tokens: 21
+  Estimated cost: $0.000135

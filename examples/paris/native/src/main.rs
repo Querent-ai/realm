@@ -1,8 +1,10 @@
-//! Paris Generation Example
+//! Paris Generation Example - Native Rust
 //!
-//! This example demonstrates complete end-to-end inference:
+//! This example demonstrates complete end-to-end inference using Realm's native Rust API:
 //! - Question: "What is the capital of France?"
 //! - Expected Answer: "Paris"
+//!
+//! This is the simplest way to use Realm - direct Rust API with no WASM.
 
 use anyhow::Result;
 use realm_core::{GGUFParser, TensorLoader, Tokenizer};
@@ -10,21 +12,17 @@ use realm_metrics::{CostConfig, UsageTracker};
 use std::fs::File;
 use std::io::BufReader;
 
-// Import from realm-models crate
-use realm_models::GenerationConfig;
-use realm_models::Model;
-use realm_models::TransformerConfig;
+use realm_models::{GenerationConfig, Model, TransformerConfig};
 
 fn main() -> Result<()> {
-    // Initialize logger (RUST_LOG=info for INFO level, =debug for DEBUG level)
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    log::info!("Realm Paris Generation Example");
-    log::info!("===================================\n");
+    log::info!("Realm Paris Generation - Native Rust");
+    log::info!("====================================\n");
 
     // Use first arg or default model path
     let model_path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "../models/tinyllama-1.1b.Q4_K_M.gguf".to_string());
+        .unwrap_or_else(|| "../../models/tinyllama-1.1b.Q4_K_M.gguf".to_string());
 
     log::info!("Loading model: {}", model_path);
 
@@ -35,8 +33,7 @@ fn main() -> Result<()> {
     let meta = parser.parse_header()?;
 
     log::info!("Model header parsed");
-    log::debug!("Version: {}", meta.version);
-    log::debug!("Tensors: {}", meta.tensor_count);
+    log::debug!("Version: {}, Tensors: {}", meta.version, meta.tensor_count);
 
     // Extract configuration
     let config_data = parser
@@ -75,15 +72,15 @@ fn main() -> Result<()> {
     model.load_from_gguf(&mut tensor_loader, &mut parser, None, None)?;
     log::info!("Weights loaded\n");
 
-    // Setup usage tracking (optional - for cost/billing analytics)
-    let cost_config = CostConfig::simple(3.0, 15.0); // $3/M input, $15/M output
+    // Setup usage tracking (optional)
+    let cost_config = CostConfig::simple(3.0, 15.0);
     let tracker = UsageTracker::new(cost_config);
     model.set_usage_tracker(tracker);
     model.set_model_name("tinyllama-1.1b-q4");
     model.set_tenant_id("demo-user");
     log::info!("Usage tracking enabled\n");
 
-    // Use ChatML template like wasm-chord for correct behavior
+    // Use ChatML template
     use realm_runtime::{ChatMessage, ChatTemplate};
     let template = ChatTemplate::ChatML;
     let conversation = vec![
@@ -93,7 +90,7 @@ fn main() -> Result<()> {
     let prompt = template.format(&conversation)?;
     log::info!("Prompt: \"{}\"\n", prompt);
 
-    // Generation config - match wasm-chord exactly
+    // Generation config - deterministic for testing
     let gen_config = GenerationConfig {
         max_tokens: 20,
         temperature: 0.0, // Greedy for deterministic output
@@ -109,9 +106,9 @@ fn main() -> Result<()> {
 
     // Check if response contains "Paris"
     if response.to_lowercase().contains("paris") {
-        log::info!("SUCCESS: Model correctly identified Paris as the capital of France!");
+        log::info!("✅ SUCCESS: Model correctly identified Paris as the capital of France!");
     } else {
-        log::warn!("Expected 'Paris' in response, got: {}", response);
+        log::warn!("⚠️  Expected 'Paris' in response, got: {}", response);
     }
 
     // Display usage metrics
@@ -122,8 +119,6 @@ fn main() -> Result<()> {
         log::info!("Output tokens: {}", total.total_output_tokens);
         log::info!("Total tokens: {}", total.total_tokens);
         log::info!("Estimated cost: ${:.6}", total.estimated_cost);
-        log::info!("Requests: {}", total.request_count);
-        log::info!("Avg tokens/request: {:.1}", total.avg_tokens_per_request);
     }
 
     Ok(())

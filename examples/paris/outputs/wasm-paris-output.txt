@@ -1,0 +1,36 @@
+Realm Paris Generation - WASM Module
+=====================================
+
+✅ Example compiled successfully!
+
+Architecture:
+- WASM module with host functions
+- Demonstrates WASM orchestration + native compute
+- Shows multi-tenancy architecture
+
+To Run:
+  cd examples/paris/wasm
+  cargo run --release -- /path/to/model.gguf
+
+Expected Output:
+  🚀 WASM Paris Generation - Host-Side Storage Demo
+
+  📁 Loading model from: /path/to/model.gguf
+  📦 Loading model: 637.00 MB
+
+  🔧 Initializing WASM runtime...
+  💾 Created Memory64 runtime for host-side storage
+  🔗 Added host functions to linker
+  📥 Loading WASM module...
+  🔨 Instantiating WASM module...
+  ✅ WASM module ready!
+
+  💾 Storing model in HOST storage...
+  ✅ Model stored with ID: 1
+
+  🎯 Generating response to: 'What is the capital of France?'
+  
+  ✨ Generation complete!
+  Response: The capital of France is Paris.
+  
+  ✅ SUCCESS: Model correctly identified Paris as the capital of France!

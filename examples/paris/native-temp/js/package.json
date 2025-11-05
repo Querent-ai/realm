@@ -1,0 +1,21 @@
+{
+  "name": "realm-paris-generation-js",
+  "version": "0.1.0",
+  "description": "JavaScript/TypeScript example demonstrating Realm LLM inference with 'What is the capital of France?' -> 'Paris'",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "node index.js",
+    "test:browser": "node serve.js"
+  },
+  "keywords": [
+    "realm",
+    "wasm",
+    "llm",
+    "inference",
+    "multi-tenant"
+  ],
+  "author": "Realm Team",
+  "license": "MIT",
+  "dependencies": {}
+}
