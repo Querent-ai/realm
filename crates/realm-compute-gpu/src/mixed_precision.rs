@@ -172,21 +172,55 @@ fn bf16_to_f32_single(h: u16) -> f32 {
 }
 
 /// Check if GPU supports FP16
+///
+/// # Implementation Notes
+/// - CUDA: Requires compute capability >= 5.3 (Pascal or newer)
+/// - Metal: Supported on Apple Silicon (M1/M2+) and newer macOS GPUs
+/// - WebGPU: Limited support (depends on adapter capabilities)
+///
+/// When GPU hardware is available, this should:
+/// 1. Detect GPU backend (CUDA/Metal/WebGPU)
+/// 2. Query GPU capabilities
+/// 3. Return true if FP16 is supported
 pub fn supports_fp16() -> bool {
-    // TODO: Check GPU capabilities
-    // CUDA: Check compute capability >= 5.3
-    // Metal: Check device supports FP16
-    // WebGPU: Check adapter limits
-    false // Placeholder - requires GPU detection
+    // TODO: Implement GPU capability detection
+    // When GPU hardware is available:
+    // #[cfg(feature = "cuda")]
+    // {
+    //     // Check CUDA compute capability >= 5.3
+    //     let cc = get_cuda_compute_capability();
+    //     return cc >= 5.3;
+    // }
+    // #[cfg(feature = "metal")]
+    // {
+    //     // Check Metal device supports FP16
+    //     return metal_device_supports_fp16();
+    // }
+    false // Placeholder - requires GPU hardware for detection
 }
 
 /// Check if GPU supports BF16
+///
+/// # Implementation Notes
+/// - CUDA: Requires compute capability >= 8.0 (Ampere or newer, e.g., A100, RTX 30xx+)
+/// - Metal: Not natively supported (would need emulation)
+/// - WebGPU: Not natively supported
+///
+/// When GPU hardware is available, this should:
+/// 1. Detect GPU backend (CUDA/Metal/WebGPU)
+/// 2. Query GPU capabilities
+/// 3. Return true if BF16 is supported
 pub fn supports_bf16() -> bool {
-    // TODO: Check GPU capabilities
-    // CUDA: Check compute capability >= 8.0 (Ampere+)
-    // Metal: Not natively supported
-    // WebGPU: Not natively supported
-    false // Placeholder - requires GPU detection
+    // TODO: Implement GPU capability detection
+    // When GPU hardware is available:
+    // #[cfg(feature = "cuda")]
+    // {
+    //     // Check CUDA compute capability >= 8.0 (Ampere+)
+    //     let cc = get_cuda_compute_capability();
+    //     return cc >= 8.0;
+    // }
+    // Metal and WebGPU don't natively support BF16
+    false // Placeholder - requires GPU hardware for detection
 }
 
 /// Select best precision mode based on GPU capabilities
