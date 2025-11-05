@@ -4,7 +4,7 @@
 
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
-use realm_runtime::model_storage::GLOBAL_MODEL_STORAGE;
+use realm_runtime::model_storage::get_global_model_storage;
 
 /// Store model from bytes in HOST storage
 ///
@@ -22,7 +22,7 @@ fn store_model(mut cx: FunctionContext) -> JsResult<JsNumber> {
     let bytes = model_bytes.as_slice(&cx);
 
     // Always use None to auto-generate ID from content hash
-    match GLOBAL_MODEL_STORAGE.store_model(bytes, None) {
+    match get_global_model_storage().lock().store_model(bytes, None) {
         Ok(id) => Ok(cx.number(id as f64)),
         Err(e) => cx.throw_error(format!("Failed to store model: {}", e)),
     }
@@ -40,9 +40,16 @@ fn get_tensor(mut cx: FunctionContext) -> JsResult<JsArrayBuffer> {
     let model_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as u32;
     let tensor_name = cx.argument::<JsString>(1)?.value(&mut cx);
 
-    let tensor = match GLOBAL_MODEL_STORAGE.get_tensor(model_id, &tensor_name) {
-        Ok(t) => t,
-        Err(e) => return cx.throw_error(format!("Failed to get tensor: {}", e)),
+    let tensor = {
+        let storage = get_global_model_storage().lock();
+        let model = match storage.get_model(model_id) {
+            Ok(m) => m,
+            Err(e) => return cx.throw_error(format!("Model {} not found: {}", model_id, e)),
+        };
+        match model.get_tensor(&tensor_name) {
+            Some(t) => t.clone(),
+            None => return cx.throw_error(format!("Tensor '{}' not found", tensor_name)),
+        }
     };
 
     // Dequantize tensor
@@ -71,14 +78,18 @@ fn get_tensor(mut cx: FunctionContext) -> JsResult<JsArrayBuffer> {
 fn get_model_info(mut cx: FunctionContext) -> JsResult<JsObject> {
     let model_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as u32;
 
-    let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
-        Ok(m) => m,
-        Err(e) => return cx.throw_error(format!("Failed to get model: {}", e)),
+    let (tensor_count, total_size) = {
+        let storage = get_global_model_storage().lock();
+        let model = match storage.get_model(model_id) {
+            Ok(m) => m,
+            Err(e) => return cx.throw_error(format!("Failed to get model: {}", e)),
+        };
+        (model.tensor_count() as f64, model.total_size as f64)
     };
 
     let result = cx.empty_object();
-    let tensor_count = cx.number(model.tensor_count() as f64);
-    let total_size = cx.number(model.total_size as f64);
+    let tensor_count = cx.number(tensor_count);
+    let total_size = cx.number(total_size);
 
     result.set(&mut cx, "tensor_count", tensor_count)?;
     result.set(&mut cx, "total_size", total_size)?;
@@ -93,7 +104,7 @@ fn get_model_info(mut cx: FunctionContext) -> JsResult<JsObject> {
 fn remove_model(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     let model_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as u32;
 
-    match GLOBAL_MODEL_STORAGE.remove_model(model_id) {
+    match get_global_model_storage().lock().remove_model(model_id) {
         Ok(()) => Ok(cx.undefined()),
         Err(e) => cx.throw_error(format!("Failed to remove model: {}", e)),
     }
@@ -121,22 +132,34 @@ fn embed_tokens(mut cx: FunctionContext) -> JsResult<JsArrayBuffer> {
         token_ids.push(token_id);
     }
 
-    // Get model and config
-    let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
-        Ok(m) => m,
-        Err(e) => return cx.throw_error(format!("Model {} not found: {}", model_id, e)),
-    };
+    // Get model and config - extract data while lock is held
+    let (_config, hidden_size, vocab_size, _seq_len, output_size, embedding_tensor) = {
+        let storage = get_global_model_storage().lock();
+        let model = match storage.get_model(model_id) {
+            Ok(m) => m,
+            Err(e) => return cx.throw_error(format!("Model {} not found: {}", model_id, e)),
+        };
 
-    let config = model.extract_config();
-    let hidden_size = config.hidden_size;
-    let vocab_size = config.vocab_size;
-    let seq_len = token_ids.len();
-    let output_size = seq_len * hidden_size;
+        let config = model.extract_config();
+        let hidden_size = config.hidden_size;
+        let vocab_size = config.vocab_size;
+        let seq_len = token_ids.len();
+        let output_size = seq_len * hidden_size;
 
-    // Load token embeddings from HOST storage
-    let embedding_tensor = match model.get_tensor("token_embd.weight") {
-        Some(t) => t,
-        None => return cx.throw_error("token_embd.weight not found"),
+        // Clone embedding tensor while lock is held
+        let embedding_tensor = match model.get_tensor("token_embd.weight") {
+            Some(t) => t.clone(),
+            None => return cx.throw_error("token_embd.weight not found"),
+        };
+
+        (
+            config,
+            hidden_size,
+            vocab_size,
+            seq_len,
+            output_size,
+            embedding_tensor,
+        )
     };
 
     // Dequantize embeddings
@@ -206,14 +229,40 @@ fn forward_layer(mut cx: FunctionContext) -> JsResult<JsArrayBuffer> {
         hidden_states.push(val);
     }
 
-    // Get model and config
-    let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
-        Ok(m) => m,
-        Err(e) => return cx.throw_error(format!("Model {} not found: {}", model_id, e)),
+    // Get model and config - extract tensors while lock is held
+    let (config, hidden_size, attn_norm_tensor, ffn_norm_tensor) = {
+        let storage = get_global_model_storage().lock();
+        let model = match storage.get_model(model_id) {
+            Ok(m) => m,
+            Err(e) => return cx.throw_error(format!("Model {} not found: {}", model_id, e)),
+        };
+
+        let config = model.extract_config();
+        let hidden_size = config.hidden_size;
+
+        // Clone tensors while lock is held
+        let attn_norm_tensor =
+            match model.get_tensor(&format!("blk.{}.attn_norm.weight", layer_idx)) {
+                Some(t) => t.clone(),
+                None => {
+                    return cx.throw_error(format!(
+                        "attn_norm.weight not found for layer {}",
+                        layer_idx
+                    ))
+                }
+            };
+
+        let ffn_norm_tensor = match model.get_tensor(&format!("blk.{}.ffn_norm.weight", layer_idx))
+        {
+            Some(t) => t.clone(),
+            None => {
+                return cx.throw_error(format!("ffn_norm.weight not found for layer {}", layer_idx))
+            }
+        };
+
+        (config, hidden_size, attn_norm_tensor, ffn_norm_tensor)
     };
 
-    let config = model.extract_config();
-    let hidden_size = config.hidden_size;
     let seq_len = hidden_states.len() / hidden_size;
 
     if hidden_states.len() % hidden_size != 0 {
@@ -230,17 +279,6 @@ fn forward_layer(mut cx: FunctionContext) -> JsResult<JsArrayBuffer> {
     let _cpu_backend = match CandleCpuBackend::new() {
         Ok(b) => b,
         Err(e) => return cx.throw_error(format!("Failed to create CPU backend: {}", e)),
-    };
-
-    // 1. Attention norm
-    let attn_norm_tensor = match model.get_tensor(&format!("blk.{}.attn_norm.weight", layer_idx)) {
-        Some(t) => t,
-        None => {
-            return cx.throw_error(format!(
-                "attn_norm.weight not found for layer {}",
-                layer_idx
-            ))
-        }
     };
 
     let attn_norm = match realm_core::quant::dequantize_tensor(
@@ -273,13 +311,7 @@ fn forward_layer(mut cx: FunctionContext) -> JsResult<JsArrayBuffer> {
         hidden[i] = hidden_states[i] + attn_output[i];
     }
 
-    // 3. FFN norm
-    let ffn_norm_tensor = match model.get_tensor(&format!("blk.{}.ffn_norm.weight", layer_idx)) {
-        Some(t) => t,
-        None => {
-            return cx.throw_error(format!("ffn_norm.weight not found for layer {}", layer_idx))
-        }
-    };
+    // 3. FFN norm - using cloned tensor
 
     let ffn_norm = match realm_core::quant::dequantize_tensor(
         &ffn_norm_tensor.data,
@@ -341,15 +373,37 @@ fn compute_logits(mut cx: FunctionContext) -> JsResult<JsArrayBuffer> {
         hidden_state.push(val);
     }
 
-    // Get model and config
-    let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
-        Ok(m) => m,
-        Err(e) => return cx.throw_error(format!("Model {} not found: {}", model_id, e)),
-    };
+    // Get model and config - extract tensors while lock is held
+    let (config, hidden_size, vocab_size, output_norm_tensor, lm_head_tensor) = {
+        let storage = get_global_model_storage().lock();
+        let model = match storage.get_model(model_id) {
+            Ok(m) => m,
+            Err(e) => return cx.throw_error(format!("Model {} not found: {}", model_id, e)),
+        };
 
-    let config = model.extract_config();
-    let hidden_size = config.hidden_size;
-    let vocab_size = config.vocab_size;
+        let config = model.extract_config();
+        let hidden_size = config.hidden_size;
+        let vocab_size = config.vocab_size;
+
+        // Clone tensors while lock is held
+        let output_norm_tensor = match model.get_tensor("output_norm.weight") {
+            Some(t) => t.clone(),
+            None => return cx.throw_error("output_norm.weight not found"),
+        };
+
+        let lm_head_tensor = match model.get_tensor("output.weight") {
+            Some(t) => t.clone(),
+            None => return cx.throw_error("output.weight (lm_head) not found"),
+        };
+
+        (
+            config,
+            hidden_size,
+            vocab_size,
+            output_norm_tensor,
+            lm_head_tensor,
+        )
+    };
 
     if hidden_state.len() != hidden_size {
         return cx.throw_error(format!(
@@ -362,12 +416,6 @@ fn compute_logits(mut cx: FunctionContext) -> JsResult<JsArrayBuffer> {
     // Initialize backend
     use realm_compute_cpu::CandleNeuralOpsBackend;
     let candle_backend = CandleNeuralOpsBackend::new();
-
-    // Load and apply output norm
-    let output_norm_tensor = match model.get_tensor("output_norm.weight") {
-        Some(t) => t,
-        None => return cx.throw_error("output_norm.weight not found"),
-    };
 
     let output_norm = match realm_core::quant::dequantize_tensor(
         &output_norm_tensor.data,
@@ -390,11 +438,7 @@ fn compute_logits(mut cx: FunctionContext) -> JsResult<JsArrayBuffer> {
         Err(e) => return cx.throw_error(format!("RMS norm failed: {}", e)),
     };
 
-    // Load LM head weights
-    let lm_head_tensor = match model.get_tensor("output.weight") {
-        Some(t) => t,
-        None => return cx.throw_error("output.weight (lm_head) not found"),
-    };
+    // Use cloned LM head tensor
 
     // Dequantize LM head (vocab_size x hidden_size)
     let lm_head = match realm_core::quant::dequantize_tensor(

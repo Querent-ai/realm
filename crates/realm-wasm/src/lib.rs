@@ -47,6 +47,17 @@ extern "C" {
     /// Returns: 0 on success, negative on error
     fn realm_remove_model(model_id: u32) -> i32;
 
+    /// Set LoRA adapter for a model
+    /// Parameters: model_id, adapter_id_ptr, adapter_id_len (WASM memory offsets)
+    /// Returns: 0 on success, negative on error
+    fn realm_set_lora_adapter(model_id: u32, adapter_id_ptr: *const u8, adapter_id_len: u32)
+        -> i32;
+
+    /// Store draft model for speculative decoding
+    /// Parameters: gguf_ptr, gguf_len, draft_model_id (WASM memory offsets)
+    /// Returns: draft_model_id on success (> 0), negative on error
+    fn realm_store_draft_model(gguf_ptr: *const u8, gguf_len: u32, draft_model_id: u32) -> i32;
+
     /// Forward through a complete transformer layer (HOST-SIDE COMPUTATION)
     /// This is THE KEY function - weights never enter WASM!
     /// Parameters:

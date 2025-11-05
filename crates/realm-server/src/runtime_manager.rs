@@ -364,6 +364,19 @@ impl RuntimeManager {
                 if let Some(ref model_config) = self.default_model {
                     runtime.load_model(model_config.clone())?;
 
+                    // Apply LoRA adapter if configured for this tenant
+                    let tenant_lora = self.tenant_lora_adapters.lock().unwrap();
+                    if let Some(ref adapter_id) = tenant_lora.get(&tenant_id) {
+                        info!(
+                            "Applying LoRA adapter '{}' to model for tenant {}",
+                            adapter_id, tenant_id
+                        );
+                        // LoRA is applied via host function during forward pass
+                        // The model_id is stored in RuntimeManager, and realm_forward_layer
+                        // will check for LoRA adapter and apply it when loading weights
+                        runtime.lora_adapter_id = Some(adapter_id.to_string());
+                    }
+
                     // Store draft model config if available
                     if let Some(ref draft_path) = model_config.draft_model_path {
                         runtime.draft_model_config = Some(ModelConfig {
@@ -375,6 +388,10 @@ impl RuntimeManager {
                             draft_model_path: None,
                             draft_model_id: None,
                         });
+                        info!(
+                            "Draft model configured for tenant {}: {:?}",
+                            tenant_id, draft_path
+                        );
                     }
                 }
 

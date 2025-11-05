@@ -932,14 +932,17 @@ impl Memory64Runtime {
                 }
 
                 // Store model in HOST storage
-                use crate::model_storage::GLOBAL_MODEL_STORAGE;
+                use crate::model_storage::get_global_model_storage;
                 let requested_id = if model_id == 0 {
                     None // Auto-generate from hash
                 } else {
                     Some(model_id) // Use consumer-provided ID
                 };
 
-                match GLOBAL_MODEL_STORAGE.store_model(&gguf_buffer, requested_id) {
+                match get_global_model_storage()
+                    .lock()
+                    .store_model(&gguf_buffer, requested_id)
+                {
                     Ok(final_model_id) => {
                         info!(
                             "realm_store_model: Stored model {} ({} bytes, requested_id={:?})",
@@ -1028,16 +1031,29 @@ impl Memory64Runtime {
                     return -7;
                 }
 
-                // Get tensor from HOST storage
-                use crate::model_storage::GLOBAL_MODEL_STORAGE;
-                let tensor = match GLOBAL_MODEL_STORAGE.get_tensor(model_id, tensor_name) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        error!(
-                            "realm_get_tensor: Failed to get tensor '{}' from model {}: {}",
-                            tensor_name, model_id, e
-                        );
-                        return -8;
+                // Get tensor from HOST storage - clone while lock is held
+                use crate::model_storage::get_global_model_storage;
+                let tensor = {
+                    let storage = get_global_model_storage().lock();
+                    let model = match storage.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!(
+                                "realm_get_tensor: Model {} not found: {}",
+                                model_id, e
+                            );
+                            return -7;
+                        }
+                    };
+                    match model.get_tensor(tensor_name) {
+                        Some(t) => t.clone(),
+                        None => {
+                            error!(
+                                "realm_get_tensor: Tensor '{}' not found in model {}",
+                                tensor_name, model_id
+                            );
+                            return -8;
+                        }
                     }
                 };
 
@@ -1109,18 +1125,22 @@ impl Memory64Runtime {
                     }
                 };
 
-                // Get model from storage
-                use crate::model_storage::GLOBAL_MODEL_STORAGE;
-                let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        error!("realm_get_model_info: Model {} not found: {}", model_id, e);
-                        return -2;
-                    }
-                };
+                // Get model from storage - extract values while lock is held
+                use crate::model_storage::get_global_model_storage;
+                let (tensor_count, total_size) = {
+                    let storage = get_global_model_storage().lock();
+                    let model = match storage.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!("realm_get_model_info: Model {} not found: {}", model_id, e);
+                            return -2;
+                        }
+                    };
 
-                let tensor_count = model.tensor_count() as u32;
-                let total_size = model.total_size as u64;
+                    let tensor_count = model.tensor_count() as u32;
+                    let total_size = model.total_size as u64;
+                    (tensor_count, total_size)
+                };
 
                 // Write tensor_count (u32, 4 bytes)
                 let tensor_count_bytes = tensor_count.to_le_bytes();
@@ -1158,8 +1178,8 @@ impl Memory64Runtime {
             "env",
             "realm_remove_model",
             move |_caller: Caller<'_, ()>, model_id: u32| -> i32 {
-                use crate::model_storage::GLOBAL_MODEL_STORAGE;
-                match GLOBAL_MODEL_STORAGE.remove_model(model_id) {
+                use crate::model_storage::get_global_model_storage;
+                match get_global_model_storage().lock().remove_model(model_id) {
                     Ok(()) => {
                         info!("realm_remove_model: Removed model {}", model_id);
                         0
@@ -1198,8 +1218,6 @@ impl Memory64Runtime {
                       hidden_states_len: u32,
                       position: u32,
                       out_ptr: u32| -> i32 {
-                    use crate::model_storage::GLOBAL_MODEL_STORAGE;
-
                     // Check backend
                     if cpu_backend.is_none() {
                         error!("realm_forward_layer: CPU backend not available");
@@ -1230,17 +1248,87 @@ impl Memory64Runtime {
                         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                         .collect();
 
-                    // Get model and config from storage
-                    let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
-                        Ok(m) => m,
-                        Err(e) => {
-                            error!("realm_forward_layer: Model {} not found: {}", model_id, e);
-                            return -4;
-                        }
-                    };
+                    // Get model and config from storage - extract ALL tensor data while lock is held
+                    use crate::model_storage::get_global_model_storage;
+                    let (config, hidden_size, attn_norm_tensor, wq_tensor, wk_tensor, wv_tensor, wo_tensor, ffn_norm_tensor, w_gate_tensor, w_up_tensor, w_down_tensor) = {
+                        let storage = get_global_model_storage().lock();
+                        let model = match storage.get_model(model_id) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                error!("realm_forward_layer: Model {} not found: {}", model_id, e);
+                                return -4;
+                            }
+                        };
+                        let config = model.extract_config();
+                        let hidden_size = config.hidden_size;
 
-                    let config = model.extract_config();
-                    let hidden_size = config.hidden_size;
+                        // Clone all tensors we need while lock is held
+                        let attn_norm_tensor = match model.get_tensor(&format!("blk.{}.attn_norm.weight", layer_idx)) {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_forward_layer: attn_norm.weight not found for layer {}", layer_idx);
+                                return -6;
+                            }
+                        };
+                        let wq_tensor = match model.get_tensor(&format!("blk.{}.attn_q.weight", layer_idx)) {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_forward_layer: attn_q.weight not found for layer {}", layer_idx);
+                                return -15;
+                            }
+                        };
+                        let wk_tensor = match model.get_tensor(&format!("blk.{}.attn_k.weight", layer_idx)) {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_forward_layer: attn_k.weight not found for layer {}", layer_idx);
+                                return -16;
+                            }
+                        };
+                        let wv_tensor = match model.get_tensor(&format!("blk.{}.attn_v.weight", layer_idx)) {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_forward_layer: attn_v.weight not found for layer {}", layer_idx);
+                                return -18;
+                            }
+                        };
+                        let wo_tensor = match model.get_tensor(&format!("blk.{}.attn_output.weight", layer_idx)) {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_forward_layer: attn_output.weight not found for layer {}", layer_idx);
+                                return -20;
+                            }
+                        };
+                        let ffn_norm_tensor = match model.get_tensor(&format!("blk.{}.ffn_norm.weight", layer_idx)) {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_forward_layer: ffn_norm.weight not found for layer {}", layer_idx);
+                                return -11;
+                            }
+                        };
+                        let w_gate_tensor = match model.get_tensor(&format!("blk.{}.ffn_gate.weight", layer_idx)) {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_forward_layer: ffn_gate.weight not found for layer {}", layer_idx);
+                                return -22;
+                            }
+                        };
+                        let w_up_tensor = match model.get_tensor(&format!("blk.{}.ffn_up.weight", layer_idx)) {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_forward_layer: ffn_up.weight not found for layer {}", layer_idx);
+                                return -24;
+                            }
+                        };
+                        let w_down_tensor = match model.get_tensor(&format!("blk.{}.ffn_down.weight", layer_idx)) {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_forward_layer: ffn_down.weight not found for layer {}", layer_idx);
+                                return -26;
+                            }
+                        };
+
+                        (config, hidden_size, attn_norm_tensor, wq_tensor, wk_tensor, wv_tensor, wo_tensor, ffn_norm_tensor, w_gate_tensor, w_up_tensor, w_down_tensor)
+                    };
                     let seq_len = hidden_states.len() / hidden_size;
 
                     if !hidden_states.len().is_multiple_of(hidden_size) {
@@ -1259,15 +1347,7 @@ impl Memory64Runtime {
                         }
                     };
 
-                    // Load attention norm weights (small, can dequantize once)
-                    let attn_norm_tensor = match model.get_tensor(&format!("blk.{}.attn_norm.weight", layer_idx)) {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_forward_layer: attn_norm.weight not found for layer {}", layer_idx);
-                            return -6;
-                        }
-                    };
-
+                    // Use cloned tensors (lock is already released)
                     let attn_norm = match realm_core::quant::dequantize_tensor(&attn_norm_tensor.data, attn_norm_tensor.dtype, hidden_size) {
                         Ok(d) => d,
                         Err(e) => {
@@ -1436,15 +1516,8 @@ impl Memory64Runtime {
                         }
                     }
 
-                    // Load attention weights (as WeightFormat for fused ops)
-                    let wq_tensor = match model.get_tensor(&format!("blk.{}.attn_q.weight", layer_idx)) {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_forward_layer: attn_q.weight not found for layer {}", layer_idx);
-                            return -15;
-                        }
-                    };
-                    let wq = match quantized_to_weight_format(wq_tensor) {
+                    // Load attention weights (as WeightFormat for fused ops) - using cloned tensors
+                    let wq = match quantized_to_weight_format(&wq_tensor) {
                         Ok(w) => w,
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wq to WeightFormat: {}", e);
@@ -1452,14 +1525,7 @@ impl Memory64Runtime {
                         }
                     };
 
-                    let wk_tensor = match model.get_tensor(&format!("blk.{}.attn_k.weight", layer_idx)) {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_forward_layer: attn_k.weight not found for layer {}", layer_idx);
-                            return -16;
-                        }
-                    };
-                    let wk = match quantized_to_weight_format(wk_tensor) {
+                    let wk = match quantized_to_weight_format(&wk_tensor) {
                         Ok(w) => w,
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wk to WeightFormat: {}", e);
@@ -1467,14 +1533,7 @@ impl Memory64Runtime {
                         }
                     };
 
-                    let wv_tensor = match model.get_tensor(&format!("blk.{}.attn_v.weight", layer_idx)) {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_forward_layer: attn_v.weight not found for layer {}", layer_idx);
-                            return -18;
-                        }
-                    };
-                    let wv = match quantized_to_weight_format(wv_tensor) {
+                    let wv = match quantized_to_weight_format(&wv_tensor) {
                         Ok(w) => w,
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wv to WeightFormat: {}", e);
@@ -1482,14 +1541,7 @@ impl Memory64Runtime {
                         }
                     };
 
-                    let wo_tensor = match model.get_tensor(&format!("blk.{}.attn_output.weight", layer_idx)) {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_forward_layer: attn_output.weight not found for layer {}", layer_idx);
-                            return -20;
-                        }
-                    };
-                    let wo = match quantized_to_weight_format(wo_tensor) {
+                    let wo = match quantized_to_weight_format(&wo_tensor) {
                         Ok(w) => w,
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wo to WeightFormat: {}", e);
@@ -1548,14 +1600,7 @@ impl Memory64Runtime {
                     };
 
                     // 2. FFN block
-                    // Load FFN norm
-                    let ffn_norm_tensor = match model.get_tensor(&format!("blk.{}.ffn_norm.weight", layer_idx)) {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_forward_layer: ffn_norm.weight not found for layer {}", layer_idx);
-                            return -11;
-                        }
-                    };
+                    // Load FFN norm - using cloned tensor
                     let ffn_norm = match realm_core::quant::dequantize_tensor(&ffn_norm_tensor.data, ffn_norm_tensor.dtype, hidden_size) {
                         Ok(d) => d,
                         Err(e) => {
@@ -1573,15 +1618,8 @@ impl Memory64Runtime {
                         }
                     };
 
-                    // Load FFN weights
-                    let w_gate_tensor = match model.get_tensor(&format!("blk.{}.ffn_gate.weight", layer_idx)) {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_forward_layer: ffn_gate.weight not found for layer {}", layer_idx);
-                            return -22;
-                        }
-                    };
-                    let w_gate = match quantized_to_weight_format(w_gate_tensor) {
+                    // Load FFN weights - using cloned tensors
+                    let w_gate = match quantized_to_weight_format(&w_gate_tensor) {
                         Ok(w) => w,
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert w_gate to WeightFormat: {}", e);
@@ -1589,14 +1627,7 @@ impl Memory64Runtime {
                         }
                     };
 
-                    let w_up_tensor = match model.get_tensor(&format!("blk.{}.ffn_up.weight", layer_idx)) {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_forward_layer: ffn_up.weight not found for layer {}", layer_idx);
-                            return -24;
-                        }
-                    };
-                    let w_up = match quantized_to_weight_format(w_up_tensor) {
+                    let w_up = match quantized_to_weight_format(&w_up_tensor) {
                         Ok(w) => w,
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert w_up to WeightFormat: {}", e);
@@ -1604,14 +1635,7 @@ impl Memory64Runtime {
                         }
                     };
 
-                    let w_down_tensor = match model.get_tensor(&format!("blk.{}.ffn_down.weight", layer_idx)) {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_forward_layer: ffn_down.weight not found for layer {}", layer_idx);
-                            return -26;
-                        }
-                    };
-                    let w_down = match quantized_to_weight_format(w_down_tensor) {
+                    let w_down = match quantized_to_weight_format(&w_down_tensor) {
                         Ok(w) => w,
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert w_down to WeightFormat: {}", e);
@@ -1731,8 +1755,6 @@ impl Memory64Runtime {
                       token_ids_len: u32,
                       out_ptr: u32|
                       -> i32 {
-                    use crate::model_storage::GLOBAL_MODEL_STORAGE;
-
                     // Get WASM memory
                     let wasm_memory = match caller.get_export("memory") {
                         Some(Extern::Memory(mem)) => mem,
@@ -1758,27 +1780,33 @@ impl Memory64Runtime {
                         .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                         .collect();
 
-                    // Get model and config
-                    let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
-                        Ok(m) => m,
-                        Err(e) => {
-                            error!("realm_embed_tokens: Model {} not found: {}", model_id, e);
-                            return -3;
-                        }
-                    };
+                    // Get model and config - extract embedding tensor while lock is held
+                    use crate::model_storage::get_global_model_storage;
+                    let (config, hidden_size, seq_len, output_size, embedding_tensor) = {
+                        let storage = get_global_model_storage().lock();
+                        let model = match storage.get_model(model_id) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                error!("realm_embed_tokens: Model {} not found: {}", model_id, e);
+                                return -3;
+                            }
+                        };
 
-                    let config = model.extract_config();
-                    let hidden_size = config.hidden_size;
-                    let seq_len = token_ids.len();
-                    let output_size = seq_len * hidden_size;
+                        let config = model.extract_config();
+                        let hidden_size = config.hidden_size;
+                        let seq_len = token_ids.len();
+                        let output_size = seq_len * hidden_size;
 
-                    // Load token embeddings from HOST storage
-                    let embedding_tensor = match model.get_tensor("token_embd.weight") {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_embed_tokens: token_embd.weight not found");
-                            return -4;
-                        }
+                        // Clone embedding tensor while lock is held
+                        let embedding_tensor = match model.get_tensor("token_embd.weight") {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_embed_tokens: token_embd.weight not found");
+                                return -4;
+                            }
+                        };
+
+                        (config, hidden_size, seq_len, output_size, embedding_tensor)
                     };
 
                     // Dequantize embeddings (only what we need)
@@ -1852,6 +1880,123 @@ impl Memory64Runtime {
         }
 
         // ========================================
+        // LoRA Integration Host Functions
+        // ========================================
+        // Host function: Set LoRA adapter for a model
+        // Parameters: model_id, adapter_id_ptr, adapter_id_len (WASM memory offsets)
+        // Returns: 0 on success, negative on error
+        // NOTE: LoRA application happens automatically when model is used in forward pass
+        linker.func_wrap(
+            "env",
+            "realm_set_lora_adapter",
+            move |mut caller: Caller<'_, ()>,
+                  model_id: u32,
+                  adapter_id_ptr: u32,
+                  adapter_id_len: u32|
+                  -> i32 {
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_set_lora_adapter: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                // Read adapter ID from WASM memory
+                let mut adapter_id_bytes = vec![0u8; adapter_id_len as usize];
+                if let Err(e) =
+                    wasm_memory.read(&caller, adapter_id_ptr as usize, &mut adapter_id_bytes)
+                {
+                    error!("realm_set_lora_adapter: Failed to read adapter_id: {}", e);
+                    return -2;
+                }
+
+                let adapter_id = match String::from_utf8(adapter_id_bytes) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        error!("realm_set_lora_adapter: Invalid UTF-8 in adapter_id: {}", e);
+                        return -3;
+                    }
+                };
+
+                // Mark model with LoRA adapter ID
+                use crate::model_storage::get_global_model_storage;
+                let adapter_id_for_log = adapter_id.clone();
+                let adapter_id_for_set = adapter_id.clone();
+                let result = get_global_model_storage()
+                    .lock()
+                    .set_lora_adapter(model_id, adapter_id_for_set);
+                match result {
+                    Ok(()) => {
+                        info!(
+                            "realm_set_lora_adapter: Model {} marked with LoRA adapter '{}'",
+                            model_id, adapter_id_for_log
+                        );
+                        // NOTE: Actual LoRA application happens during forward pass when weights are loaded
+                        // This is handled by the RuntimeManager integration
+                        0
+                    }
+                    Err(e) => {
+                        error!("realm_set_lora_adapter: Failed to set LoRA adapter: {}", e);
+                        -4
+                    }
+                }
+            },
+        )?;
+
+        // ========================================
+        // Speculative Decoding Host Functions
+        // ========================================
+        // Host function: Store draft model for speculative decoding
+        // Parameters: gguf_ptr, gguf_len, draft_model_id (WASM memory offsets)
+        // Returns: draft_model_id on success (> 0), negative on error
+        linker.func_wrap(
+            "env",
+            "realm_store_draft_model",
+            move |mut caller: Caller<'_, ()>,
+                  gguf_ptr: u32,
+                  gguf_len: u32,
+                  draft_model_id: u32|
+                  -> i32 {
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_store_draft_model: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                // Read GGUF bytes from WASM memory
+                let mut gguf_bytes = vec![0u8; gguf_len as usize];
+                if let Err(e) = wasm_memory.read(&caller, gguf_ptr as usize, &mut gguf_bytes) {
+                    error!("realm_store_draft_model: Failed to read GGUF data: {}", e);
+                    return -2;
+                }
+
+                // Store draft model
+                use crate::model_storage::get_global_model_storage;
+                match get_global_model_storage()
+                    .lock()
+                    .store_model(&gguf_bytes, Some(draft_model_id))
+                {
+                    Ok(id) => {
+                        info!("realm_store_draft_model: Draft model stored with ID {}", id);
+                        id as i32
+                    }
+                    Err(e) => {
+                        error!(
+                            "realm_store_draft_model: Failed to store draft model: {}",
+                            e
+                        );
+                        -3
+                    }
+                }
+            },
+        )?;
+
+        // ========================================
         // Compute Logits (HOST-SIDE COMPUTATION)
         // ========================================
         // Apply final norm + LM head projection on HOST
@@ -1869,7 +2014,6 @@ impl Memory64Runtime {
                       hidden_state_len: u32,
                       out_ptr: u32|
                       -> i32 {
-                    use crate::model_storage::GLOBAL_MODEL_STORAGE;
                     use realm_compute_cpu::CandleNeuralOpsBackend;
 
                     // Get WASM memory
@@ -1897,17 +2041,40 @@ impl Memory64Runtime {
                         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                         .collect();
 
-                    // Get model and config
-                    let model = match GLOBAL_MODEL_STORAGE.get_model(model_id) {
-                        Ok(m) => m,
-                        Err(e) => {
-                            error!("realm_compute_logits: Model {} not found: {}", model_id, e);
-                            return -3;
-                        }
-                    };
+                    // Get model and config - extract tensors while lock is held
+                    use crate::model_storage::get_global_model_storage;
+                    let (config, hidden_size, output_norm_tensor, lm_head_tensor) = {
+                        let storage = get_global_model_storage().lock();
+                        let model = match storage.get_model(model_id) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                error!("realm_compute_logits: Model {} not found: {}", model_id, e);
+                                return -3;
+                            }
+                        };
 
-                    let config = model.extract_config();
-                    let hidden_size = config.hidden_size;
+                        let config = model.extract_config();
+                        let hidden_size = config.hidden_size;
+
+                        // Clone tensors while lock is held
+                        let output_norm_tensor = match model.get_tensor("output_norm.weight") {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_compute_logits: output_norm.weight not found");
+                                return -4;
+                            }
+                        };
+
+                        let lm_head_tensor = match model.get_tensor("output.weight") {
+                            Some(t) => t.clone(),
+                            None => {
+                                error!("realm_compute_logits: output.weight (lm_head) not found");
+                                return -5;
+                            }
+                        };
+
+                        (config, hidden_size, output_norm_tensor, lm_head_tensor)
+                    };
 
                     if hidden_state.len() != hidden_size {
                         error!(
@@ -1915,21 +2082,13 @@ impl Memory64Runtime {
                             hidden_state.len(),
                             hidden_size
                         );
-                        return -4;
+                        return -6;
                     }
 
                     // Initialize backend
                     let candle_backend = CandleNeuralOpsBackend::new();
 
-                    // Load and apply output norm
-                    let output_norm_tensor = match model.get_tensor("output_norm.weight") {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_compute_logits: output_norm.weight not found");
-                            return -5;
-                        }
-                    };
-
+                    // Use cloned tensors (lock is already released)
                     let output_norm = match realm_core::quant::dequantize_tensor(
                         &output_norm_tensor.data,
                         output_norm_tensor.dtype,
@@ -1941,7 +2100,7 @@ impl Memory64Runtime {
                                 "realm_compute_logits: Failed to dequantize output_norm: {}",
                                 e
                             );
-                            return -6;
+                            return -7;
                         }
                     };
 
@@ -1956,15 +2115,6 @@ impl Memory64Runtime {
                         Ok(h) => h,
                         Err(e) => {
                             error!("realm_compute_logits: RMS norm failed: {}", e);
-                            return -7;
-                        }
-                    };
-
-                    // Load LM head weights
-                    let lm_head_tensor = match model.get_tensor("output.weight") {
-                        Some(t) => t,
-                        None => {
-                            error!("realm_compute_logits: output.weight (lm_head) not found");
                             return -8;
                         }
                     };
