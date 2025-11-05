@@ -115,9 +115,15 @@ impl FunctionDispatcher {
 
     /// Enable continuous batching for improved throughput
     pub fn with_batching(mut self, max_batch_size: usize, max_seq_len: usize) -> Self {
-        self.batcher = Some(Arc::new(ContinuousBatcher::new(max_batch_size, max_seq_len)));
+        self.batcher = Some(Arc::new(ContinuousBatcher::new(
+            max_batch_size,
+            max_seq_len,
+        )));
         self.enable_batching = true;
-        info!("Continuous batching enabled: max_batch_size={}, max_seq_len={}", max_batch_size, max_seq_len);
+        info!(
+            "Continuous batching enabled: max_batch_size={}, max_seq_len={}",
+            max_batch_size, max_seq_len
+        );
         self
     }
 
@@ -285,13 +291,14 @@ impl FunctionDispatcher {
         if self.enable_batching {
             if let Some(ref batcher) = self.batcher {
                 // Use continuous batching for improved throughput
-                return self.handle_generate_with_batching(
-                    options,
-                    client_tenant_id,
-                    authenticated_tenant_id,
-                    batcher.clone(),
-                )
-                .await;
+                return self
+                    .handle_generate_with_batching(
+                        options,
+                        client_tenant_id,
+                        authenticated_tenant_id,
+                        batcher.clone(),
+                    )
+                    .await;
             }
         }
 
@@ -329,7 +336,9 @@ impl FunctionDispatcher {
             if let Some(ref runtime_manager) = self.runtime_manager {
                 // Create/ensure runtime with the specified model
                 // If this fails, we'll fall back to simulated responses
-                if let Err(e) = runtime_manager.get_or_create_runtime_with_model(tenant_id_str, model) {
+                if let Err(e) =
+                    runtime_manager.get_or_create_runtime_with_model(tenant_id_str, model)
+                {
                     warn!("Failed to create runtime with model {} for tenant {}: {}. Falling back to simulated response.", model, tenant_id_str, e);
                     // Continue to fallback handling below
                 }
@@ -373,7 +382,7 @@ impl FunctionDispatcher {
             // Try to use actual WASM runtime
             let options_clone = options.clone();
             let tenant_id_for_runtime = Some(tenant_id_str.to_string());
-            
+
             // Attempt WASM runtime, but gracefully fall back on any error
             match self
                 .handle_generate_with_runtime(
@@ -477,7 +486,10 @@ impl FunctionDispatcher {
         // Ensure runtime exists for this tenant
         // If this fails, we'll return an error and let the caller fall back to simulated responses
         if let Err(e) = runtime_manager.get_or_create_runtime(&tenant_id) {
-            warn!("Failed to create runtime for tenant {}: {}. Returning error to trigger fallback.", tenant_id, e);
+            warn!(
+                "Failed to create runtime for tenant {}: {}. Returning error to trigger fallback.",
+                tenant_id, e
+            );
             return Err(e);
         }
 
@@ -595,8 +607,8 @@ impl FunctionDispatcher {
         // For now, process requests sequentially but track them as a batch
         info!("Processing batch of {} requests", batch.len());
 
-        // Find our request in the batch
-        let our_request = batch
+        // Find our request in the batch (validate it exists)
+        let _our_request = batch
             .iter()
             .find(|r| r.request_id == request_id)
             .ok_or_else(|| anyhow!("Request not found in batch"))?;
@@ -608,15 +620,16 @@ impl FunctionDispatcher {
 
         // Update batcher with generated tokens (simplified)
         // In production, would update after batch processing completes
-        if let Ok(text) = self
-            .runtime_manager
-            .as_ref()
-            .map(|rm| rm.generate(tenant_id_str, options.prompt.clone()))
-            .transpose()
-        {
-            if let Some(text) = text {
-                // Extract first token (simplified)
-                let first_token = text.split_whitespace().next().map(|_| 1u32).unwrap_or(0);
+        // Extract text from the result we already generated
+        if let DispatchResult::Single(ref json_value) = result {
+            if let Ok(gen_result) = serde_json::from_value::<GenerationResult>(json_value.clone()) {
+                // Extract first token (simplified - in production would use actual token IDs)
+                let first_token = gen_result
+                    .text
+                    .split_whitespace()
+                    .next()
+                    .map(|_| 1u32)
+                    .unwrap_or(0);
                 let _ = batcher.update_request(request_id, first_token);
             }
         }
