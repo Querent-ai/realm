@@ -34,20 +34,26 @@ graph TB
         direction LR
         A[Token routing] --> B[Sampling logic]
         B --> C[Business rules]
-        style Orchestration fill:#e1f5ff
+        style Orchestration fill:#2563eb,color:#fff
+        style A fill:#3b82f6,color:#fff
+        style B fill:#3b82f6,color:#fff
+        style C fill:#3b82f6,color:#fff
     end
     
     subgraph Compute["Compute Layer (95% of compute)"]
         direction LR
         D[Matrix multiplication] --> E[Attention]
         E --> F[Model weights]
-        style Compute fill:#fff4e1
+        style Compute fill:#dc2626,color:#fff
+        style D fill:#ef4444,color:#fff
+        style E fill:#ef4444,color:#fff
+        style F fill:#ef4444,color:#fff
     end
     
     Orchestration -->|Different per tenant| Compute
     Compute -->|Same across tenants| GPU["⚡ GPU"]
     
-    style GPU fill:#ffe1f5
+    style GPU fill:#16a34a,color:#fff
 ```
 
 **The orchestration layer** is small, custom, and varies per tenant.  
@@ -65,21 +71,24 @@ graph TB
         TA["🎭 Tenant A<br/>WASM Sandbox"]
         TB["🎭 Tenant B<br/>WASM Sandbox"]
         TN["🎭 Tenant N<br/>WASM Sandbox"]
-        style TA fill:#e1f5ff
-        style TB fill:#e1f5ff
-        style TN fill:#e1f5ff
+        style Tenants fill:#1e40af,color:#fff
+        style TA fill:#3b82f6,color:#fff
+        style TB fill:#3b82f6,color:#fff
+        style TN fill:#3b82f6,color:#fff
     end
     
     subgraph Host["Host Functions (FFI)"]
         HF["candle_matmul<br/>memory64_load_layer<br/>attention_forward"]
-        style HF fill:#fff4e1
+        style Host fill:#7c3aed,color:#fff
+        style HF fill:#a855f7,color:#fff
     end
     
     subgraph Shared["Shared Compute Resources"]
         GPU["⚡ GPU<br/>CUDA/Metal/WebGPU"]
         MEM["💾 Shared Weights<br/>One copy for all"]
-        style GPU fill:#ffe1f5
-        style MEM fill:#ffe1f5
+        style Shared fill:#dc2626,color:#fff
+        style GPU fill:#ef4444,color:#fff
+        style MEM fill:#f87171,color:#fff
     end
     
     TA --> HF
@@ -119,11 +128,12 @@ graph LR
         NODE["Node.js SDK"]
         RT["Runtime<br/>59 tests"]
         FLASH["Flash Attention<br/>CPU + GPU"]
-        style CPU fill:#90EE90
-        style CORE fill:#90EE90
-        style NODE fill:#90EE90
-        style RT fill:#90EE90
-        style FLASH fill:#90EE90
+        style Production fill:#16a34a,color:#fff
+        style CPU fill:#22c55e,color:#fff
+        style CORE fill:#22c55e,color:#fff
+        style NODE fill:#22c55e,color:#fff
+        style RT fill:#22c55e,color:#fff
+        style FLASH fill:#22c55e,color:#fff
     end
     
     subgraph Beta["✅ Beta Quality"]
@@ -132,11 +142,12 @@ graph LR
         BATCH["Continuous Batching"]
         LORA["LoRA Adapters"]
         SPEC["Speculative Decoding"]
-        style GPU fill:#FFE4B5
-        style MET fill:#FFE4B5
-        style BATCH fill:#FFE4B5
-        style LORA fill:#FFE4B5
-        style SPEC fill:#FFE4B5
+        style Beta fill:#ea580c,color:#fff
+        style GPU fill:#f97316,color:#fff
+        style MET fill:#f97316,color:#fff
+        style BATCH fill:#f97316,color:#fff
+        style LORA fill:#f97316,color:#fff
+        style SPEC fill:#f97316,color:#fff
     end
 ```
 
@@ -252,9 +263,10 @@ graph TB
         WS["WebSocket<br/>Streams"]
         HTTP["HTTP/2<br/>REST API"]
         GRPC["gRPC<br/>Streams"]
-        style WS fill:#e1f5ff
-        style HTTP fill:#e1f5ff
-        style GRPC fill:#e1f5ff
+        style Client fill:#1e40af,color:#fff
+        style WS fill:#3b82f6,color:#fff
+        style HTTP fill:#3b82f6,color:#fff
+        style GRPC fill:#3b82f6,color:#fff
     end
     
     subgraph Server["Server Layer (realm-server)"]
@@ -262,10 +274,11 @@ graph TB
         ORCH["Model Orchestrator<br/>Multi-model pipelines"]
         PIPELINE["Pipeline DSL Engine<br/>YAML/JSON definitions"]
         REGISTRY["Model Registry<br/>Catalog & Cache"]
-        style GATE fill:#fff4e1
-        style ORCH fill:#fff4e1
-        style PIPELINE fill:#fff4e1
-        style REGISTRY fill:#fff4e1
+        style Server fill:#7c3aed,color:#fff
+        style GATE fill:#a855f7,color:#fff
+        style ORCH fill:#a855f7,color:#fff
+        style PIPELINE fill:#a855f7,color:#fff
+        style REGISTRY fill:#a855f7,color:#fff
     end
     
     subgraph WASM["Orchestration Layer (realm-wasm)"]
@@ -273,42 +286,47 @@ graph TB
         TB1["Tenant B<br/>WASM Sandbox"]
         TN1["Tenant N<br/>WASM Sandbox"]
         HF1["Host Functions<br/>FFI Interface"]
-        style TA1 fill:#ffe1f5
-        style TB1 fill:#ffe1f5
-        style TN1 fill:#ffe1f5
-        style HF1 fill:#ffe1f5
+        style WASM fill:#0891b2,color:#fff
+        style TA1 fill:#06b6d4,color:#fff
+        style TB1 fill:#06b6d4,color:#fff
+        style TN1 fill:#06b6d4,color:#fff
+        style HF1 fill:#22d3ee,color:#fff
     end
     
     subgraph Runtime["Runtime Layer (realm-runtime)"]
         WASMTIME["Wasmtime Host Runtime<br/>JIT, Sandboxing"]
         MEM64["Memory64 Manager<br/>Lazy loading"]
         INFER["Inference Engine<br/>Transformer inference"]
-        style WASMTIME fill:#e1ffe1
-        style MEM64 fill:#e1ffe1
-        style INFER fill:#e1ffe1
+        style Runtime fill:#16a34a,color:#fff
+        style WASMTIME fill:#22c55e,color:#fff
+        style MEM64 fill:#22c55e,color:#fff
+        style INFER fill:#22c55e,color:#fff
     end
     
     subgraph Compute["Compute Layer (realm-compute-*)"]
         CPU["CPU Backend<br/>SIMD-optimized"]
         GPU["GPU Backend<br/>CUDA/Metal/WebGPU"]
-        style CPU fill:#fff4e1
-        style GPU fill:#fff4e1
+        style Compute fill:#dc2626,color:#fff
+        style CPU fill:#ef4444,color:#fff
+        style GPU fill:#f87171,color:#fff
     end
     
     subgraph Model["Model Layer (realm-core)"]
         GGUF["GGUF Loader<br/>Format parsing"]
         TOKEN["Tokenization<br/>BPE encoding"]
         WEIGHTS["Model Weights<br/>Shared across tenants"]
-        style GGUF fill:#ffe1f5
-        style TOKEN fill:#ffe1f5
-        style WEIGHTS fill:#ffe1f5
+        style Model fill:#ea580c,color:#fff
+        style GGUF fill:#f97316,color:#fff
+        style TOKEN fill:#f97316,color:#fff
+        style WEIGHTS fill:#fb923c,color:#fff
     end
     
     subgraph HW["Hardware"]
         GPU_HW["GPU<br/>NVIDIA A100 / Apple M1/M2"]
         CPU_HW["CPU<br/>x86_64 / ARM64"]
-        style GPU_HW fill:#ffe1f5
-        style CPU_HW fill:#fff4e1
+        style HW fill:#1f2937,color:#fff
+        style GPU_HW fill:#374151,color:#fff
+        style CPU_HW fill:#4b5563,color:#fff
     end
     
     Client --> Server
