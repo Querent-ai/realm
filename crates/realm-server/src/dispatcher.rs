@@ -607,8 +607,8 @@ impl FunctionDispatcher {
         // For now, process requests sequentially but track them as a batch
         info!("Processing batch of {} requests", batch.len());
 
-        // Find our request in the batch (validate it exists)
-        let _our_request = batch
+        // Validate that our request exists in the batch
+        let _ = batch
             .iter()
             .find(|r| r.request_id == request_id)
             .ok_or_else(|| anyhow!("Request not found in batch"))?;

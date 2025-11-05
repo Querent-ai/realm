@@ -84,8 +84,8 @@ if ! pgrep -f "realm-server" > /dev/null; then
         fi
     fi
     
-    # Start server
-    timeout 120 cargo run --release --bin realm-server -- \
+    # Start server (timeout configurable via SERVER_TIMEOUT env var)
+    timeout ${SERVER_TIMEOUT:-120} cargo run --release --bin realm-server -- \
         --host 127.0.0.1 \
         --port 8080 \
         --model "${SERVER_MODEL}" \

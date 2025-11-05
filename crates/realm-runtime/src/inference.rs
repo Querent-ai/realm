@@ -199,11 +199,12 @@ impl InferenceSession {
         input_tokens.extend_from_slice(&self.generated_tokens);
 
         // Use speculative decoding if enabled and draft model is available
-        // Clone config to avoid borrowing issues
-        let spec_config = self.speculative_config.clone();
-        let (logits, pre_accepted_tokens) = if let Some(config) = spec_config {
+        // Clone config only when needed to avoid borrow checker issues
+        let (logits, pre_accepted_tokens) = if let Some(ref config) = self.speculative_config {
             if let Some(draft) = draft_model {
                 // Speculative decoding: draft model generates tokens, target model verifies
+                // Clone config to avoid borrow issues when calling &mut self method
+                let config = config.clone();
                 self.speculative_decode_step(&input_tokens, draft, model, &config)?
             } else {
                 // Speculative decoding enabled but no draft model, fall back to standard

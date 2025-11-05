@@ -39,7 +39,6 @@ pub struct TenantRuntime {
     tenant_id: String,
 
     /// Optional LoRA adapter ID for this tenant
-    #[allow(dead_code)] // Used for future LoRA application
     lora_adapter_id: Option<String>,
 }
 

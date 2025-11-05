@@ -6,6 +6,7 @@ Connects to Realm.ai WebSocket server and provides type-safe function dispatch.
 
 import asyncio
 import json
+import logging
 import uuid
 from typing import Optional, Dict, Any, Callable, AsyncGenerator
 import websockets
@@ -17,6 +18,8 @@ from .types import (
     FunctionResponse,
     ErrorInfo,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RealmWebSocketClient:
@@ -45,7 +48,7 @@ class RealmWebSocketClient:
             timeout: Request timeout in seconds (default: 30.0)
         """
         if not model:
-            raise ValueError("Model name or URL is required. Provide 'model' in options.")
+            raise ValueError("Model name or URL is required. Provide 'model' parameter.")
         
         self.url = url
         self.api_key = api_key
@@ -53,7 +56,7 @@ class RealmWebSocketClient:
         # Auto-assign tenant ID if not provided
         self.tenant_id = tenant_id or str(uuid.uuid4())
         if not tenant_id:
-            print(f"Auto-assigned tenant ID: {self.tenant_id}")
+            logger.debug(f"Auto-assigned tenant ID: {self.tenant_id}")
         self.reconnect = reconnect
         self.reconnect_interval = reconnect_interval
         self.timeout = timeout
@@ -73,7 +76,8 @@ class RealmWebSocketClient:
                 # Check if connection is still open
                 await self._ws.ping()
                 return
-            except:
+            except Exception:
+                # Connection is closed or invalid, will reconnect below
                 pass
 
         try:
@@ -354,7 +358,8 @@ class RealmWebSocketClient:
         if self._ws:
             try:
                 await self._ws.close()
-            except:
+            except Exception:
+                # Ignore errors when closing connection
                 pass
 
         self._pending_requests.clear()
