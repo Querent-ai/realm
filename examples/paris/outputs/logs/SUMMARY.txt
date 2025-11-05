@@ -1,0 +1,104 @@
+==========================================
+Paris Examples - Final Status Report
+==========================================
+
+Date: $(date)
+Model: tinyllama-1.1b.Q4_K_M.gguf
+Question: "What is the capital of France?"
+Expected Answer: "Paris"
+
+==========================================
+WORKING EXAMPLES (✅ Produce "Paris")
+==========================================
+
+1. ✅ native.log
+   - Example: examples/paris/native/src/main.rs
+   - Status: SUCCESS
+   - Output: "The capital of France is Paris."
+   - Verification: ✅ Contains Paris
+
+2. ✅ paris-generation.log
+   - Example: examples/paris-generation/src/main.rs
+   - Status: SUCCESS
+   - Output: "The capital of France is Paris."
+   - Verification: ✅ Contains Paris
+
+==========================================
+PARTIALLY WORKING / NEEDS SERVER FIX
+==========================================
+
+3. ⚠️  nodejs-sdk.log
+   - Example: examples/paris/nodejs-sdk/index.js
+   - Status: Connected to server, but WASM instantiation fails
+   - Issue: Server fails to instantiate WASM module
+   - Note: Server has simulated response logic that should return "Paris"
+   - Verification: ❌ No Paris in output (error before generation)
+
+4. ⚠️  python-sdk.log
+   - Example: examples/paris/python-sdk/main.py
+   - Status: Python SDK not installed
+   - Issue: ModuleNotFoundError: No module named 'realm'
+   - Note: Requires: pip install -e ../../../sdks/python-ws
+   - Verification: ❌ No Paris (error before generation)
+
+==========================================
+NOT WORKING (Expected Limitations)
+==========================================
+
+5. ❌ nodejs-wasm.log
+   - Example: examples/paris/nodejs-wasm/index.js
+   - Status: Cannot work standalone
+   - Issue: WASM module requires host functions (realm_store_model, etc.)
+   - Solution: Needs realm-server or wasm-host-runner
+   - Note: README updated to explain this
+   - Verification: ❌ No Paris (missing host functions)
+
+6. N/A server.log
+   - Type: Server startup log
+   - Note: Not an example output
+
+==========================================
+FIXES APPLIED
+==========================================
+
+✅ Fixed realm-server compilation error
+   - Added missing handle_generate_standard function body
+   - Server now compiles successfully
+
+✅ Fixed Node.js SDK package name
+   - Changed @realm/nodejs-ws → @realm-ai/ws-client
+   - Updated package.json and import
+
+✅ Updated Node.js WASM README
+   - Explained host function requirement
+   - Documented alternatives
+
+==========================================
+NEXT STEPS (Optional)
+==========================================
+
+1. Fix server WASM instantiation
+   - Check WASM module path
+   - Verify WASM file is accessible
+   - Check server logs for details
+
+2. Install Python SDK
+   - pip install -e sdks/python-ws
+   - Or use virtual environment
+
+3. For Node.js WASM
+   - Use realm-server (provides host functions)
+   - Or use wasm-host-runner
+   - Or implement standalone WASM mode (no host functions)
+
+==========================================
+VERIFICATION
+==========================================
+
+To check for Paris in any log:
+  grep -i "paris" examples/paris/outputs/logs/*.log
+
+Working examples:
+  ✅ native.log
+  ✅ paris-generation.log
+

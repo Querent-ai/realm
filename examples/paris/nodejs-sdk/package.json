@@ -8,7 +8,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@realm/nodejs-ws": "file:../../../sdks/nodejs-ws"
+    "@realm-ai/ws-client": "file:../../../sdks/nodejs-ws"
   }
 }
 

@@ -1,0 +1,58 @@
+   Compiling realm-compute-gpu v0.1.0 (/home/puneet/realm/crates/realm-compute-gpu)
+   Compiling realm-compute-cpu v0.1.0 (/home/puneet/realm/crates/realm-compute-cpu)
+   Compiling realm-models v0.1.0 (/home/puneet/realm/crates/realm-models)
+warning: method `download_from_url` is never used
+   --> crates/realm-models/src/registry.rs:578:14
+    |
+182 | impl ModelRegistry {
+    | ------------------ method in this implementation
+...
+578 |     async fn download_from_url(&self, _url: &str, _output_path: &Path) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+   Compiling realm-runtime v0.1.0 (/home/puneet/realm/crates/realm-runtime)
+warning: `realm-models` (lib) generated 1 warning
+   Compiling paris-generation v0.1.0 (/home/puneet/realm/examples/paris-generation)
+    Finished `release` profile [optimized] target(s) in 51.87s
+     Running `target/release/paris-generation /home/puneet/.ollama/models/tinyllama-1.1b.Q4_K_M.gguf`
+[2025-11-04T23:30:30Z INFO  paris_generation] Realm Paris Generation Example
+[2025-11-04T23:30:30Z INFO  paris_generation] ===================================
+    
+[2025-11-04T23:30:30Z INFO  paris_generation] Loading model: /home/puneet/.ollama/models/tinyllama-1.1b.Q4_K_M.gguf
+[2025-11-04T23:30:30Z INFO  paris_generation] Model header parsed
+[2025-11-04T23:30:30Z INFO  paris_generation] Config loaded: 22 layers, 32 heads
+[2025-11-04T23:30:30Z INFO  realm_models::model] Candle CPU backend initialized successfully
+[2025-11-04T23:30:30Z INFO  paris_generation] Model created
+[2025-11-04T23:30:30Z INFO  paris_generation] Tokenizer loaded: 32000 tokens
+[2025-11-04T23:30:30Z INFO  realm_models::model] Using standard loading (all weights in RAM)
+[2025-11-04T23:30:39Z INFO  paris_generation] Weights loaded
+    
+[2025-11-04T23:30:39Z INFO  paris_generation] Usage tracking enabled
+    
+[2025-11-04T23:30:39Z INFO  paris_generation] Prompt: "<|system|>
+    You are a helpful AI assistant.</s>
+    <|user|>
+    What is the capital of France?</s>
+    <|assistant|>
+    "
+    
+[2025-11-04T23:30:39Z INFO  paris_generation] Generating response...
+    
+[2025-11-04T23:32:18Z INFO  paris_generation] Response: <|system|>
+    You are a helpful AI assistant.</s>
+    <|user|>
+    What is the capital of France?
+    <|assistant|>
+    The capital of France is Paris.
+    
+[2025-11-04T23:32:18Z INFO  paris_generation] SUCCESS: Model correctly identified Paris as the capital of France!
+[2025-11-04T23:32:18Z INFO  paris_generation] 
+    === Usage Metrics ===
+[2025-11-04T23:32:18Z INFO  paris_generation] Input tokens: 40
+[2025-11-04T23:32:18Z INFO  paris_generation] Output tokens: 7
+[2025-11-04T23:32:18Z INFO  paris_generation] Total tokens: 47
+[2025-11-04T23:32:18Z INFO  paris_generation] Estimated cost: $0.000225
+[2025-11-04T23:32:18Z INFO  paris_generation] Requests: 1
+[2025-11-04T23:32:18Z INFO  paris_generation] Avg tokens/request: 47.0

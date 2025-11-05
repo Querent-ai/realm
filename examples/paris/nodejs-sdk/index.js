@@ -8,7 +8,7 @@
  * This requires a running Realm server (see examples/paris/server/)
  */
 
-import { RealmWebSocketClient } from '@realm/nodejs-ws';
+import { RealmWebSocketClient } from '@realm-ai/ws-client';
 
 async function main() {
     console.log('🚀 Realm Paris Generation - Node.js SDK\n');

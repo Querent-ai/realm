@@ -14,6 +14,7 @@ members = [
     "examples/multi-tenant",
     # "examples/end-to-end-inference",  # TODO: Fix HostContext imports
     "examples/paris-generation",
+    "examples/paris/native",
     "examples/memory64-demo",
     "examples/metrics-demo",
     "examples/wasm-host-runner",

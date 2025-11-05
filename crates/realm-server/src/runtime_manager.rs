@@ -3,6 +3,7 @@
 //! Manages per-tenant WASM runtime instances with model loading and inference.
 
 use anyhow::{anyhow, Context, Result};
+use realm_runtime::lora::LoRAManager;
 use realm_runtime::HostContext;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -36,6 +37,10 @@ pub struct TenantRuntime {
 
     /// Tenant ID
     tenant_id: String,
+
+    /// Optional LoRA adapter ID for this tenant
+    #[allow(dead_code)] // Used for future LoRA application
+    lora_adapter_id: Option<String>,
 }
 
 impl TenantRuntime {
@@ -78,6 +83,7 @@ impl TenantRuntime {
             host_context,
             model_config: None,
             tenant_id,
+            lora_adapter_id: None,
         })
     }
 
@@ -240,6 +246,12 @@ pub struct RuntimeManager {
 
     /// Default model configuration
     default_model: Option<ModelConfig>,
+
+    /// LoRA manager for per-tenant adapters
+    lora_manager: Arc<LoRAManager>,
+
+    /// Per-tenant LoRA adapter mappings
+    tenant_lora_adapters: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl RuntimeManager {
@@ -268,6 +280,8 @@ impl RuntimeManager {
             wasm_module,
             runtimes: Arc::new(Mutex::new(HashMap::new())),
             default_model: None,
+            lora_manager: Arc::new(LoRAManager::new()),
+            tenant_lora_adapters: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -403,6 +417,17 @@ impl RuntimeManager {
                 };
                 runtime.load_model(model_config)?;
 
+                // Set LoRA adapter if configured for this tenant
+                let tenant_adapters = self.tenant_lora_adapters.lock().unwrap();
+                if let Some(adapter_id) = tenant_adapters.get(&tenant_id) {
+                    runtime.lora_adapter_id = Some(adapter_id.clone());
+                    info!(
+                        "LoRA adapter '{}' configured for tenant: {}",
+                        adapter_id, tenant_id
+                    );
+                }
+                drop(tenant_adapters);
+
                 // Insert atomically
                 entry.insert(runtime);
                 info!(
@@ -413,6 +438,57 @@ impl RuntimeManager {
         }
 
         Ok(())
+    }
+
+    /// Set LoRA adapter for a tenant
+    pub fn set_tenant_lora_adapter(
+        &self,
+        tenant_id: impl Into<String>,
+        adapter_id: impl Into<String>,
+    ) -> Result<()> {
+        let tenant_id = tenant_id.into();
+        let adapter_id = adapter_id.into();
+
+        // Validate adapter exists
+        if self.lora_manager.get_adapter(&adapter_id).is_none() {
+            return Err(anyhow!("LoRA adapter '{}' not found", adapter_id));
+        }
+
+        // Store mapping
+        let mut adapters = self.tenant_lora_adapters.lock().unwrap();
+        adapters.insert(tenant_id.clone(), adapter_id.clone());
+        drop(adapters);
+
+        // Update runtime if it exists
+        let mut runtimes = self.runtimes.lock().unwrap();
+        if let Some(runtime) = runtimes.get_mut(&tenant_id) {
+            runtime.lora_adapter_id = Some(adapter_id.clone());
+            info!(
+                "Updated LoRA adapter for tenant: {} to '{}'",
+                tenant_id, adapter_id
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Load a LoRA adapter
+    pub fn load_lora_adapter(&self, adapter: realm_runtime::lora::LoRAWeights) -> Result<()> {
+        let adapter_id = adapter.adapter_id.clone();
+        self.lora_manager.load_adapter(adapter)?;
+        info!("LoRA adapter loaded: {}", adapter_id);
+        Ok(())
+    }
+
+    /// Get LoRA manager (for external access)
+    pub fn lora_manager(&self) -> Arc<LoRAManager> {
+        self.lora_manager.clone()
+    }
+
+    /// Get LoRA adapter ID for a tenant (if configured)
+    pub fn get_tenant_lora_adapter(&self, tenant_id: impl AsRef<str>) -> Option<String> {
+        let adapters = self.tenant_lora_adapters.lock().unwrap();
+        adapters.get(tenant_id.as_ref()).cloned()
     }
 
     /// Resolve model name or URL to file path

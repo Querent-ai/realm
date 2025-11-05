@@ -72,7 +72,7 @@ fn main() -> Result<()> {
     let mut parser = GGUFParser::new(reader);
     parser.parse_header()?;
 
-    model.load_from_gguf(&mut tensor_loader, &mut parser)?;
+    model.load_from_gguf(&mut tensor_loader, &mut parser, None, None)?;
     log::info!("Weights loaded\n");
 
     // Setup usage tracking (optional - for cost/billing analytics)

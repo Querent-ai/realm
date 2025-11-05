@@ -26,6 +26,7 @@ class RealmWebSocketClient:
         self,
         url: str = "ws://localhost:8080",
         api_key: Optional[str] = None,
+        model: Optional[str] = None,
         tenant_id: Optional[str] = None,
         reconnect: bool = True,
         reconnect_interval: float = 5.0,
@@ -37,14 +38,22 @@ class RealmWebSocketClient:
         Args:
             url: WebSocket URL (default: "ws://localhost:8080")
             api_key: API key for authentication
-            tenant_id: Tenant ID for multi-tenancy
+            model: Model name or URL (required)
+            tenant_id: Tenant ID for multi-tenancy (auto-assigned if not provided)
             reconnect: Enable automatic reconnection (default: True)
             reconnect_interval: Reconnection interval in seconds (default: 5.0)
             timeout: Request timeout in seconds (default: 30.0)
         """
+        if not model:
+            raise ValueError("Model name or URL is required. Provide 'model' in options.")
+        
         self.url = url
         self.api_key = api_key
-        self.tenant_id = tenant_id
+        self.model = model
+        # Auto-assign tenant ID if not provided
+        self.tenant_id = tenant_id or str(uuid.uuid4())
+        if not tenant_id:
+            print(f"Auto-assigned tenant ID: {self.tenant_id}")
         self.reconnect = reconnect
         self.reconnect_interval = reconnect_interval
         self.timeout = timeout
@@ -59,8 +68,13 @@ class RealmWebSocketClient:
 
     async def connect(self) -> None:
         """Connect to the WebSocket server"""
-        if self._ws and not self._ws.closed:
-            return
+        if self._ws:
+            try:
+                # Check if connection is still open
+                await self._ws.ping()
+                return
+            except:
+                pass
 
         try:
             self._ws = await websockets.connect(self.url)
@@ -180,7 +194,7 @@ class RealmWebSocketClient:
         stream_callback: Optional[Callable] = None,
     ) -> FunctionResponse:
         """Send a function call and wait for response"""
-        if not self._ws or self._ws.closed:
+        if not self._ws:
             raise ConnectionError("WebSocket not connected. Call connect() first.")
 
         if not self._is_authenticated:
@@ -226,6 +240,7 @@ class RealmWebSocketClient:
         """
         response = await self._call_function("generate", {
             "prompt": options["prompt"],
+            "model": self.model,
             "max_tokens": options.get("max_tokens", 100),
             "temperature": options.get("temperature", 0.7),
             "stream": options.get("stream", False),
@@ -336,8 +351,11 @@ class RealmWebSocketClient:
             self._reconnect_task.cancel()
             self._reconnect_task = None
 
-        if self._ws and not self._ws.closed:
-            await self._ws.close()
+        if self._ws:
+            try:
+                await self._ws.close()
+            except:
+                pass
 
         self._pending_requests.clear()
         self._streaming_callbacks.clear()
@@ -345,7 +363,15 @@ class RealmWebSocketClient:
 
     def is_connected(self) -> bool:
         """Check if connected to server"""
-        return self._ws is not None and not self._ws.closed and self._is_authenticated
+        return self._ws is not None and self._is_authenticated
+
+    def get_model(self) -> str:
+        """Get the model name/URL"""
+        return self.model
+
+    def get_tenant_id(self) -> str:
+        """Get the tenant ID (auto-assigned or provided)"""
+        return self.tenant_id
 
     async def _reconnect(self) -> None:
         """Attempt to reconnect"""

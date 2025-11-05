@@ -1,0 +1,11 @@
+README.md
+setup.py
+realm/__init__.py
+realm/client.py
+realm/exceptions.py
+realm/types.py
+realm_ws_client.egg-info/PKG-INFO
+realm_ws_client.egg-info/SOURCES.txt
+realm_ws_client.egg-info/dependency_links.txt
+realm_ws_client.egg-info/requires.txt
+realm_ws_client.egg-info/top_level.txt
