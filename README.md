@@ -348,19 +348,31 @@ sequenceDiagram
     participant GPU
     
     Client->>Server: "What is the capital of France?"
+    activate Server
     Server->>WASM: Tokenize prompt
+    activate WASM
     WASM->>Runtime: Load model weights
+    activate Runtime
     Runtime->>GPU: Matrix multiplication
+    activate GPU
     GPU-->>Runtime: Logits
+    deactivate GPU
     Runtime-->>WASM: Hidden states
+    deactivate Runtime
     WASM->>WASM: Custom sampling logic
     WASM->>Runtime: Request next token
+    activate Runtime
     Runtime->>GPU: Forward pass
+    activate GPU
     GPU-->>Runtime: Next token logits
+    deactivate GPU
     Runtime-->>WASM: Token probabilities
+    deactivate Runtime
     WASM->>WASM: Sample token
     WASM-->>Server: "Paris"
+    deactivate WASM
     Server-->>Client: Stream response
+    deactivate Server
 ```
 
 ### Memory Isolation
@@ -371,14 +383,16 @@ graph TB
         TA["Tenant A<br/>Linear Memory<br/>2GB"]
         TB["Tenant B<br/>Linear Memory<br/>2GB"]
         TN["Tenant N<br/>Linear Memory<br/>2GB"]
-        style TA fill:#e1f5ff
-        style TB fill:#e1f5ff
-        style TN fill:#e1f5ff
+        style WASM fill:#0891b2,color:#fff
+        style TA fill:#06b6d4,color:#fff
+        style TB fill:#06b6d4,color:#fff
+        style TN fill:#06b6d4,color:#fff
     end
     
     subgraph HOST["HOST Memory (Shared)"]
         WEIGHTS["Model Weights<br/>7-70GB<br/>⚡ ONE COPY<br/>✅ READ-ONLY"]
-        style WEIGHTS fill:#fff4e1
+        style HOST fill:#dc2626,color:#fff
+        style WEIGHTS fill:#ef4444,color:#fff
     end
     
     TA -->|FFI calls| WEIGHTS
