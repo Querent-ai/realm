@@ -29,8 +29,11 @@ pub use fused_kernels::{FusedKernelConfig, Precision};
 pub use mixed_precision::{MixedPrecisionConfig, PrecisionMode};
 
 /// GPU backend for accelerated inference
+///
+/// Note: `wgpu::Device` is not `Send + Sync`, so we wrap it in a `Mutex` to make it thread-safe.
+/// The `queue` is already `Send + Sync` and can be used across threads.
 pub struct GpuBackend {
-    device: wgpu::Device,
+    device: std::sync::Mutex<wgpu::Device>,
     queue: wgpu::Queue,
     matmul_pipeline: wgpu::ComputePipeline,
 }
@@ -82,7 +85,7 @@ impl GpuBackend {
         });
 
         Ok(Self {
-            device,
+            device: std::sync::Mutex::new(device),
             queue,
             matmul_pipeline,
         })
@@ -107,24 +110,26 @@ impl GpuBackend {
             )));
         }
 
+        // Lock device for thread-safe access
+        let device = self
+            .device
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU device: {}", e)))?;
+
         // Create GPU buffers
-        let a_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("matrix A"),
-                contents: bytemuck::cast_slice(a),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let a_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("matrix A"),
+            contents: bytemuck::cast_slice(a),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
 
-        let b_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("matrix B"),
-                contents: bytemuck::cast_slice(b),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let b_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("matrix B"),
+            contents: bytemuck::cast_slice(b),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
 
-        let c_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let c_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("matrix C"),
             size: (m * n * 4) as u64, // 4 bytes per f32
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -133,17 +138,15 @@ impl GpuBackend {
 
         // Dimensions uniform buffer
         let dims = [m, k, n, 0u32]; // padding for alignment
-        let dims_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("dimensions"),
-                contents: bytemuck::cast_slice(&dims),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+        let dims_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dimensions"),
+            contents: bytemuck::cast_slice(&dims),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
 
         // Create bind group
         let bind_group_layout = self.matmul_pipeline.get_bind_group_layout(0);
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("matmul bind group"),
             layout: &bind_group_layout,
             entries: &[
@@ -167,11 +170,9 @@ impl GpuBackend {
         });
 
         // Encode and submit compute pass
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("matmul encoder"),
-            });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("matmul encoder"),
+        });
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -188,7 +189,7 @@ impl GpuBackend {
         }
 
         // Copy result to staging buffer
-        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("staging buffer"),
             size: (m * n * 4) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -206,7 +207,7 @@ impl GpuBackend {
             sender.send(result).unwrap();
         });
 
-        self.device.poll(wgpu::Maintain::Wait);
+        device.poll(wgpu::Maintain::Wait);
         pollster::block_on(receiver)
             .map_err(|_| Error::Runtime("Failed to receive buffer".to_string()))?
             .map_err(|e| Error::Runtime(format!("Failed to map buffer: {:?}", e)))?;
