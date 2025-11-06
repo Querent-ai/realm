@@ -81,10 +81,17 @@ impl FlashAttentionMetal {
             .map_err(|e| WasmChordError::Runtime(format!("Failed to transpose K: {}", e)))?;
 
         // Compute scores: [batch*num_heads, seq_len_q, seq_len_k]
-        let scores_base: Tensor = (q_reshaped
+        let scores_base = q_reshaped
             .matmul(&k_t)
-            .map_err(|e| WasmChordError::Runtime(format!("Failed to compute scores: {}", e)))?)
-            * scale;
+            .map_err(|e| WasmChordError::Runtime(format!("Failed to compute scores: {}", e)))?;
+
+        // Scale the scores
+        let scale_tensor = Tensor::new(&[scale], &self.device)
+            .map_err(|e| WasmChordError::Runtime(format!("Failed to create scale tensor: {}", e)))?
+            .broadcast_as(scores_base.shape())
+            .map_err(|e| WasmChordError::Runtime(format!("Failed to broadcast scale: {}", e)))?;
+        let scores_base = (&scores_base * &scale_tensor)
+            .map_err(|e| WasmChordError::Runtime(format!("Failed to scale scores: {}", e)))?;
 
         // Apply mask if provided (GPU-native implementation)
         let scores = if let Some(mask_data) = mask {
@@ -120,8 +127,8 @@ impl FlashAttentionMetal {
                 .where_cond(&mask_bool, &neg_inf)
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to apply mask: {}", e)))?
         } else {
-            Ok(scores_base)
-        }?;
+            scores_base
+        };
 
         // Apply softmax: softmax(scores)
         let scores_softmax = scores
