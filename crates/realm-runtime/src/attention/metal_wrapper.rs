@@ -81,7 +81,7 @@ impl FlashAttentionMetal {
             .map_err(|e| WasmChordError::Runtime(format!("Failed to transpose K: {}", e)))?;
 
         // Compute scores: [batch*num_heads, seq_len_q, seq_len_k]
-        let scores = q_reshaped
+        let scores_base = q_reshaped
             .matmul(&k_t)
             .map_err(|e| WasmChordError::Runtime(format!("Failed to compute scores: {}", e)))?
             * scale;
@@ -113,14 +113,14 @@ impl FlashAttentionMetal {
 
             let neg_inf = Tensor::new(&[f32::NEG_INFINITY], &self.device)
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to create -inf: {}", e)))?
-                .broadcast_as(scores.shape())
+                .broadcast_as(scores_base.shape())
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to broadcast -inf: {}", e)))?;
 
-            scores
+            scores_base
                 .where_cond(&mask_bool, &neg_inf)
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to apply mask: {}", e)))?
         } else {
-            Ok(scores)
+            Ok(scores_base)
         }?;
 
         // Apply softmax: softmax(scores)
