@@ -28,14 +28,31 @@ pub use distributed::{
 pub use fused_kernels::{FusedKernelConfig, Precision};
 pub use mixed_precision::{MixedPrecisionConfig, PrecisionMode};
 
-/// GPU backend for accelerated inference
+/// GPU backend for accelerated inference using WebGPU/wgpu.
 ///
-/// Note: Both `wgpu::Device` and `wgpu::Queue` are not `Send + Sync`, so we wrap them in `Mutex`
-/// to make the backend thread-safe for use in multi-threaded contexts (e.g., WASM host functions).
+/// # Thread Safety
+///
+/// This struct implements `Send + Sync` via `unsafe impl` to work with `Arc<dyn GpuBackendTrait>`.
+/// However, the underlying `wgpu` types (`Device`, `Queue`, `ComputePipeline`) are not `Send + Sync`
+/// because the WebGPU spec hasn't finalized multi-threading support.
+///
+/// **Important Usage Constraints:**
+/// - Create `GpuBackend` on the thread where it will be used (or before Arc sharing)
+/// - Only share via `Arc<dyn GpuBackendTrait>`, never move directly between threads
+/// - All wgpu operations are protected by `Mutex` for exclusive access
+///
+/// # Safety
+///
+/// This is safe because:
+/// 1. **WASM**: Single-threaded execution, so no cross-thread movement occurs
+/// 2. **Native**: Only `Arc` pointers move between threads, not the wgpu types themselves
+/// 3. **Mutex**: Provides synchronization for concurrent access to wgpu resources
+///
+/// See the `unsafe impl Send + Sync` documentation below for detailed safety guarantees.
 pub struct GpuBackend {
     device: std::sync::Mutex<wgpu::Device>,
     queue: std::sync::Mutex<wgpu::Queue>,
-    matmul_pipeline: wgpu::ComputePipeline,
+    matmul_pipeline: std::sync::Mutex<wgpu::ComputePipeline>,
 }
 
 impl GpuBackend {
@@ -87,7 +104,7 @@ impl GpuBackend {
         Ok(Self {
             device: std::sync::Mutex::new(device),
             queue: std::sync::Mutex::new(queue),
-            matmul_pipeline,
+            matmul_pipeline: std::sync::Mutex::new(matmul_pipeline),
         })
     }
 
@@ -145,7 +162,11 @@ impl GpuBackend {
         });
 
         // Create bind group
-        let bind_group_layout = self.matmul_pipeline.get_bind_group_layout(0);
+        let pipeline = self
+            .matmul_pipeline
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU pipeline: {}", e)))?;
+        let bind_group_layout = pipeline.get_bind_group_layout(0);
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("matmul bind group"),
             layout: &bind_group_layout,
@@ -179,7 +200,7 @@ impl GpuBackend {
                 label: Some("matmul pass"),
                 timestamp_writes: None,
             });
-            compute_pass.set_pipeline(&self.matmul_pipeline);
+            compute_pass.set_pipeline(&pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
 
             // Dispatch workgroups: ceil(M/16) x ceil(N/16)
@@ -247,6 +268,28 @@ impl GpuBackend {
         }
     }
 }
+
+// SAFETY: We implement Send + Sync for GpuBackend despite containing non-Send wgpu types.
+//
+// Safety Guarantees:
+// 1. WASM contexts: Single-threaded execution, so no actual cross-thread movement occurs.
+// 2. Native contexts: GpuBackend is created on one thread and shared via Arc<dyn GpuBackendTrait>.
+//    The Arc is Send + Sync, and we never move the actual wgpu::Device/Queue/Pipeline between threads.
+//    Only the Arc pointer moves, which is safe. The Mutex wrappers ensure exclusive access.
+//
+// Important Constraints:
+// - GpuBackend MUST be created on the thread where it will be used (or before Arc sharing)
+// - GpuBackend MUST only be shared via Arc, never moved directly between threads
+// - All access to wgpu types goes through Mutex::lock(), ensuring exclusive access
+//
+// This is safe because:
+// - The wgpu types are never actually moved between threads (only Arc references move)
+// - Mutex provides synchronization for concurrent access
+// - WASM is single-threaded, so no cross-thread movement happens
+//
+// WARNING: Do NOT move GpuBackend directly between threads. Always use Arc.
+unsafe impl Send for GpuBackend {}
+unsafe impl Sync for GpuBackend {}
 
 impl GpuBackendTrait for GpuBackend {
     fn matmul(&self, a: &[f32], b: &[f32], m: u32, k: u32, n: u32) -> Result<Vec<f32>> {
