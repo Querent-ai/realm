@@ -14,7 +14,7 @@ use realm_compute_cpu::{
 use realm_core::error::Result;
 
 #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
-use realm_gpu::GpuBackendTrait;
+use realm_compute_gpu::GpuBackendTrait;
 
 use crate::weight_format::WeightFormat;
 
