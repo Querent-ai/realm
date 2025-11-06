@@ -120,8 +120,8 @@ impl FlashAttentionMetal {
                 .where_cond(&mask_bool, &neg_inf)
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to apply mask: {}", e)))?
         } else {
-            scores
-        };
+            Ok(scores)
+        }?;
 
         // Apply softmax: softmax(scores)
         let scores_softmax = scores
