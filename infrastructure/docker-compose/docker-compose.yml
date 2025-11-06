@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # Realm WebSocket Server
+  realm-server:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"  # WebSocket
+      - "9090:9090"  # Metrics
+    environment:
+      - RUST_LOG=info
+      - REALM_MODEL_DIR=/models
+    volumes:
+      - ./models:/models:ro
+      - ./wasm:/wasm:ro
+    command: serve --host 0.0.0.0 --port 8080 --wasm /wasm/realm_wasm.wasm --model /models/default.gguf
+    restart: unless-stopped
+    networks:
+      - realm-network
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - realm-network
+    depends_on:
+      - realm-server
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - realm-network
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  realm-network:
+    driver: bridge
+

@@ -1,0 +1,8 @@
+==========================================
+Comprehensive Stack Verification
+==========================================
+Timestamp: 20251105_154514
+Model path: /home/puneet/.ollama/models/tinyllama-1.1b.Q4_K_M.gguf
+
+=== Step 1: Compilation Check ===
+✅ All crates compile successfully

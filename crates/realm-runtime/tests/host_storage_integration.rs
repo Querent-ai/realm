@@ -5,7 +5,7 @@
 //! 2. Retrieve and dequantize tensors
 //! 3. Verify memory efficiency
 
-use realm_runtime::model_storage::GLOBAL_MODEL_STORAGE;
+use realm_runtime::model_storage::get_global_model_storage;
 use std::fs;
 
 #[test]
@@ -24,16 +24,21 @@ fn test_store_and_retrieve_model() {
 
     // Store model
     println!("💾 Storing model in HOST storage...");
-    let model_id = GLOBAL_MODEL_STORAGE
+    let model_id = get_global_model_storage()
+        .lock()
         .store_model(&gguf_bytes, None)
         .expect("Failed to store model");
 
     println!("✅ Model stored with ID: {}", model_id);
 
     // Verify model info
-    let model = GLOBAL_MODEL_STORAGE
-        .get_model(model_id)
-        .expect("Failed to get model");
+    let model = {
+        let storage = get_global_model_storage().lock();
+        storage
+            .get_model(model_id)
+            .expect("Failed to get model")
+            .clone()
+    };
 
     println!("📊 Model info:");
     println!("  - Tensors: {}", model.tensor_count());
@@ -50,9 +55,18 @@ fn test_store_and_retrieve_model() {
     println!("🔍 Testing tensor retrieval...");
     let tensor_name = "token_embd.weight";
 
-    let tensor = GLOBAL_MODEL_STORAGE
-        .get_tensor(model_id, tensor_name)
-        .expect("Failed to get tensor");
+    let tensor = {
+        let storage = get_global_model_storage().lock();
+        let model = storage
+            .get_model(model_id)
+            .expect("Failed to get model")
+            .clone();
+        drop(storage);
+        model
+            .get_tensor(tensor_name)
+            .expect("Tensor not found")
+            .clone()
+    };
 
     println!("✅ Retrieved tensor '{}'", tensor_name);
     println!("  - Size: {} bytes", tensor.size_bytes());
@@ -90,7 +104,8 @@ fn test_store_and_retrieve_model() {
 
     // Cleanup
     println!("🧹 Cleaning up...");
-    GLOBAL_MODEL_STORAGE
+    get_global_model_storage()
+        .lock()
         .remove_model(model_id)
         .expect("Failed to remove model");
 
@@ -106,7 +121,8 @@ fn test_storage_thread_safety() {
     let dummy_gguf = create_dummy_gguf();
 
     // Store model
-    let model_id = GLOBAL_MODEL_STORAGE
+    let model_id = get_global_model_storage()
+        .lock()
         .store_model(&dummy_gguf, None)
         .expect("Failed to store dummy model");
 
@@ -116,7 +132,7 @@ fn test_storage_thread_safety() {
             let mid = model_id;
             thread::spawn(move || {
                 for _ in 0..100 {
-                    let _model = GLOBAL_MODEL_STORAGE.get_model(mid);
+                    let _model = get_global_model_storage().lock().get_model(mid);
                     // Simulate work
                     std::thread::sleep(std::time::Duration::from_micros(10));
                 }
@@ -131,7 +147,8 @@ fn test_storage_thread_safety() {
     }
 
     // Cleanup
-    GLOBAL_MODEL_STORAGE
+    get_global_model_storage()
+        .lock()
         .remove_model(model_id)
         .expect("Failed to remove dummy model");
 

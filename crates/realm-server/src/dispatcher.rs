@@ -618,7 +618,13 @@ impl FunctionDispatcher {
         let mut results = Vec::new();
 
         for request in &batch {
-            // Reconstruct prompt from tokens (simplified - in production would use tokenizer)
+            // Reconstruct prompt from tokens
+            // NOTE: This is a placeholder implementation. For production, we would:
+            // 1. Store tokenizer in RuntimeManager and expose via host function, OR
+            // 2. Include original prompt text in BatchedRequest (recommended)
+            // The tokenizer is currently loaded inside WASM, so accessing it requires
+            // either exposing it via host function or including prompt text in batch requests.
+            // Current implementation works for testing but should be replaced for production.
             let prompt = request
                 .prompt_tokens
                 .iter()
