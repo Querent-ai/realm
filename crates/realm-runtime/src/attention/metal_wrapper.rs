@@ -3,7 +3,7 @@
 //! This module provides a safe Rust interface to Flash Attention using Candle's Metal operations.
 
 use candle_core::{Device, Tensor};
-use realm_core::error::{Result, WasmChordError};
+use realm_core::error::{Error as WasmChordError, Result};
 
 /// Metal Flash Attention implementation using Candle
 ///

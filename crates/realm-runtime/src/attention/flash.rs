@@ -186,7 +186,7 @@ impl FlashAttention {
             return;
         }
 
-        // Scalar fallback
+        // Scalar fallback (for non-x86_64 and non-aarch64, or when SIMD not available)
         Self::weighted_add_scalar(output, vector, weight);
     }
 

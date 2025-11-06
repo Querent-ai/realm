@@ -4,7 +4,7 @@
 //! The raw CUDA kernel in `flash_attention.cu` can be linked later for even better performance.
 
 use candle_core::{Device, Result as CandleResult, Tensor};
-use realm_core::error::{Result, WasmChordError};
+use realm_core::error::{Error as WasmChordError, Result};
 
 /// CUDA Flash Attention implementation using Candle
 ///
