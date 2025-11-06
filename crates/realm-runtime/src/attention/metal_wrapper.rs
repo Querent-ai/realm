@@ -3,6 +3,7 @@
 //! This module provides a safe Rust interface to Flash Attention using Candle's Metal operations.
 
 use candle_core::{Device, Tensor};
+use candle_nn::ops;
 use realm_core::error::{Error as WasmChordError, Result};
 
 /// Metal Flash Attention implementation using Candle
@@ -131,8 +132,7 @@ impl FlashAttentionMetal {
         };
 
         // Apply softmax: softmax(scores)
-        let scores_softmax = scores
-            .softmax_last_dim()
+        let scores_softmax = ops::softmax_last_dim(&scores)
             .map_err(|e| WasmChordError::Runtime(format!("Failed to apply softmax: {}", e)))?;
 
         // Reshape V: [batch*num_heads, seq_len_k, head_dim]

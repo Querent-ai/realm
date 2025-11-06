@@ -4,6 +4,7 @@
 //! The raw CUDA kernel in `flash_attention.cu` can be linked later for even better performance.
 
 use candle_core::{Device, Result as CandleResult, Tensor};
+use candle_nn::ops;
 use realm_core::error::{Error as WasmChordError, Result};
 
 /// CUDA Flash Attention implementation using Candle
@@ -128,8 +129,7 @@ impl FlashAttentionCuda {
         };
 
         // Apply softmax: softmax(scores)
-        let scores_softmax = scores
-            .softmax_last_dim()
+        let scores_softmax = ops::softmax_last_dim(&scores)
             .map_err(|e| WasmChordError::Runtime(format!("Failed to apply softmax: {}", e)))?;
 
         // Reshape V: [batch*num_heads, seq_len_k, head_dim]
