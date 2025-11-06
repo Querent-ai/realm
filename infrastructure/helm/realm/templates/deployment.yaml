@@ -96,14 +96,10 @@ spec:
           failureThreshold: 3
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
-        {{- if .Values.gpu.enabled }}
-        {{- if .Values.gpu.count }}
-        {{- range $i := until (.Values.gpu.count | int) }}
-        - name: nvidia.com/gpu
-          value: "1"
-        {{- end }}
-        {{- end }}
-        {{- end }}
+          {{- if and .Values.gpu.enabled .Values.gpu.count }}
+          limits:
+            nvidia.com/gpu: {{ .Values.gpu.count }}
+          {{- end }}
         volumeMounts:
         {{- if eq .Values.modelStorage.type "pvc" }}
         - name: models
@@ -130,28 +126,30 @@ spec:
       {{- with .Values.extraVolumes }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
+      {{- $nodeSelector := dict }}
+      {{- if .Values.nodeSelector }}
+        {{- $nodeSelector = .Values.nodeSelector }}
       {{- end }}
-      {{- if .Values.gpu.enabled }}
-      {{- with .Values.gpu.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
+      {{- if and .Values.gpu.enabled .Values.gpu.nodeSelector }}
+        {{- $nodeSelector = merge $nodeSelector .Values.gpu.nodeSelector }}
       {{- end }}
+      {{- if $nodeSelector }}
+      nodeSelector:
+        {{- toYaml $nodeSelector | nindent 8 }}
       {{- end }}
       {{- with .Values.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
+      {{- $tolerations := list }}
+      {{- if .Values.tolerations }}
+        {{- $tolerations = .Values.tolerations }}
       {{- end }}
-      {{- if .Values.gpu.enabled }}
-      {{- with .Values.gpu.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
+      {{- if and .Values.gpu.enabled .Values.gpu.tolerations }}
+        {{- $tolerations = concat $tolerations .Values.gpu.tolerations }}
       {{- end }}
+      {{- if $tolerations }}
+      tolerations:
+        {{- toYaml $tolerations | nindent 8 }}
       {{- end }}
 

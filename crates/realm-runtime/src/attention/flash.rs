@@ -332,17 +332,8 @@ impl FlashAttention {
     #[cfg(feature = "webgpu")]
     pub fn is_webgpu_available() -> bool {
         // Check if WebGPU is available (using wgpu)
-        // Note: This requires webgpu feature to be enabled in realm-compute-gpu
-        // For now, return false if the feature isn't available
-        #[cfg(feature = "webgpu")]
-        {
-            use realm_compute_gpu::GpuBackend;
-            GpuBackend::is_available()
-        }
-        #[cfg(not(feature = "webgpu"))]
-        {
-            false
-        }
+        use realm_compute_gpu::GpuBackend;
+        GpuBackend::is_available()
     }
 
     #[cfg(not(feature = "webgpu"))]

@@ -9,9 +9,9 @@ keywords:
   - inference
   - multi-tenant
   - gpu
-home: https://github.com/yourusername/realm
+home: https://github.com/querent-ai/realm
 sources:
-  - https://github.com/yourusername/realm
+  - https://github.com/querent-ai/realm
 maintainers:
   - name: Realm Team
     email: puneet@querent.xyz

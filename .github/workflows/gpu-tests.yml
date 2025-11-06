@@ -152,13 +152,13 @@ jobs:
       - name: Run GPU unit tests
         run: |
           # Test fused kernels
-          cargo test --package realm-compute-gpu --lib fused_kernels
+          cargo test --package realm-compute-gpu --lib -- fused_kernels
           
           # Test mixed precision
-          cargo test --package realm-compute-gpu --lib mixed_precision
+          cargo test --package realm-compute-gpu --lib -- mixed_precision
           
           # Test candle backend (may not have GPU, but should compile)
-          cargo test --package realm-compute-gpu --lib candle_backend || echo "Candle backend tests may require GPU"
+          cargo test --package realm-compute-gpu --lib -- candle_backend || echo "Candle backend tests may require GPU"
 
       - name: Run GPU feature tests
         run: |

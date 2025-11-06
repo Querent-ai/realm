@@ -101,6 +101,12 @@ variable "max_tenants" {
   default     = 16
 }
 
+variable "binary_url" {
+  description = "URL to download the Realm binary. If not provided, service will not start automatically."
+  type        = string
+  default     = null
+}
+
 variable "tags" {
   description = "Additional tags"
   type        = map(string)
@@ -115,7 +121,7 @@ data "aws_ami" "ubuntu" {
 
   filter {
     name   = "name"
-    values = ["ubuntu/images/hubuntu-22.04-amd64-server-*"]
+    values = ["ubuntu/images/ubuntu-22.04-amd64-server-*"]
   }
 
   filter {
@@ -220,7 +226,7 @@ locals {
     
     # Update system
     apt-get update
-    apt-get install -y curl wget unzip
+    apt-get install -y curl wget unzip awscli
     
     # Install Rust
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -236,9 +242,13 @@ locals {
     mkdir -p /opt/realm/{bin,wasm,models}
     
     # Download Realm binary (from releases or build)
-    # TODO: Replace with actual download URL
-    # wget -O /opt/realm/bin/realm https://github.com/yourusername/realm/releases/download/v0.1.0/realm-linux-amd64
-    # chmod +x /opt/realm/bin/realm
+    # Download Realm binary (if binary_url is provided)
+    %{ if var.binary_url != null ~}
+    wget -O /opt/realm/bin/realm "${var.binary_url}"
+    chmod +x /opt/realm/bin/realm
+    %{ else ~}
+    echo "WARNING: Realm binary URL not provided. Service will not start until binary is installed."
+    %{ endif ~}
     
     # Download WASM module
     %{ if var.wasm_path != null ~}
@@ -272,6 +282,10 @@ locals {
       --max-tenants ${var.max_tenants}
     Restart=always
     RestartSec=10
+    %{ if var.binary_url == null ~}
+    # Service disabled - binary not available
+    ConditionPathExists=/opt/realm/bin/realm
+    %{ endif ~}
     
     [Install]
     WantedBy=multi-user.target
@@ -279,7 +293,11 @@ locals {
     
     systemctl daemon-reload
     systemctl enable realm
+    %{ if var.binary_url != null ~}
     systemctl start realm
+    %{ else ~}
+    echo "Service enabled but not started - binary not available"
+    %{ endif ~}
   EOF
 }
 

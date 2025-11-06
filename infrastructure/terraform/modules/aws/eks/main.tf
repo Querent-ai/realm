@@ -207,7 +207,7 @@ resource "aws_eks_node_group" "realm" {
     content {
       key    = "nvidia.com/gpu"
       value  = "true"
-      effect = "NO_SCHEDULE"
+      effect = "NoSchedule"
     }
   }
 
