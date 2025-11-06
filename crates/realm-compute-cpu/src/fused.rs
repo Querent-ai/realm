@@ -349,16 +349,19 @@ pub fn fused_dequant_matmul_q4k(
                     }
 
                     // Scalar fallback with manual unrolling
-                    q4k_accumulate_scalar(
-                        &mut accumulator,
-                        &block.qs[q_offset..q_offset + 32],
-                        &input_row[input_offset..],
-                        d1,
-                        m1,
-                        d2,
-                        m2,
-                        32,
-                    );
+                    #[cfg(not(target_arch = "aarch64"))]
+                    {
+                        q4k_accumulate_scalar(
+                            &mut accumulator,
+                            &block.qs[q_offset..q_offset + 32],
+                            &input_row[input_offset..],
+                            d1,
+                            m1,
+                            d2,
+                            m2,
+                            32,
+                        );
+                    }
                 }
             }
 
@@ -614,15 +617,18 @@ pub fn fused_dequant_matmul_q8k(
                     }
 
                     // Scalar fallback
-                    q8k_accumulate_scalar(
-                        &mut accumulator,
-                        &block.quants[quant_offset..quant_offset + 8],
-                        &input_row[input_offset..input_offset + 8],
-                        d,
-                        scale,
-                        min,
-                        8,
-                    );
+                    #[cfg(not(target_arch = "aarch64"))]
+                    {
+                        q8k_accumulate_scalar(
+                            &mut accumulator,
+                            &block.quants[quant_offset..quant_offset + 8],
+                            &input_row[input_offset..input_offset + 8],
+                            d,
+                            scale,
+                            min,
+                            8,
+                        );
+                    }
                 }
             }
 
@@ -900,20 +906,23 @@ pub fn fused_dequant_matmul_q5k(
                     }
 
                     // Scalar fallback
-                    for chunk in 0..2 {
-                        let chunk_ql_offset = ql_offset + chunk * 4;
-                        let chunk_input_offset = input_offset + chunk * 8;
-                        let qh_byte = block.qh[qh_offset + chunk];
+                    #[cfg(not(target_arch = "aarch64"))]
+                    {
+                        for chunk in 0..2 {
+                            let chunk_ql_offset = ql_offset + chunk * 4;
+                            let chunk_input_offset = input_offset + chunk * 8;
+                            let qh_byte = block.qh[qh_offset + chunk];
 
-                        q5k_accumulate_scalar(
-                            &mut accumulator,
-                            &block.ql[chunk_ql_offset..chunk_ql_offset + 4],
-                            qh_byte,
-                            &input_row[chunk_input_offset..chunk_input_offset + 8],
-                            d,
-                            scale,
-                            8,
-                        );
+                            q5k_accumulate_scalar(
+                                &mut accumulator,
+                                &block.ql[chunk_ql_offset..chunk_ql_offset + 4],
+                                qh_byte,
+                                &input_row[chunk_input_offset..chunk_input_offset + 8],
+                                d,
+                                scale,
+                                8,
+                            );
+                        }
                     }
                 }
             }
