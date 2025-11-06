@@ -58,7 +58,7 @@ impl FlashAttentionMetal {
         .map_err(|e| WasmChordError::Runtime(format!("Failed to create V tensor: {}", e)))?;
 
         // Compute attention scores: Q @ K^T / sqrt(head_dim)
-        let scale = 1.0 / (head_dim as f64).sqrt();
+        let scale = (1.0 / (head_dim as f64).sqrt()) as f32;
 
         // Reshape for matmul: [batch*num_heads, seq_len, head_dim]
         let q_flat = q_tensor
@@ -81,9 +81,9 @@ impl FlashAttentionMetal {
             .map_err(|e| WasmChordError::Runtime(format!("Failed to transpose K: {}", e)))?;
 
         // Compute scores: [batch*num_heads, seq_len_q, seq_len_k]
-        let scores_base = q_reshaped
+        let scores_base: Tensor = (q_reshaped
             .matmul(&k_t)
-            .map_err(|e| WasmChordError::Runtime(format!("Failed to compute scores: {}", e)))?
+            .map_err(|e| WasmChordError::Runtime(format!("Failed to compute scores: {}", e)))?)
             * scale;
 
         // Apply mask if provided (GPU-native implementation)
@@ -104,7 +104,7 @@ impl FlashAttentionMetal {
             // Apply mask: where mask is 0, set scores to -inf
             let mask_bool = mask_expanded
                 .gt(
-                    &Tensor::zeros(&mask_expanded.shape(), mask_expanded.dtype(), &self.device)
+                    &Tensor::zeros(mask_expanded.shape(), mask_expanded.dtype(), &self.device)
                         .map_err(|e| {
                             WasmChordError::Runtime(format!("Failed to create zeros: {}", e))
                         })?,

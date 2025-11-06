@@ -186,8 +186,20 @@ impl FlashAttention {
             return;
         }
 
-        // Scalar fallback (for non-x86_64 and non-aarch64, or when SIMD not available)
-        Self::weighted_add_scalar(output, vector, weight);
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            // Scalar fallback (for non-x86_64 and non-aarch64)
+            Self::weighted_add_scalar(output, vector, weight);
+        }
+
+        #[cfg(all(
+            target_arch = "x86_64",
+            not(any(target_feature = "avx2", target_feature = "fma"))
+        ))]
+        {
+            // Scalar fallback when AVX2/FMA not available
+            Self::weighted_add_scalar(output, vector, weight);
+        }
     }
 
     /// AVX2 weighted add
