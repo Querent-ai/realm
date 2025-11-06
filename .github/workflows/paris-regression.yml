@@ -159,6 +159,16 @@ jobs:
           cargo build --release --bin realm
           echo "✅ Server build complete"
 
+      - name: Build Native Rust Example
+        run: |
+          echo "🔨 Building Native Rust example..."
+          cargo build --release --bin paris-native || {
+            echo "❌ Build failed"
+            exit 1
+          }
+          echo "✅ Build complete"
+          ls -lh target/release/paris-native || echo "⚠️  Binary not found"
+
       - name: Test Native Rust Stack
         id: test-native
         continue-on-error: true
@@ -169,11 +179,6 @@ jobs:
           
           # Initialize output to failed (will be overwritten on success)
           echo "native=failed" >> $GITHUB_OUTPUT
-          
-          cd examples/paris/native || {
-            echo "❌ Failed to cd to examples/paris/native"
-            exit 1
-          }
           
           MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
           echo "Model path: $MODEL_PATH"
@@ -189,9 +194,9 @@ jobs:
           
           echo "✅ Model file found, running test..."
           
-          # Run test and capture exit code
+          # Run test using pre-built binary (faster, no compilation)
           set +e
-          timeout 120 cargo run --release -- "$MODEL_PATH" "What is the capital of France?" 2>&1 | tee /tmp/native.log
+          timeout 180 ./target/release/paris-native "$MODEL_PATH" "What is the capital of France?" 2>&1 | tee /tmp/native.log
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
           
@@ -240,7 +245,8 @@ jobs:
           }
           
           echo "Installing Node.js dependencies..."
-          npm ci || npm install || {
+          # Use npm install (npm ci requires package-lock.json which may not exist in CI)
+          npm install || {
             echo "❌ Failed to install Node.js dependencies"
             exit 1
           }
