@@ -80,34 +80,66 @@ jobs:
 
       - name: Download model if not cached
         if: steps.model-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         run: |
-          mkdir -p ~/.realm/models
+          MODEL_DIR="$HOME/.realm/models"
+          MODEL_PATH="$MODEL_DIR/${{ env.MODEL_NAME }}"
+          mkdir -p "$MODEL_DIR"
           echo "📥 Downloading model from HuggingFace..."
-          wget -q --show-progress --progress=bar:force:noscroll \
-            -O ~/.realm/models/${{ env.MODEL_NAME }} \
-            ${{ env.MODEL_URL }} || \
-          curl -L --progress-bar \
-            -o ~/.realm/models/${{ env.MODEL_NAME }} \
-            ${{ env.MODEL_URL }}
+          echo "   URL: ${{ env.MODEL_URL }}"
+          echo "   Destination: $MODEL_PATH"
+          echo "   Directory: $MODEL_DIR"
           
-          echo "✅ Model downloaded"
-          ls -lh ~/.realm/models/${{ env.MODEL_NAME }}
+          # Try wget first, fallback to curl
+          if command -v wget &> /dev/null; then
+            echo "   Using wget..."
+            wget --no-verbose --show-progress \
+              -O "$MODEL_PATH" \
+              "${{ env.MODEL_URL }}" || {
+              echo "⚠️  wget failed, trying curl..."
+              curl -L --progress-bar \
+                -o "$MODEL_PATH" \
+                "${{ env.MODEL_URL }}"
+            }
+          else
+            echo "   Using curl..."
+            curl -L --progress-bar \
+              -o "$MODEL_PATH" \
+              "${{ env.MODEL_URL }}"
+          fi
           
-          # Verify file size (should be ~640MB)
-          FILE_SIZE=$(stat -c%s ~/.realm/models/${{ env.MODEL_NAME }} 2>/dev/null || stat -f%z ~/.realm/models/${{ env.MODEL_NAME }})
-          if [ $FILE_SIZE -lt 500000000 ]; then
-            echo "❌ Model file seems too small: $FILE_SIZE bytes"
+          # Check if download succeeded
+          if [ ! -f "$MODEL_PATH" ]; then
+            echo "❌ Model file not created after download!"
             exit 1
           fi
+          
+          echo "✅ Model downloaded"
+          ls -lh "$MODEL_PATH"
+          
+          # Verify file size (should be ~640MB)
+          FILE_SIZE=$(stat -c%s "$MODEL_PATH" 2>/dev/null || stat -f%z "$MODEL_PATH")
+          FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
+          echo "   File size: $FILE_SIZE bytes (${FILE_SIZE_MB}MB)"
+          if [ $FILE_SIZE -lt 500000000 ]; then
+            echo "❌ Model file seems too small: $FILE_SIZE bytes (expected > 500MB)"
+            echo "   This might indicate a failed or partial download"
+            exit 1
+          fi
+          
+          echo "✅ Model download verified"
 
       - name: Verify model exists
         run: |
-          if [ ! -f ~/.realm/models/${{ env.MODEL_NAME }} ]; then
-            echo "❌ Model file not found!"
+          MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
+          if [ ! -f "$MODEL_PATH" ]; then
+            echo "❌ Model file not found: $MODEL_PATH"
+            echo "   Listing $HOME/.realm/models:"
+            ls -la "$HOME/.realm/models" || echo "   Directory does not exist"
             exit 1
           fi
-          echo "✅ Model file verified: ~/.realm/models/${{ env.MODEL_NAME }}"
-          ls -lh ~/.realm/models/${{ env.MODEL_NAME }}
+          echo "✅ Model file verified: $MODEL_PATH"
+          ls -lh "$MODEL_PATH"
 
       - name: Build workspace
         run: |
@@ -129,29 +161,44 @@ jobs:
 
       - name: Test Native Rust Stack
         id: test-native
+        continue-on-error: true
         run: |
           echo "=========================================="
           echo "1️⃣ Testing Native Rust Stack"
           echo "=========================================="
           
           cd examples/paris/native
-          MODEL_PATH=~/.realm/models/${{ env.MODEL_NAME }}
+          MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
           
-          timeout 120 cargo run --release -- "${MODEL_PATH}" "What is the capital of France?" 2>&1 | tee /tmp/native.log
+          echo "Model path: $MODEL_PATH"
+          if [ ! -f "$MODEL_PATH" ]; then
+            echo "❌ Model file not found: $MODEL_PATH"
+            exit 1
+          fi
           
+          # Run test and capture exit code
+          set +e
+          timeout 120 cargo run --release -- "$MODEL_PATH" "What is the capital of France?" 2>&1 | tee /tmp/native.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          
+          # Check for Paris in output
           if grep -qi "paris" /tmp/native.log && grep -qi "SUCCESS" /tmp/native.log; then
             echo "✅ Native Rust: PASSED - Produces 'Paris'"
             echo "native=passed" >> $GITHUB_OUTPUT
+            exit 0
           else
             echo "❌ Native Rust: FAILED"
-            echo "Last 20 lines:"
-            tail -20 /tmp/native.log
+            echo "Exit code: $EXIT_CODE"
+            echo "Last 30 lines:"
+            tail -30 /tmp/native.log
             echo "native=failed" >> $GITHUB_OUTPUT
             exit 1
           fi
 
       - name: Test Node.js SDK Stack
         id: test-nodejs
+        continue-on-error: true
         run: |
           echo "=========================================="
           echo "2️⃣ Testing Node.js SDK Stack"
@@ -163,38 +210,47 @@ jobs:
           
           # Start server in background
           cd ../..
+          MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
+          echo "Starting server with model: $MODEL_PATH"
           timeout 180 target/release/realm serve \
             --host 127.0.0.1 \
             --port 8080 \
             --wasm target/wasm32-unknown-unknown/release/realm_wasm.wasm \
-            --model ~/.realm/models/${{ env.MODEL_NAME }} \
+            --model "$MODEL_PATH" \
             > /tmp/server_node.log 2>&1 &
           SERVER_PID=$!
           echo "Server PID: $SERVER_PID"
           
           # Wait for server to be ready
           echo "⏳ Waiting for server to be ready..."
+          SERVER_READY=false
           for i in {1..30}; do
             if curl -s http://127.0.0.1:8080/health > /dev/null 2>&1; then
               echo "✅ Server is ready"
+              SERVER_READY=true
               break
-            fi
-            if [ $i -eq 30 ]; then
-              echo "❌ Server failed to start"
-              cat /tmp/server_node.log
-              kill $SERVER_PID 2>/dev/null || true
-              exit 1
             fi
             sleep 2
           done
           
+          if [ "$SERVER_READY" != "true" ]; then
+            echo "❌ Server failed to start"
+            cat /tmp/server_node.log
+            kill $SERVER_PID 2>/dev/null || true
+            echo "nodejs=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
           sleep 3
           
           # Run Node.js SDK test
+          set +e
           cd examples/paris/nodejs-sdk
           REALM_URL=ws://localhost:8080 \
           REALM_MODEL=${{ env.MODEL_NAME }} \
           timeout 60 node index.js 2>&1 | tee /tmp/nodejs.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
           
           # Stop server
           kill $SERVER_PID 2>/dev/null || true
@@ -203,16 +259,19 @@ jobs:
           if grep -qi "paris" /tmp/nodejs.log && grep -qi "SUCCESS" /tmp/nodejs.log; then
             echo "✅ Node.js SDK: PASSED - Produces 'Paris'"
             echo "nodejs=passed" >> $GITHUB_OUTPUT
+            exit 0
           else
             echo "❌ Node.js SDK: FAILED"
-            echo "Last 20 lines:"
-            tail -20 /tmp/nodejs.log
+            echo "Exit code: $EXIT_CODE"
+            echo "Last 30 lines:"
+            tail -30 /tmp/nodejs.log
             echo "nodejs=failed" >> $GITHUB_OUTPUT
             exit 1
           fi
 
       - name: Test Python SDK Stack
         id: test-python
+        continue-on-error: true
         run: |
           echo "=========================================="
           echo "3️⃣ Testing Python SDK Stack"
@@ -229,38 +288,47 @@ jobs:
           
           # Start server in background
           cd ../..
+          MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
+          echo "Starting server with model: $MODEL_PATH"
           timeout 180 target/release/realm serve \
             --host 127.0.0.1 \
             --port 8081 \
             --wasm target/wasm32-unknown-unknown/release/realm_wasm.wasm \
-            --model ~/.realm/models/${{ env.MODEL_NAME }} \
+            --model "$MODEL_PATH" \
             > /tmp/server_python.log 2>&1 &
           SERVER_PID=$!
           echo "Server PID: $SERVER_PID"
           
           # Wait for server to be ready
           echo "⏳ Waiting for server to be ready..."
+          SERVER_READY=false
           for i in {1..30}; do
             if curl -s http://127.0.0.1:8081/health > /dev/null 2>&1; then
               echo "✅ Server is ready"
+              SERVER_READY=true
               break
-            fi
-            if [ $i -eq 30 ]; then
-              echo "❌ Server failed to start"
-              cat /tmp/server_python.log
-              kill $SERVER_PID 2>/dev/null || true
-              exit 1
             fi
             sleep 2
           done
           
+          if [ "$SERVER_READY" != "true" ]; then
+            echo "❌ Server failed to start"
+            cat /tmp/server_python.log
+            kill $SERVER_PID 2>/dev/null || true
+            echo "python=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
           sleep 3
           
           # Run Python SDK test
+          set +e
           cd examples/paris/python-sdk
           REALM_URL=ws://localhost:8081 \
           REALM_MODEL=${{ env.MODEL_NAME }} \
           timeout 60 python3 main.py 2>&1 | tee /tmp/python.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
           
           # Stop server
           kill $SERVER_PID 2>/dev/null || true
@@ -269,10 +337,12 @@ jobs:
           if grep -qi "paris" /tmp/python.log && grep -qi "SUCCESS" /tmp/python.log; then
             echo "✅ Python SDK: PASSED - Produces 'Paris'"
             echo "python=passed" >> $GITHUB_OUTPUT
+            exit 0
           else
             echo "❌ Python SDK: FAILED"
-            echo "Last 20 lines:"
-            tail -20 /tmp/python.log
+            echo "Exit code: $EXIT_CODE"
+            echo "Last 30 lines:"
+            tail -30 /tmp/python.log
             echo "python=failed" >> $GITHUB_OUTPUT
             exit 1
           fi
@@ -284,18 +354,29 @@ jobs:
           echo "📊 Paris Generation Regression Summary"
           echo "=========================================="
           echo ""
-          echo "Native Rust: ${{ steps.test-native.outputs.native }}"
-          echo "Node.js SDK: ${{ steps.test-nodejs.outputs.nodejs }}"
-          echo "Python SDK:  ${{ steps.test-python.outputs.python }}"
+          
+          NATIVE_STATUS="${{ steps.test-native.outputs.native }}"
+          NODEJS_STATUS="${{ steps.test-nodejs.outputs.nodejs }}"
+          PYTHON_STATUS="${{ steps.test-python.outputs.python }}"
+          
+          echo "Native Rust: ${NATIVE_STATUS:-unknown}"
+          echo "Node.js SDK: ${NODEJS_STATUS:-unknown}"
+          echo "Python SDK:  ${PYTHON_STATUS:-unknown}"
           echo ""
           
-          if [ "${{ steps.test-native.outputs.native }}" = "passed" ] && \
-             [ "${{ steps.test-nodejs.outputs.nodejs }}" = "passed" ] && \
-             [ "${{ steps.test-python.outputs.python }}" = "passed" ]; then
+          # Check if all passed
+          if [ "${NATIVE_STATUS}" = "passed" ] && \
+             [ "${NODEJS_STATUS}" = "passed" ] && \
+             [ "${PYTHON_STATUS}" = "passed" ]; then
             echo "✅ ALL STACKS PASSED - Paris generation working!"
             exit 0
           else
             echo "❌ SOME STACKS FAILED - Review logs above"
+            echo ""
+            echo "Failed stacks:"
+            [ "${NATIVE_STATUS}" != "passed" ] && echo "  - Native Rust"
+            [ "${NODEJS_STATUS}" != "passed" ] && echo "  - Node.js SDK"
+            [ "${PYTHON_STATUS}" != "passed" ] && echo "  - Python SDK"
             exit 1
           fi
 
