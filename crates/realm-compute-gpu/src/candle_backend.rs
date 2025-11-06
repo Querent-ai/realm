@@ -135,7 +135,19 @@ impl CandleGpuBackend {
     /// # Returns
     /// Normalized tensor with same shape as input
     pub fn rms_norm(&self, x: &Tensor, weight: &Tensor, eps: f32) -> CandleResult<Tensor> {
-        ops::rms_norm(x, weight, eps)
+        // Try GPU operation first
+        match ops::rms_norm(x, weight, eps) {
+            Ok(result) => Ok(result),
+            Err(_e) => {
+                // If GPU operation fails (e.g., Metal doesn't support it), fallback to CPU
+                let cpu_device = Device::Cpu;
+                let x_cpu = x.to_device(&cpu_device)?;
+                let weight_cpu = weight.to_device(&cpu_device)?;
+                let result_cpu = ops::rms_norm(&x_cpu, &weight_cpu, eps)?;
+                // Move result back to original device
+                result_cpu.to_device(x.device())
+            }
+        }
     }
 
     /// Scaled dot-product attention
@@ -189,7 +201,18 @@ impl CandleGpuBackend {
     ///
     /// Applies softmax along the last dimension
     pub fn softmax(&self, x: &Tensor) -> CandleResult<Tensor> {
-        ops::softmax_last_dim(x)
+        // Try GPU operation first
+        match ops::softmax_last_dim(x) {
+            Ok(result) => Ok(result),
+            Err(_e) => {
+                // If GPU operation fails (e.g., Metal doesn't support it), fallback to CPU
+                let cpu_device = Device::Cpu;
+                let x_cpu = x.to_device(&cpu_device)?;
+                let result_cpu = ops::softmax_last_dim(&x_cpu)?;
+                // Move result back to original device
+                result_cpu.to_device(x.device())
+            }
+        }
     }
 
     /// Element-wise addition
