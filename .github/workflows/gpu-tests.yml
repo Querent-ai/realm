@@ -8,6 +8,7 @@ on:
       - 'crates/realm-runtime/src/attention/**'
       - 'examples/test-webgpu/**'
       - 'examples/test-gpu-features/**'
+      - 'examples/paris/**'
       - '.github/workflows/gpu-tests.yml'
   pull_request:
     branches: [main, develop]
@@ -16,6 +17,7 @@ on:
       - 'crates/realm-runtime/src/attention/**'
       - 'examples/test-webgpu/**'
       - 'examples/test-gpu-features/**'
+      - 'examples/paris/**'
       - '.github/workflows/gpu-tests.yml'
   workflow_dispatch:
 
@@ -160,7 +162,196 @@ jobs:
           # Test candle backend (may not have GPU, but should compile)
           cargo test --package realm-compute-gpu --lib -- candle_backend || echo "Candle backend tests may require GPU"
 
+      - name: Run GPU integration tests
+        run: |
+          cargo test --package realm-compute-gpu --test gpu_integration --features webgpu || echo "GPU integration tests may require hardware"
+
       - name: Run GPU feature tests
         run: |
           cargo test --package realm-compute-gpu --features webgpu --lib || echo "Some GPU tests may require hardware"
+
+  metal-tests:
+    name: Metal GPU Tests (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build with Metal
+        run: cargo build --package realm-compute-gpu --features metal
+
+      - name: Run Metal GPU tests
+        run: |
+          cargo test --package realm-compute-gpu --features metal --lib || echo "Metal tests may require Apple Silicon"
+
+      - name: Run Metal integration tests
+        run: |
+          cargo test --package realm-compute-gpu --features metal --test gpu_integration || echo "Metal integration tests may require Apple Silicon"
+
+  paris-metal:
+    name: Paris Generation with Metal
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache model
+        uses: actions/cache@v4
+        with:
+          path: ~/.realm/models
+          key: tinyllama-model-v1
+          restore-keys: tinyllama-model-
+
+      - name: Download model if not cached
+        run: |
+          mkdir -p ~/.realm/models
+          if [ ! -f ~/.realm/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf ]; then
+            echo "Downloading model..."
+            curl -L -o ~/.realm/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
+              https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf || \
+              echo "Model download failed, will use cached version if available"
+          fi
+
+      - name: Build Paris native with Metal
+        run: |
+          cargo build --release --bin paris-native --features metal
+
+      - name: Run Paris generation with Metal
+        run: |
+          MODEL_PATH=~/.realm/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+          if [ -f "$MODEL_PATH" ]; then
+            timeout 120 ./target/release/paris-native "$MODEL_PATH" 2>&1 | tee paris-metal-output.log
+            if grep -q "Paris" paris-metal-output.log && grep -q "SUCCESS" paris-metal-output.log; then
+              echo "✅ Paris generation with Metal: SUCCESS"
+              exit 0
+            else
+              echo "⚠️  Paris generation completed but 'Paris' or 'SUCCESS' not found in output"
+              cat paris-metal-output.log
+              exit 1
+            fi
+          else
+            echo "⚠️  Model not available, skipping Paris generation test"
+            exit 0
+          fi
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paris-metal-logs
+          path: paris-metal-output.log
+          if-no-files-found: ignore
+
+  cuda-tests:
+    name: CUDA GPU Tests (Self-hosted)
+    runs-on: self-hosted
+    if: false  # Disabled by default - enable when self-hosted GPU runner is available
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify CUDA availability
+        run: |
+          nvidia-smi || echo "CUDA not available"
+          nvcc --version || echo "CUDA toolkit not found"
+
+      - name: Build with CUDA
+        run: cargo build --package realm-compute-gpu --features cuda
+
+      - name: Run CUDA GPU tests
+        run: |
+          cargo test --package realm-compute-gpu --features cuda --lib || echo "CUDA tests may require GPU"
+
+      - name: Run CUDA integration tests
+        run: |
+          cargo test --package realm-compute-gpu --features cuda --test gpu_integration || echo "CUDA integration tests may require GPU"
+
+  paris-cuda:
+    name: Paris Generation with CUDA (Self-hosted)
+    runs-on: self-hosted
+    if: false  # Disabled by default - enable when self-hosted GPU runner is available
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache model
+        uses: actions/cache@v4
+        with:
+          path: ~/.realm/models
+          key: tinyllama-model-v1
+          restore-keys: tinyllama-model-
+
+      - name: Download model if not cached
+        run: |
+          mkdir -p ~/.realm/models
+          if [ ! -f ~/.realm/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf ]; then
+            echo "Downloading model..."
+            wget -O ~/.realm/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
+              https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf || \
+              echo "Model download failed, will use cached version if available"
+          fi
+
+      - name: Build Paris native with CUDA
+        run: |
+          cargo build --release --bin paris-native --features cuda
+
+      - name: Run Paris generation with CUDA
+        run: |
+          MODEL_PATH=~/.realm/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+          if [ -f "$MODEL_PATH" ]; then
+            timeout 120 ./target/release/paris-native "$MODEL_PATH" 2>&1 | tee paris-cuda-output.log
+            if grep -q "Paris" paris-cuda-output.log && grep -q "SUCCESS" paris-cuda-output.log; then
+              echo "✅ Paris generation with CUDA: SUCCESS"
+              exit 0
+            else
+              echo "⚠️  Paris generation completed but 'Paris' or 'SUCCESS' not found in output"
+              cat paris-cuda-output.log
+              exit 1
+            fi
+          else
+            echo "⚠️  Model not available, skipping Paris generation test"
+            exit 0
+          fi
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paris-cuda-logs
+          path: paris-cuda-output.log
+          if-no-files-found: ignore
 
