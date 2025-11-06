@@ -12,7 +12,7 @@ spec:
       protocol: TCP
       name: http
     {{- if .Values.metrics.enabled }}
-    - port: {{ .Values.metrics.service.port }}
+    - port: {{ .Values.metrics.port }}
       targetPort: metrics
       protocol: TCP
       name: metrics
