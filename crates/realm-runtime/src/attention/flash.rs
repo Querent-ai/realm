@@ -146,6 +146,14 @@ impl FlashAttention {
     }
 
     /// Scalar fallback dot product with manual unrolling
+    /// Used when SIMD is not available (x86_64 without AVX2, or other architectures)
+    #[cfg(any(
+        all(
+            target_arch = "x86_64",
+            not(any(target_feature = "avx2", target_feature = "fma"))
+        ),
+        not(any(target_arch = "x86_64", target_arch = "aarch64"))
+    ))]
     #[inline]
     fn dot_product_scalar(a: &[f32], b: &[f32]) -> f32 {
         let len = a.len().min(b.len());
@@ -186,8 +194,20 @@ impl FlashAttention {
             return;
         }
 
-        // Scalar fallback
-        Self::weighted_add_scalar(output, vector, weight);
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            // Scalar fallback (for non-x86_64 and non-aarch64)
+            Self::weighted_add_scalar(output, vector, weight);
+        }
+
+        #[cfg(all(
+            target_arch = "x86_64",
+            not(any(target_feature = "avx2", target_feature = "fma"))
+        ))]
+        {
+            // Scalar fallback when AVX2/FMA not available
+            Self::weighted_add_scalar(output, vector, weight);
+        }
     }
 
     /// AVX2 weighted add
@@ -234,6 +254,14 @@ impl FlashAttention {
     }
 
     /// Scalar weighted add
+    /// Used when SIMD is not available (x86_64 without AVX2, or other architectures)
+    #[cfg(any(
+        all(
+            target_arch = "x86_64",
+            not(any(target_feature = "avx2", target_feature = "fma"))
+        ),
+        not(any(target_arch = "x86_64", target_arch = "aarch64"))
+    ))]
     #[inline]
     fn weighted_add_scalar(output: &mut [f32], vector: &[f32], weight: f32) {
         let len = output.len().min(vector.len());
@@ -299,21 +327,46 @@ impl FlashAttention {
         Some(FlashBackend::CPU)
     }
 
+    /// Check if CUDA is available
+    #[allow(dead_code)] // Public API, may be used by external code
     #[cfg(feature = "cuda")]
-    fn is_cuda_available() -> bool {
-        // TODO: Check for CUDA runtime
+    pub fn is_cuda_available() -> bool {
+        // Check for CUDA runtime by trying to create a CUDA device
+        candle_core::Device::new_cuda(0).is_ok()
+    }
+
+    #[cfg(not(feature = "cuda"))]
+    #[allow(dead_code)] // Public API, may be used by external code
+    pub fn is_cuda_available() -> bool {
         false
     }
 
+    /// Check if Metal is available
+    #[allow(dead_code)] // Public API, may be used by external code
     #[cfg(feature = "metal")]
-    fn is_metal_available() -> bool {
-        // TODO: Check for Metal support
+    pub fn is_metal_available() -> bool {
+        // Check for Metal support by trying to create a Metal device
+        candle_core::Device::new_metal(0).is_ok()
+    }
+
+    #[cfg(not(feature = "metal"))]
+    #[allow(dead_code)] // Public API, may be used by external code
+    pub fn is_metal_available() -> bool {
         false
     }
 
+    /// Check if WebGPU is available
+    #[allow(dead_code)] // Public API, may be used by external code
     #[cfg(feature = "webgpu")]
-    fn is_webgpu_available() -> bool {
-        // TODO: Check for WebGPU support
+    pub fn is_webgpu_available() -> bool {
+        // Check if WebGPU is available (using wgpu)
+        use realm_compute_gpu::GpuBackend;
+        GpuBackend::is_available()
+    }
+
+    #[cfg(not(feature = "webgpu"))]
+    #[allow(dead_code)] // Public API, may be used by external code
+    pub fn is_webgpu_available() -> bool {
         false
     }
 
@@ -697,8 +750,10 @@ impl Attention for FlashAttention {
 
             #[cfg(feature = "webgpu")]
             FlashBackend::WebGPU => {
-                // TODO: Call WebGPU compute shader
-                // eprintln!("⚠️  WebGPU backend not yet implemented, using CPU");
+                // WebGPU Flash Attention using Candle (if available) or CPU fallback
+                // Note: Candle doesn't support WebGPU directly, so we use CPU implementation
+                // Future: Can implement using wgpu directly for true WebGPU Flash Attention
+                // For now, use CPU which is still efficient for smaller sequences
                 self.forward_cpu(
                     q, k, v, mask, batch_size, num_heads, seq_len_q, seq_len_k, head_dim,
                 )

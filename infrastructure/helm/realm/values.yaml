@@ -1,0 +1,173 @@
+# Default values for realm
+# This is a YAML-formatted file.
+
+replicaCount: 1
+
+image:
+  repository: realm-ai/runtime
+  pullPolicy: IfNotPresent
+  tag: "0.1.0"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: realm.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: realm-tls
+  #    hosts:
+  #      - realm.example.com
+
+resources:
+  limits:
+    cpu: 4
+    memory: 8Gi
+  requests:
+    cpu: 2
+    memory: 4Gi
+
+# GPU configuration
+gpu:
+  enabled: false
+  count: 1
+  nodeSelector:
+    accelerator: nvidia-tesla-t4
+  # or use:
+  # nodeSelector:
+  #   nvidia.com/gpu: "true"
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+# Model storage
+modelStorage:
+  type: s3  # s3, pvc, or local
+  s3:
+    bucket: ""
+    region: ""
+    prefix: "models"
+    # IAM role annotation for IRSA (if using)
+    # annotations:
+    #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/realm-s3-role
+  pvc:
+    claimName: ""
+    mountPath: /models
+  local:
+    path: /models
+
+# WASM module
+wasm:
+  path: /wasm/realm_wasm.wasm
+  # Can be mounted from ConfigMap or downloaded
+  configMap: ""
+  # or download from S3:
+  # s3:
+  #   bucket: ""
+  #   key: "realm_wasm.wasm"
+
+# Server configuration
+server:
+  host: "0.0.0.0"
+  port: 8080
+  maxTenants: 16
+  backend: "auto"  # auto, cpu, cuda, metal, webgpu
+
+# Autoscaling
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+  # Custom metrics (if available)
+  # metrics:
+  #   - type: Pods
+  #     pods:
+  #       metric:
+  #         name: realm_requests_per_second
+  #       target:
+  #         type: AverageValue
+  #         averageValue: "100"
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Additional volumes
+extraVolumes: []
+extraVolumeMounts: []
+
+# Environment variables
+env: []
+  # - name: RUST_LOG
+  #   value: "info"
+  # - name: RUST_BACKTRACE
+  #   value: "1"
+
+# ConfigMap for additional configuration
+configMap:
+  create: false
+  data: {}
+
+# Secrets
+secrets: []
+  # - name: api-keys
+  #   data:
+  #     api-key: base64encoded
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # or use maxUnavailable:
+  # maxUnavailable: 1
+
+# Service monitor for Prometheus
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+
+# Metrics
+metrics:
+  enabled: true
+  port: 9090
+  path: /metrics
+

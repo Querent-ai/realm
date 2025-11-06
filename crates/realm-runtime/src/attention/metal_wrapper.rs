@@ -3,7 +3,8 @@
 //! This module provides a safe Rust interface to Flash Attention using Candle's Metal operations.
 
 use candle_core::{Device, Tensor};
-use realm_core::error::{Result, WasmChordError};
+use candle_nn::ops;
+use realm_core::error::{Error as WasmChordError, Result};
 
 /// Metal Flash Attention implementation using Candle
 ///
@@ -58,7 +59,7 @@ impl FlashAttentionMetal {
         .map_err(|e| WasmChordError::Runtime(format!("Failed to create V tensor: {}", e)))?;
 
         // Compute attention scores: Q @ K^T / sqrt(head_dim)
-        let scale = 1.0 / (head_dim as f64).sqrt();
+        let scale = (1.0 / (head_dim as f64).sqrt()) as f32;
 
         // Reshape for matmul: [batch*num_heads, seq_len, head_dim]
         let q_flat = q_tensor
@@ -81,54 +82,57 @@ impl FlashAttentionMetal {
             .map_err(|e| WasmChordError::Runtime(format!("Failed to transpose K: {}", e)))?;
 
         // Compute scores: [batch*num_heads, seq_len_q, seq_len_k]
-        let scores = q_reshaped
+        let scores_base = q_reshaped
             .matmul(&k_t)
-            .map_err(|e| WasmChordError::Runtime(format!("Failed to compute scores: {}", e)))?
-            * scale;
+            .map_err(|e| WasmChordError::Runtime(format!("Failed to compute scores: {}", e)))?;
 
-        // Apply mask if provided (simplified - apply mask in CPU for now)
+        // Scale the scores
+        let scale_tensor = Tensor::new(&[scale], &self.device)
+            .map_err(|e| WasmChordError::Runtime(format!("Failed to create scale tensor: {}", e)))?
+            .broadcast_as(scores_base.shape())
+            .map_err(|e| WasmChordError::Runtime(format!("Failed to broadcast scale: {}", e)))?;
+        let scores_base = (&scores_base * &scale_tensor)
+            .map_err(|e| WasmChordError::Runtime(format!("Failed to scale scores: {}", e)))?;
+
+        // Apply mask if provided (GPU-native implementation)
         let scores = if let Some(mask_data) = mask {
-            let mut scores_vec = scores
-                .flatten_all()
-                .map_err(|e| WasmChordError::Runtime(format!("Failed to flatten scores: {}", e)))?
-                .to_vec1::<f32>()
+            // Create mask tensor on GPU
+            let mask_tensor = Tensor::from_slice(mask_data, &[seq_len_q, seq_len_k], &self.device)
                 .map_err(|e| {
-                    WasmChordError::Runtime(format!("Failed to convert scores to CPU: {}", e))
+                    WasmChordError::Runtime(format!("Failed to create mask tensor: {}", e))
                 })?;
 
-            // Apply mask on CPU
-            for i in 0..seq_len_q {
-                for j in 0..seq_len_k {
-                    let mask_idx = i * seq_len_k + j;
-                    if mask_idx < mask_data.len() && mask_data[mask_idx] == 0.0 {
-                        for b in 0..batch_size * num_heads {
-                            let idx = b * seq_len_q * seq_len_k + i * seq_len_k + j;
-                            if idx < scores_vec.len() {
-                                scores_vec[idx] = f32::NEG_INFINITY;
-                            }
-                        }
-                    }
-                }
-            }
+            // Expand mask to match scores shape: [batch*num_heads, seq_len_q, seq_len_k]
+            let mask_expanded = mask_tensor
+                .unsqueeze(0)
+                .map_err(|e| WasmChordError::Runtime(format!("Failed to expand mask: {}", e)))?
+                .expand(&[batch_size * num_heads, seq_len_q, seq_len_k])
+                .map_err(|e| WasmChordError::Runtime(format!("Failed to broadcast mask: {}", e)))?;
 
-            Tensor::from_vec(
-                scores_vec,
-                &[batch_size * num_heads, seq_len_q, seq_len_k],
-                &self.device,
-            )
-            .map_err(|e| {
-                WasmChordError::Runtime(format!(
-                    "Failed to convert masked scores back to GPU: {}",
-                    e
-                ))
-            })?
+            // Apply mask: where mask is 0, set scores to -inf
+            let mask_bool = mask_expanded
+                .gt(
+                    &Tensor::zeros(mask_expanded.shape(), mask_expanded.dtype(), &self.device)
+                        .map_err(|e| {
+                            WasmChordError::Runtime(format!("Failed to create zeros: {}", e))
+                        })?,
+                )
+                .map_err(|e| WasmChordError::Runtime(format!("Failed to compare mask: {}", e)))?;
+
+            let neg_inf = Tensor::new(&[f32::NEG_INFINITY], &self.device)
+                .map_err(|e| WasmChordError::Runtime(format!("Failed to create -inf: {}", e)))?
+                .broadcast_as(scores_base.shape())
+                .map_err(|e| WasmChordError::Runtime(format!("Failed to broadcast -inf: {}", e)))?;
+
+            scores_base
+                .where_cond(&mask_bool, &neg_inf)
+                .map_err(|e| WasmChordError::Runtime(format!("Failed to apply mask: {}", e)))?
         } else {
-            scores
+            scores_base
         };
 
         // Apply softmax: softmax(scores)
-        let scores_softmax = scores
-            .softmax_last_dim()
+        let scores_softmax = ops::softmax_last_dim(&scores)
             .map_err(|e| WasmChordError::Runtime(format!("Failed to apply softmax: {}", e)))?;
 
         // Reshape V: [batch*num_heads, seq_len_k, head_dim]

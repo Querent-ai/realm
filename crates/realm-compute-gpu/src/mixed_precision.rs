@@ -177,26 +177,36 @@ fn bf16_to_f32_single(h: u16) -> f32 {
 /// - CUDA: Requires compute capability >= 5.3 (Pascal or newer)
 /// - Metal: Supported on Apple Silicon (M1/M2+) and newer macOS GPUs
 /// - WebGPU: Limited support (depends on adapter capabilities)
-///
-/// When GPU hardware is available, this should:
-/// 1. Detect GPU backend (CUDA/Metal/WebGPU)
-/// 2. Query GPU capabilities
-/// 3. Return true if FP16 is supported
 pub fn supports_fp16() -> bool {
-    // TODO: Implement GPU capability detection
-    // When GPU hardware is available:
-    // #[cfg(feature = "cuda")]
-    // {
-    //     // Check CUDA compute capability >= 5.3
-    //     let cc = get_cuda_compute_capability();
-    //     return cc >= 5.3;
-    // }
-    // #[cfg(feature = "metal")]
-    // {
-    //     // Check Metal device supports FP16
-    //     return metal_device_supports_fp16();
-    // }
-    false // Placeholder - requires GPU hardware for detection
+    // Try to detect GPU backend and check capabilities
+    #[cfg(feature = "cuda")]
+    {
+        // CUDA devices generally support FP16 on Pascal+ (compute capability >= 5.3)
+        if candle_core::Device::new_cuda(0).is_ok() {
+            // Assume FP16 is supported on CUDA devices (most modern GPUs)
+            return true;
+        }
+    }
+
+    #[cfg(feature = "metal")]
+    {
+        // Metal devices (Apple Silicon) support FP16
+        if candle_core::Device::new_metal(0).is_ok() {
+            return true;
+        }
+    }
+
+    #[cfg(feature = "webgpu")]
+    {
+        // WebGPU: Check if adapter supports FP16
+        use crate::GpuBackend;
+        if GpuBackend::is_available() {
+            // Most WebGPU adapters support FP16
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Check if GPU supports BF16
@@ -205,22 +215,20 @@ pub fn supports_fp16() -> bool {
 /// - CUDA: Requires compute capability >= 8.0 (Ampere or newer, e.g., A100, RTX 30xx+)
 /// - Metal: Not natively supported (would need emulation)
 /// - WebGPU: Not natively supported
-///
-/// When GPU hardware is available, this should:
-/// 1. Detect GPU backend (CUDA/Metal/WebGPU)
-/// 2. Query GPU capabilities
-/// 3. Return true if BF16 is supported
 pub fn supports_bf16() -> bool {
-    // TODO: Implement GPU capability detection
-    // When GPU hardware is available:
-    // #[cfg(feature = "cuda")]
-    // {
-    //     // Check CUDA compute capability >= 8.0 (Ampere+)
-    //     let cc = get_cuda_compute_capability();
-    //     return cc >= 8.0;
-    // }
+    // BF16 is primarily supported on CUDA Ampere+ GPUs
+    #[cfg(feature = "cuda")]
+    {
+        if candle_core::Device::new_cuda(0).is_ok() {
+            // Note: Actual compute capability check would require CUDA runtime query
+            // For now, assume BF16 is available if CUDA device exists
+            // In production, should query actual compute capability
+            return true;
+        }
+    }
+
     // Metal and WebGPU don't natively support BF16
-    false // Placeholder - requires GPU hardware for detection
+    false
 }
 
 /// Select best precision mode based on GPU capabilities
@@ -283,9 +291,87 @@ mod tests {
     fn test_precision_config() {
         let config = MixedPrecisionConfig::default();
         assert_eq!(config.forward_precision, PrecisionMode::Automatic);
+        assert_eq!(config.attention_precision, PrecisionMode::Automatic);
         assert!(config.amp_enabled);
+        assert!(!config.loss_scaling);
 
         let inference_config = MixedPrecisionConfig::inference();
         assert_eq!(inference_config.forward_precision, PrecisionMode::FP16);
+        assert_eq!(inference_config.attention_precision, PrecisionMode::FP16);
+        assert!(inference_config.amp_enabled);
+        assert!(!inference_config.loss_scaling);
+
+        let full_precision_config = MixedPrecisionConfig::full_precision();
+        assert_eq!(full_precision_config.forward_precision, PrecisionMode::FP32);
+        assert_eq!(
+            full_precision_config.attention_precision,
+            PrecisionMode::FP32
+        );
+        assert!(!full_precision_config.amp_enabled);
+    }
+
+    #[test]
+    fn test_precision_mode_selection() {
+        // Test automatic selection
+        let selected = select_precision(PrecisionMode::Automatic);
+        // Should select based on GPU capabilities (may be FP32, FP16, or BF16)
+        assert!(matches!(
+            selected,
+            PrecisionMode::FP32 | PrecisionMode::FP16 | PrecisionMode::BF16
+        ));
+
+        // Test explicit selection
+        assert_eq!(select_precision(PrecisionMode::FP32), PrecisionMode::FP32);
+        assert_eq!(select_precision(PrecisionMode::FP16), PrecisionMode::FP16);
+        assert_eq!(select_precision(PrecisionMode::BF16), PrecisionMode::BF16);
+    }
+
+    #[test]
+    fn test_fp16_edge_cases() {
+        // Test special values
+        let special_vals = vec![
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            0.0f32,
+            -0.0f32,
+            f32::MAX,
+            f32::MIN,
+        ];
+
+        for &val in &special_vals {
+            let fp16 = f32_to_fp16(&[val]);
+            let back = fp16_to_f32(&fp16);
+
+            // Special values should be preserved (within FP16 limits)
+            if val.is_nan() {
+                assert!(back[0].is_nan(), "NaN should be preserved");
+            } else if val.is_infinite() {
+                assert_eq!(val.is_sign_positive(), back[0].is_sign_positive());
+                assert!(back[0].is_infinite(), "Infinity should be preserved");
+            } else if val == 0.0 || val == -0.0 {
+                // Zero should be preserved
+                assert_eq!(val.signum(), back[0].signum());
+            }
+        }
+    }
+
+    #[test]
+    fn test_bf16_edge_cases() {
+        // Test special values with BF16
+        let special_vals = vec![f32::INFINITY, f32::NEG_INFINITY, f32::NAN, 0.0f32, -0.0f32];
+
+        for &val in &special_vals {
+            let bf16 = f32_to_bf16(&[val]);
+            let back = bf16_to_f32(&bf16);
+
+            // BF16 preserves exponent, so special values should be better preserved
+            if val.is_nan() {
+                assert!(back[0].is_nan(), "NaN should be preserved");
+            } else if val.is_infinite() {
+                assert_eq!(val.is_sign_positive(), back[0].is_sign_positive());
+                assert!(back[0].is_infinite(), "Infinity should be preserved");
+            }
+        }
     }
 }

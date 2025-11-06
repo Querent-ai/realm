@@ -7,8 +7,11 @@ use realm_core::error::Result;
 use realm_core::quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K};
 
 /// Trait for GPU backends that support fused dequantization + matmul
-/// Note: GPU backends are not required to be Send + Sync as WebGPU contexts are not thread-safe
-pub trait GpuBackendTrait {
+///
+/// # Thread Safety
+/// GPU backends must be Send + Sync to be used in multi-threaded contexts (e.g., WASM host functions).
+/// For WebGPU, this is achieved by using Arc<Mutex<...>> or similar synchronization primitives.
+pub trait GpuBackendTrait: Send + Sync {
     /// Basic matrix multiplication: C = A @ B
     /// A: [M, K], B: [K, N] -> C: [M, N]
     fn matmul(&self, a: &[f32], b: &[f32], m: u32, k: u32, n: u32) -> Result<Vec<f32>>;

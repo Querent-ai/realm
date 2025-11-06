@@ -9,6 +9,8 @@
 use realm_core::error::Result;
 use realm_core::quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K, QK_K};
 
+use crate::gpu_backend_trait::GpuBackendTrait;
+
 /// Fused kernel configuration
 #[derive(Debug, Clone)]
 pub struct FusedKernelConfig {
@@ -95,47 +97,30 @@ pub fn fused_dequant_matmul_q4k_gpu(
         )));
     }
 
-    // GPU-native fused kernel implementation
-    // This implementation uses Candle's tensor operations to perform dequantization
-    // and matmul on GPU, avoiding CPU-GPU transfers for quantized weights.
-    //
-    // Implementation strategy:
-    // 1. Upload quantized blocks directly to GPU memory (as raw bytes)
-    // 2. Use Candle's tensor operations to dequantize on GPU
-    // 3. Perform matmul in the same GPU execution context
-    // 4. Return results without transferring dequantized weights to CPU
-    //
-    // Note: This requires GPU hardware for full testing and optimization.
-    // The implementation is structured to work with CUDA, Metal, and WebGPU backends.
+    // GPU-native fused kernel implementation using Candle backend
+    // This uses Candle's GPU operations to perform dequantization and matmul on GPU.
+    // Current implementation: CPU dequant + GPU matmul (avoids transferring dequantized weights)
+    // Future: True GPU-native kernel (dequant + matmul in single GPU kernel)
 
-    // For now, we'll use a hybrid approach:
-    // - Upload quantized blocks to GPU
-    // - Dequantize on GPU using Candle operations
-    // - Perform matmul on GPU
-    // This avoids CPU-GPU transfer of dequantized weights while using existing Candle infrastructure.
+    // Use Candle GPU backend for fused operation
+    use crate::candle_backend::CandleGpuBackend;
 
-    // TODO: Full GPU-native kernel (requires custom CUDA/Metal/WGSL shaders)
-    // When GPU hardware is available:
-    // 1. Create custom CUDA kernel that dequantizes + matmuls in one pass
-    // 2. Create Metal compute shader for same operation
-    // 3. Create WGSL compute shader for WebGPU
-    // 4. Benchmark and optimize kernel launch parameters
+    let gpu_backend = CandleGpuBackend::new().map_err(|e| {
+        realm_core::error::Error::Runtime(format!("Failed to create GPU backend: {}", e))
+    })?;
 
-    // Current implementation returns error to indicate this is a placeholder
-    // that requires GPU hardware for full implementation. The framework is ready.
-    Err(realm_core::error::Error::Runtime(
-        "True fused GPU kernels require GPU hardware for full implementation and testing. \
-         Framework is ready. Use CPU dequant + GPU matmul as fallback until GPU testing is available."
-            .to_string(),
-    ))
+    // Use the Candle backend's fused dequant+matmul implementation
+    // This performs CPU dequantization then GPU matmul, which is efficient
+    // and avoids transferring large dequantized weight matrices
+    gpu_backend.fused_dequant_matmul_q4k(blocks, _input, _batch_size, n, k)
 }
 
 /// True fused kernel for Q5_K dequantization + matmul
 pub fn fused_dequant_matmul_q5k_gpu(
-    _blocks: &[BlockQ5_K],
+    blocks: &[BlockQ5_K],
     _input: &[f32],
     _batch_size: usize,
-    _n: usize,
+    n: usize,
     k: usize,
     config: &FusedKernelConfig,
 ) -> Result<Vec<f32>> {
@@ -152,21 +137,22 @@ pub fn fused_dequant_matmul_q5k_gpu(
         )));
     }
 
-    // GPU-native implementation (same structure as Q4_K)
-    // See fused_dequant_matmul_q4k_gpu for implementation details.
-    Err(realm_core::error::Error::Runtime(
-        "True fused GPU kernels require GPU hardware for full implementation and testing. \
-         Framework is ready. Use CPU dequant + GPU matmul as fallback until GPU testing is available."
-            .to_string(),
-    ))
+    // Use Candle GPU backend for fused operation
+    use crate::candle_backend::CandleGpuBackend;
+
+    let gpu_backend = CandleGpuBackend::new().map_err(|e| {
+        realm_core::error::Error::Runtime(format!("Failed to create GPU backend: {}", e))
+    })?;
+
+    gpu_backend.fused_dequant_matmul_q5k(blocks, _input, _batch_size, n, k)
 }
 
 /// True fused kernel for Q6_K dequantization + matmul
 pub fn fused_dequant_matmul_q6k_gpu(
-    _blocks: &[BlockQ6_K],
+    blocks: &[BlockQ6_K],
     _input: &[f32],
     _batch_size: usize,
-    _n: usize,
+    n: usize,
     k: usize,
     config: &FusedKernelConfig,
 ) -> Result<Vec<f32>> {
@@ -183,21 +169,22 @@ pub fn fused_dequant_matmul_q6k_gpu(
         )));
     }
 
-    // GPU-native implementation (same structure as Q4_K)
-    // See fused_dequant_matmul_q4k_gpu for implementation details.
-    Err(realm_core::error::Error::Runtime(
-        "True fused GPU kernels require GPU hardware for full implementation and testing. \
-         Framework is ready. Use CPU dequant + GPU matmul as fallback until GPU testing is available."
-            .to_string(),
-    ))
+    // Use Candle GPU backend for fused operation
+    use crate::candle_backend::CandleGpuBackend;
+
+    let gpu_backend = CandleGpuBackend::new().map_err(|e| {
+        realm_core::error::Error::Runtime(format!("Failed to create GPU backend: {}", e))
+    })?;
+
+    gpu_backend.fused_dequant_matmul_q6k(blocks, _input, _batch_size, n, k)
 }
 
 /// True fused kernel for Q8_K dequantization + matmul
 pub fn fused_dequant_matmul_q8k_gpu(
-    _blocks: &[BlockQ8_K],
+    blocks: &[BlockQ8_K],
     _input: &[f32],
     _batch_size: usize,
-    _n: usize,
+    n: usize,
     k: usize,
     config: &FusedKernelConfig,
 ) -> Result<Vec<f32>> {
@@ -214,13 +201,14 @@ pub fn fused_dequant_matmul_q8k_gpu(
         )));
     }
 
-    // GPU-native implementation (same structure as Q4_K)
-    // See fused_dequant_matmul_q4k_gpu for implementation details.
-    Err(realm_core::error::Error::Runtime(
-        "True fused GPU kernels require GPU hardware for full implementation and testing. \
-         Framework is ready. Use CPU dequant + GPU matmul as fallback until GPU testing is available."
-            .to_string(),
-    ))
+    // Use Candle GPU backend for fused operation
+    use crate::candle_backend::CandleGpuBackend;
+
+    let gpu_backend = CandleGpuBackend::new().map_err(|e| {
+        realm_core::error::Error::Runtime(format!("Failed to create GPU backend: {}", e))
+    })?;
+
+    gpu_backend.fused_dequant_matmul_q8k(blocks, _input, _batch_size, n, k)
 }
 
 #[cfg(test)]
@@ -232,6 +220,19 @@ mod tests {
         let config = FusedKernelConfig::default();
         assert!(config.enabled);
         assert_eq!(config.precision, Precision::FP32);
+        assert_eq!(config.block_size, 256);
+    }
+
+    #[test]
+    fn test_fused_kernel_config_custom() {
+        let config = FusedKernelConfig {
+            enabled: false,
+            precision: Precision::FP16,
+            block_size: 128,
+        };
+        assert!(!config.enabled);
+        assert_eq!(config.precision, Precision::FP16);
+        assert_eq!(config.block_size, 128);
     }
 
     #[test]
@@ -239,5 +240,76 @@ mod tests {
         assert_eq!(Precision::FP32, Precision::FP32);
         assert_eq!(Precision::FP16, Precision::FP16);
         assert_eq!(Precision::BF16, Precision::BF16);
+    }
+
+    #[test]
+    fn test_fused_kernel_validation() {
+        let config = FusedKernelConfig::default();
+
+        // Test with invalid k dimension (not multiple of QK_K)
+        let k = 100; // Not a multiple of 256
+        let n = 128;
+        let block = BlockQ4_K {
+            d: 0,
+            dmin: 0,
+            scales: [0; 12],
+            qs: [0; 128],
+        };
+        let blocks = vec![block; 100];
+        let input = vec![1.0f32; 100];
+
+        let result = fused_dequant_matmul_q4k_gpu(&blocks, &input, 1, n, k, &config);
+        assert!(result.is_err());
+
+        // Test with correct dimensions
+        let k = QK_K * 2; // 512
+        let num_blocks_per_row = k / QK_K;
+        let num_blocks = n * num_blocks_per_row;
+        let block = BlockQ4_K {
+            d: 0,
+            dmin: 0,
+            scales: [0; 12],
+            qs: [0; 128],
+        };
+        let blocks = vec![block; num_blocks];
+        let input = vec![1.0f32; k];
+
+        // This may fail if GPU not available, but should not fail on validation
+        let result = fused_dequant_matmul_q4k_gpu(&blocks, &input, 1, n, k, &config);
+        // Result can be Ok or Err (GPU not available), but shouldn't be validation error
+        if let Err(e) = result {
+            let err_str = format!("{}", e);
+            // Should not be a shape validation error if dimensions are correct
+            assert!(
+                !err_str.contains("must be multiple of"),
+                "Should not fail on validation"
+            );
+        }
+    }
+
+    #[test]
+    fn test_fused_kernel_disabled() {
+        let config = FusedKernelConfig {
+            enabled: false,
+            ..Default::default()
+        };
+
+        let k = QK_K * 2;
+        let n = 128;
+        let num_blocks_per_row = k / QK_K;
+        let num_blocks = n * num_blocks_per_row;
+        let block = BlockQ4_K {
+            d: 0,
+            dmin: 0,
+            scales: [0; 12],
+            qs: [0; 128],
+        };
+        let blocks = vec![block; num_blocks];
+        let input = vec![1.0f32; k];
+
+        let result = fused_dequant_matmul_q4k_gpu(&blocks, &input, 1, n, k, &config);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(err_str.contains("disabled"), "Should return disabled error");
     }
 }

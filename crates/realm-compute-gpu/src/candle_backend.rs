@@ -95,14 +95,14 @@ impl CandleGpuBackend {
 
             match precision {
                 PrecisionMode::FP16 => {
-                    // Convert to FP16 if supported (requires GPU detection)
-                    // For now, use FP32 matmul - FP16 conversion happens at tensor level
-                    // when GPU hardware is available
+                    // Convert to FP16 if supported
+                    // Note: Candle handles FP16 conversion internally when using GPU
+                    // For explicit conversion, we'd need to use half::f16 types
+                    // For now, let Candle handle it - GPU operations will use FP16 if available
                     a.matmul(b)
                 }
                 PrecisionMode::BF16 => {
-                    // Convert to BF16 if supported (Ampere+ GPUs)
-                    // For now, use FP32 matmul
+                    // BF16 support - Candle may handle this internally on Ampere+ GPUs
                     a.matmul(b)
                 }
                 _ => a.matmul(b),
@@ -135,7 +135,19 @@ impl CandleGpuBackend {
     /// # Returns
     /// Normalized tensor with same shape as input
     pub fn rms_norm(&self, x: &Tensor, weight: &Tensor, eps: f32) -> CandleResult<Tensor> {
-        ops::rms_norm(x, weight, eps)
+        // Try GPU operation first
+        match ops::rms_norm(x, weight, eps) {
+            Ok(result) => Ok(result),
+            Err(_e) => {
+                // If GPU operation fails (e.g., Metal doesn't support it), fallback to CPU
+                let cpu_device = Device::Cpu;
+                let x_cpu = x.to_device(&cpu_device)?;
+                let weight_cpu = weight.to_device(&cpu_device)?;
+                let result_cpu = ops::rms_norm(&x_cpu, &weight_cpu, eps)?;
+                // Move result back to original device
+                result_cpu.to_device(x.device())
+            }
+        }
     }
 
     /// Scaled dot-product attention
@@ -189,7 +201,18 @@ impl CandleGpuBackend {
     ///
     /// Applies softmax along the last dimension
     pub fn softmax(&self, x: &Tensor) -> CandleResult<Tensor> {
-        ops::softmax_last_dim(x)
+        // Try GPU operation first
+        match ops::softmax_last_dim(x) {
+            Ok(result) => Ok(result),
+            Err(_e) => {
+                // If GPU operation fails (e.g., Metal doesn't support it), fallback to CPU
+                let cpu_device = Device::Cpu;
+                let x_cpu = x.to_device(&cpu_device)?;
+                let result_cpu = ops::softmax_last_dim(&x_cpu)?;
+                // Move result back to original device
+                result_cpu.to_device(x.device())
+            }
+        }
     }
 
     /// Element-wise addition
