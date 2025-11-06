@@ -167,14 +167,27 @@ jobs:
           echo "1️⃣ Testing Native Rust Stack"
           echo "=========================================="
           
-          cd examples/paris/native
-          MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
+          # Initialize output to failed (will be overwritten on success)
+          echo "native=failed" >> $GITHUB_OUTPUT
           
+          cd examples/paris/native || {
+            echo "❌ Failed to cd to examples/paris/native"
+            exit 1
+          }
+          
+          MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
           echo "Model path: $MODEL_PATH"
+          echo "Current directory: $(pwd)"
+          echo "Model file exists: $([ -f "$MODEL_PATH" ] && echo 'yes' || echo 'no')"
+          
           if [ ! -f "$MODEL_PATH" ]; then
             echo "❌ Model file not found: $MODEL_PATH"
+            echo "Listing $HOME/.realm/models:"
+            ls -la "$HOME/.realm/models" 2>&1 || echo "Directory doesn't exist"
             exit 1
           fi
+          
+          echo "✅ Model file found, running test..."
           
           # Run test and capture exit code
           set +e
@@ -182,17 +195,30 @@ jobs:
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
           
+          echo ""
+          echo "Test completed with exit code: $EXIT_CODE"
+          echo "Log file size: $(wc -l < /tmp/native.log) lines"
+          
+          # Show what we're searching for
+          echo ""
+          echo "Checking for 'Paris' (case-insensitive):"
+          grep -i "paris" /tmp/native.log | head -5 || echo "  No 'paris' found"
+          
+          echo "Checking for 'SUCCESS' (case-insensitive):"
+          grep -i "success" /tmp/native.log | head -5 || echo "  No 'success' found"
+          
           # Check for Paris in output
           if grep -qi "paris" /tmp/native.log && grep -qi "SUCCESS" /tmp/native.log; then
+            echo ""
             echo "✅ Native Rust: PASSED - Produces 'Paris'"
             echo "native=passed" >> $GITHUB_OUTPUT
             exit 0
           else
+            echo ""
             echo "❌ Native Rust: FAILED"
             echo "Exit code: $EXIT_CODE"
-            echo "Last 30 lines:"
-            tail -30 /tmp/native.log
-            echo "native=failed" >> $GITHUB_OUTPUT
+            echo "Full log file (last 50 lines):"
+            tail -50 /tmp/native.log
             exit 1
           fi
 
@@ -204,14 +230,32 @@ jobs:
           echo "2️⃣ Testing Node.js SDK Stack"
           echo "=========================================="
           
+          # Initialize output to failed
+          echo "nodejs=failed" >> $GITHUB_OUTPUT
+          
           # Install Node.js SDK dependencies
-          cd examples/paris/nodejs-sdk
-          npm ci || npm install
+          cd examples/paris/nodejs-sdk || {
+            echo "❌ Failed to cd to examples/paris/nodejs-sdk"
+            exit 1
+          }
+          
+          echo "Installing Node.js dependencies..."
+          npm ci || npm install || {
+            echo "❌ Failed to install Node.js dependencies"
+            exit 1
+          }
           
           # Start server in background
           cd ../..
           MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
           echo "Starting server with model: $MODEL_PATH"
+          echo "Model exists: $([ -f "$MODEL_PATH" ] && echo 'yes' || echo 'no')"
+          
+          if [ ! -f "$MODEL_PATH" ]; then
+            echo "❌ Model file not found: $MODEL_PATH"
+            exit 1
+          fi
+          
           timeout 180 target/release/realm serve \
             --host 127.0.0.1 \
             --port 8080 \
@@ -225,19 +269,28 @@ jobs:
           echo "⏳ Waiting for server to be ready..."
           SERVER_READY=false
           for i in {1..30}; do
-            if curl -s http://127.0.0.1:8080/health > /dev/null 2>&1; then
-              echo "✅ Server is ready"
+            # Check if server process is still running
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              echo "❌ Server process died!"
+              cat /tmp/server_node.log
+              SERVER_READY=false
+              break
+            fi
+            # Check server log for "Server ready" message
+            if grep -q "Server ready\|server listening" /tmp/server_node.log 2>/dev/null; then
+              echo "✅ Server is ready (attempt $i)"
               SERVER_READY=true
               break
             fi
+            echo "  Attempt $i/30: Server not ready yet..."
             sleep 2
           done
           
           if [ "$SERVER_READY" != "true" ]; then
-            echo "❌ Server failed to start"
+            echo "❌ Server failed to start after 60 seconds"
+            echo "Server log:"
             cat /tmp/server_node.log
             kill $SERVER_PID 2>/dev/null || true
-            echo "nodejs=failed" >> $GITHUB_OUTPUT
             exit 1
           fi
           
@@ -256,16 +309,24 @@ jobs:
           kill $SERVER_PID 2>/dev/null || true
           wait $SERVER_PID 2>/dev/null || true
           
+          echo ""
+          echo "Test completed with exit code: $EXIT_CODE"
+          echo "Checking for 'Paris':"
+          grep -i "paris" /tmp/nodejs.log | head -3 || echo "  No 'paris' found"
+          echo "Checking for 'SUCCESS':"
+          grep -i "success" /tmp/nodejs.log | head -3 || echo "  No 'success' found"
+          
           if grep -qi "paris" /tmp/nodejs.log && grep -qi "SUCCESS" /tmp/nodejs.log; then
+            echo ""
             echo "✅ Node.js SDK: PASSED - Produces 'Paris'"
             echo "nodejs=passed" >> $GITHUB_OUTPUT
             exit 0
           else
+            echo ""
             echo "❌ Node.js SDK: FAILED"
             echo "Exit code: $EXIT_CODE"
-            echo "Last 30 lines:"
-            tail -30 /tmp/nodejs.log
-            echo "nodejs=failed" >> $GITHUB_OUTPUT
+            echo "Last 50 lines:"
+            tail -50 /tmp/nodejs.log
             exit 1
           fi
 
@@ -277,19 +338,45 @@ jobs:
           echo "3️⃣ Testing Python SDK Stack"
           echo "=========================================="
           
+          # Initialize output to failed
+          echo "python=failed" >> $GITHUB_OUTPUT
+          
           # Install Python SDK
-          cd sdks/python-ws
-          pip install -e .
+          cd sdks/python-ws || {
+            echo "❌ Failed to cd to sdks/python-ws"
+            exit 1
+          }
+          
+          echo "Installing Python SDK..."
+          pip install -e . || {
+            echo "❌ Failed to install Python SDK"
+            exit 1
+          }
           cd ../..
           
           # Install Python dependencies
-          cd examples/paris/python-sdk
-          pip install -r requirements.txt
+          cd examples/paris/python-sdk || {
+            echo "❌ Failed to cd to examples/paris/python-sdk"
+            exit 1
+          }
+          
+          echo "Installing Python dependencies..."
+          pip install -r requirements.txt || {
+            echo "❌ Failed to install Python dependencies"
+            exit 1
+          }
           
           # Start server in background
           cd ../..
           MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
           echo "Starting server with model: $MODEL_PATH"
+          echo "Model exists: $([ -f "$MODEL_PATH" ] && echo 'yes' || echo 'no')"
+          
+          if [ ! -f "$MODEL_PATH" ]; then
+            echo "❌ Model file not found: $MODEL_PATH"
+            exit 1
+          fi
+          
           timeout 180 target/release/realm serve \
             --host 127.0.0.1 \
             --port 8081 \
@@ -303,19 +390,28 @@ jobs:
           echo "⏳ Waiting for server to be ready..."
           SERVER_READY=false
           for i in {1..30}; do
-            if curl -s http://127.0.0.1:8081/health > /dev/null 2>&1; then
-              echo "✅ Server is ready"
+            # Check if server process is still running
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              echo "❌ Server process died!"
+              cat /tmp/server_python.log
+              SERVER_READY=false
+              break
+            fi
+            # Check server log for "Server ready" message
+            if grep -q "Server ready\|server listening" /tmp/server_python.log 2>/dev/null; then
+              echo "✅ Server is ready (attempt $i)"
               SERVER_READY=true
               break
             fi
+            echo "  Attempt $i/30: Server not ready yet..."
             sleep 2
           done
           
           if [ "$SERVER_READY" != "true" ]; then
-            echo "❌ Server failed to start"
+            echo "❌ Server failed to start after 60 seconds"
+            echo "Server log:"
             cat /tmp/server_python.log
             kill $SERVER_PID 2>/dev/null || true
-            echo "python=failed" >> $GITHUB_OUTPUT
             exit 1
           fi
           
@@ -334,16 +430,24 @@ jobs:
           kill $SERVER_PID 2>/dev/null || true
           wait $SERVER_PID 2>/dev/null || true
           
+          echo ""
+          echo "Test completed with exit code: $EXIT_CODE"
+          echo "Checking for 'Paris':"
+          grep -i "paris" /tmp/python.log | head -3 || echo "  No 'paris' found"
+          echo "Checking for 'SUCCESS':"
+          grep -i "success" /tmp/python.log | head -3 || echo "  No 'success' found"
+          
           if grep -qi "paris" /tmp/python.log && grep -qi "SUCCESS" /tmp/python.log; then
+            echo ""
             echo "✅ Python SDK: PASSED - Produces 'Paris'"
             echo "python=passed" >> $GITHUB_OUTPUT
             exit 0
           else
+            echo ""
             echo "❌ Python SDK: FAILED"
             echo "Exit code: $EXIT_CODE"
-            echo "Last 30 lines:"
-            tail -30 /tmp/python.log
-            echo "python=failed" >> $GITHUB_OUTPUT
+            echo "Last 50 lines:"
+            tail -50 /tmp/python.log
             exit 1
           fi
 
