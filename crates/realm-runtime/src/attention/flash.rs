@@ -146,6 +146,14 @@ impl FlashAttention {
     }
 
     /// Scalar fallback dot product with manual unrolling
+    /// Used when SIMD is not available (x86_64 without AVX2, or other architectures)
+    #[cfg(any(
+        all(
+            target_arch = "x86_64",
+            not(any(target_feature = "avx2", target_feature = "fma"))
+        ),
+        not(any(target_arch = "x86_64", target_arch = "aarch64"))
+    ))]
     #[inline]
     fn dot_product_scalar(a: &[f32], b: &[f32]) -> f32 {
         let len = a.len().min(b.len());
@@ -246,6 +254,14 @@ impl FlashAttention {
     }
 
     /// Scalar weighted add
+    /// Used when SIMD is not available (x86_64 without AVX2, or other architectures)
+    #[cfg(any(
+        all(
+            target_arch = "x86_64",
+            not(any(target_feature = "avx2", target_feature = "fma"))
+        ),
+        not(any(target_arch = "x86_64", target_arch = "aarch64"))
+    ))]
     #[inline]
     fn weighted_add_scalar(output: &mut [f32], vector: &[f32], weight: f32) {
         let len = output.len().min(vector.len());

@@ -150,6 +150,7 @@ unsafe fn q4k_accumulate_neon(
 }
 
 /// Scalar fallback with manual loop unrolling
+#[cfg(not(target_arch = "aarch64"))]
 #[inline]
 #[allow(clippy::too_many_arguments)]
 fn q4k_accumulate_scalar(
@@ -462,6 +463,7 @@ unsafe fn q8k_accumulate_neon(
 }
 
 /// Scalar fallback for Q8_K accumulation
+#[cfg(not(target_arch = "aarch64"))]
 #[inline]
 fn q8k_accumulate_scalar(
     accumulator: &mut f32,
@@ -744,6 +746,7 @@ unsafe fn q5k_accumulate_neon(
 }
 
 /// Scalar fallback for Q5_K accumulation
+#[cfg(not(target_arch = "aarch64"))]
 #[inline]
 fn q5k_accumulate_scalar(
     accumulator: &mut f32,
@@ -1067,6 +1070,7 @@ unsafe fn q6k_accumulate_neon(
 }
 
 /// Scalar fallback for Q6_K processing
+#[cfg(not(target_arch = "aarch64"))]
 #[inline]
 fn q6k_accumulate_scalar(
     accumulator: &mut f32,
@@ -1231,15 +1235,18 @@ pub fn fused_dequant_matmul_q6k(
                         }
 
                         // Scalar fallback
-                        q6k_accumulate_scalar(
-                            &mut accumulator,
-                            &[ql1, ql2],
-                            qh,
-                            &input_data,
-                            d,
-                            &block.scales,
-                            scale_base,
-                        );
+                        #[cfg(not(target_arch = "aarch64"))]
+                        {
+                            q6k_accumulate_scalar(
+                                &mut accumulator,
+                                &[ql1, ql2],
+                                qh,
+                                &input_data,
+                                d,
+                                &block.scales,
+                                scale_base,
+                            );
+                        }
                     }
                 }
             }

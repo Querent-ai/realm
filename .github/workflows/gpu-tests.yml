@@ -245,10 +245,12 @@ jobs:
           cargo build --release --bin paris-native --features metal
 
       - name: Run Paris generation with Metal
+        timeout-minutes: 5
         run: |
           MODEL_PATH=~/.realm/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
           if [ -f "$MODEL_PATH" ]; then
-            timeout 120 ./target/release/paris-native "$MODEL_PATH" 2>&1 | tee paris-metal-output.log
+            # Run without timeout command (GitHub Actions timeout-minutes handles it)
+            ./target/release/paris-native "$MODEL_PATH" 2>&1 | tee paris-metal-output.log
             if grep -q "Paris" paris-metal-output.log && grep -q "SUCCESS" paris-metal-output.log; then
               echo "✅ Paris generation with Metal: SUCCESS"
               exit 0
