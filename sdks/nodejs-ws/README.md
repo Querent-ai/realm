@@ -35,6 +35,14 @@ const result = await client.generate({
 
 console.log(result.text);
 
+// Generate with streaming
+for await (const token of client.generateStream({
+  prompt: "Tell me a story",
+  max_tokens: 100,
+})) {
+  process.stdout.write(token);
+}
+
 // Disconnect
 client.disconnect();
 ```
@@ -87,6 +95,20 @@ const result = await client.generate({
   temperature: 0.7,
   stream: false, // Set to true for streaming
 });
+```
+
+#### `generateStream(options: GenerationOptions): AsyncGenerator<string>`
+
+Generate text with streaming. Yields tokens as they arrive.
+
+```typescript
+for await (const token of client.generateStream({
+  prompt: "Hello, world!",
+  max_tokens: 100,
+  temperature: 0.7,
+})) {
+  process.stdout.write(token);
+}
 ```
 
 #### `executePipeline(pipelineName: string, input: PipelineInput): Promise<any>`
@@ -159,8 +181,22 @@ try {
 See `src/examples/` for complete examples:
 
 - `basic.ts` - Basic usage (connect, generate, pipeline)
+- `streaming.ts` - Streaming generation
+- `error-handling.ts` - Error handling patterns
+
+## Testing
+
+The SDK includes example files that can be used for manual testing. For automated testing, you can use the examples as integration tests:
+
+```bash
+# Build the SDK
+npm run build
+
+# Run examples (requires server running)
+node dist/examples/basic.js
+node dist/examples/streaming.js
+```
 
 ## License
 
 MIT OR Apache-2.0
-

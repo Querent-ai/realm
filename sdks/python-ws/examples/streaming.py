@@ -15,8 +15,6 @@ async def main():
 
         print("\nGenerating with streaming...")
         
-        # Note: Full streaming implementation pending server support
-        # For now, this will yield the complete result
         async for token in client.generate_stream({
             "prompt": "Tell me a short story about a robot.",
             "max_tokens": 100,
