@@ -30,11 +30,11 @@ pub use mixed_precision::{MixedPrecisionConfig, PrecisionMode};
 
 /// GPU backend for accelerated inference
 ///
-/// Note: `wgpu::Device` is not `Send + Sync`, so we wrap it in a `Mutex` to make it thread-safe.
-/// The `queue` is already `Send + Sync` and can be used across threads.
+/// Note: Both `wgpu::Device` and `wgpu::Queue` are not `Send + Sync`, so we wrap them in `Mutex`
+/// to make the backend thread-safe for use in multi-threaded contexts (e.g., WASM host functions).
 pub struct GpuBackend {
     device: std::sync::Mutex<wgpu::Device>,
-    queue: wgpu::Queue,
+    queue: std::sync::Mutex<wgpu::Queue>,
     matmul_pipeline: wgpu::ComputePipeline,
 }
 
@@ -86,7 +86,7 @@ impl GpuBackend {
 
         Ok(Self {
             device: std::sync::Mutex::new(device),
-            queue,
+            queue: std::sync::Mutex::new(queue),
             matmul_pipeline,
         })
     }
@@ -198,7 +198,11 @@ impl GpuBackend {
 
         encoder.copy_buffer_to_buffer(&c_buffer, 0, &staging_buffer, 0, (m * n * 4) as u64);
 
-        self.queue.submit(Some(encoder.finish()));
+        let queue = self
+            .queue
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU queue: {}", e)))?;
+        queue.submit(Some(encoder.finish()));
 
         // Read back result
         let buffer_slice = staging_buffer.slice(..);
