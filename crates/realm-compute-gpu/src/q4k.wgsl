@@ -3,12 +3,13 @@
 // Structure: d (f16), dmin (f16), scales[12], qs[128]
 // Each block processes 256 values in 4 groups of 64
 
-// Block structure (144 bytes total)
+// Block structure (148 bytes total: 4+4+12+128)
+// Note: We convert f16 to f32, so d and dmin are 4 bytes each
 struct BlockQ4K {
-    d: f32,              // Super-block scale (converted from f16)
-    dmin: f32,           // Super-block min scale (converted from f16)
-    scales: array<u32, 12>, // Packed scales (12 bytes, read as u32 array)
-    qs: array<u32, 32>,  // Quantized values (128 bytes, read as u32 array)
+    d: f32,              // Super-block scale (converted from f16, 4 bytes)
+    dmin: f32,           // Super-block min scale (converted from f16, 4 bytes)
+    scales: array<u32, 3>, // Packed scales (12 bytes = 3 u32s)
+    qs: array<u32, 32>,  // Quantized values (128 bytes = 32 u32s)
 }
 
 @group(0) @binding(0) var<storage, read> blocks: array<BlockQ4K>;
@@ -26,24 +27,46 @@ struct Params {
 @group(0) @binding(3) var<uniform> params: Params;
 
 // Extract scale and min from Q4_K scales array (matches get_scale_min_k4)
-fn get_scale_min_k4(j: u32, scales: array<u32, 12>) -> vec2<u32> {
-    // Scales are packed: 6 bits per scale
+// scales is 3 u32s = 12 bytes, we need to extract individual bytes
+fn get_scale_min_k4(j: u32, scales: array<u32, 3>) -> vec2<u32> {
+    // Scales are packed: 6 bits per scale, 12 bytes total
+    // We have 3 u32s, each containing 4 bytes
     let scale_val: u32;
     let min_val: u32;
     
+    // Calculate which byte index we need (0-11)
+    let byte_idx_scale = j; // Scale byte index
+    let byte_idx_min = j + 4u; // Min byte index (offset by 4)
+    
+    // Extract bytes from u32 array
+    let u32_idx_scale = byte_idx_scale / 4u;
+    let byte_offset_scale = (byte_idx_scale % 4u) * 8u;
+    let scale_byte = (scales[u32_idx_scale] >> byte_offset_scale) & 0xFFu;
+    
+    let u32_idx_min = byte_idx_min / 4u;
+    let byte_offset_min = (byte_idx_min % 4u) * 8u;
+    let min_byte = (scales[u32_idx_min] >> byte_offset_min) & 0xFFu;
+    
     if (j < 4u) {
-        // First 4 groups: scales[j] & 63, scales[j+4] & 63
-        let scale_byte = (scales[j / 4u] >> ((j % 4u) * 8u)) & 0xFFu;
-        let min_byte = (scales[(j + 4u) / 4u] >> (((j + 4u) % 4u) * 8u)) & 0xFFu;
+        // First 4 groups: simple extraction
         scale_val = scale_byte & 63u;
         min_val = min_byte & 63u;
     } else {
         // Remaining groups: more complex packing
         let idx = j - 4u;
-        let scale_byte = (scales[(idx + 4u) / 4u] >> (((idx + 4u) % 4u) * 8u)) & 0xFFu;
-        let min_byte = (scales[idx / 4u] >> ((idx % 4u) * 8u)) & 0xFFu;
-        scale_val = (scale_byte & 0xFu) | ((min_byte >> 6u) << 4u);
-        min_val = (scale_byte >> 4u) | ((min_byte >> 6u) << 4u);
+        let byte_idx_scale2 = idx + 4u;
+        let byte_idx_min2 = idx;
+        
+        let u32_idx_scale2 = byte_idx_scale2 / 4u;
+        let byte_offset_scale2 = (byte_idx_scale2 % 4u) * 8u;
+        let scale_byte2 = (scales[u32_idx_scale2] >> byte_offset_scale2) & 0xFFu;
+        
+        let u32_idx_min2 = byte_idx_min2 / 4u;
+        let byte_offset_min2 = (byte_idx_min2 % 4u) * 8u;
+        let min_byte2 = (scales[u32_idx_min2] >> byte_offset_min2) & 0xFFu;
+        
+        scale_val = (scale_byte2 & 0xFu) | ((min_byte2 >> 6u) << 4u);
+        min_val = (scale_byte2 >> 4u) | ((min_byte2 >> 6u) << 4u);
     }
     
     return vec2<u32>(scale_val, min_val);

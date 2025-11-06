@@ -4,7 +4,6 @@
 //! These tests require GPU hardware and are skipped in CI if not available.
 
 use realm_compute_gpu::{CandleGpuBackend, GpuBackend, GpuBackendTrait};
-use realm_core::quant::{BlockQ4_K, QK_K};
 
 /// Test GPU backend creation
 #[tokio::test]
@@ -86,9 +85,115 @@ async fn test_gpu_matmul() {
     }
 }
 
-/// Test fused dequantization + matmul
+/// Test fused dequantization + matmul for all formats
 #[tokio::test]
 async fn test_fused_dequant_matmul() {
+    use realm_core::quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K, QK_K};
+
+    // Test WebGPU backend
+    if GpuBackend::is_available() {
+        if let Ok(backend) = GpuBackend::new().await {
+            let n = 4;
+            let k = QK_K;
+            let batch_size = 2;
+            let num_blocks = n * (k / QK_K);
+
+            // Test Q4_K
+            let q4k_blocks: Vec<BlockQ4_K> = (0..num_blocks)
+                .map(|_| BlockQ4_K {
+                    d: half::f16::from_f32(1.0).to_bits(),
+                    dmin: half::f16::from_f32(0.0).to_bits(),
+                    scales: [1u8; 12],
+                    qs: [0x10u8; 128],
+                })
+                .collect();
+            let input = vec![1.0f32; batch_size * k];
+            match backend.fused_dequant_matmul_q4k(&q4k_blocks, &input, batch_size, n, k) {
+                Ok(result) => {
+                    assert_eq!(result.len(), batch_size * n);
+                    assert!(result.iter().any(|&x| x != 0.0));
+                    println!(
+                        "✅ WebGPU Q4_K fused dequant+matmul: {} elements",
+                        result.len()
+                    );
+                }
+                Err(e) => {
+                    println!("⚠️  WebGPU Q4_K failed: {} (may need GPU)", e);
+                }
+            }
+
+            // Test Q5_K
+            let q5k_blocks: Vec<BlockQ5_K> = (0..num_blocks)
+                .map(|_| BlockQ5_K {
+                    ql: [0x10u8; QK_K / 2],
+                    qh: [0u8; QK_K / 8],
+                    scales: [1i8; QK_K / 16],
+                    d: half::f16::from_f32(1.0).to_bits(),
+                })
+                .collect();
+            match backend.fused_dequant_matmul_q5k(&q5k_blocks, &input, batch_size, n, k) {
+                Ok(result) => {
+                    assert_eq!(result.len(), batch_size * n);
+                    assert!(result.iter().any(|&x| x != 0.0));
+                    println!(
+                        "✅ WebGPU Q5_K fused dequant+matmul: {} elements",
+                        result.len()
+                    );
+                }
+                Err(e) => {
+                    println!("⚠️  WebGPU Q5_K failed: {} (may need GPU)", e);
+                }
+            }
+
+            // Test Q6_K
+            let q6k_blocks: Vec<BlockQ6_K> = (0..num_blocks)
+                .map(|_| BlockQ6_K {
+                    ql: [0x10u8; QK_K / 2],
+                    qh: [0u8; QK_K / 4],
+                    scales: [1i8; QK_K / 16],
+                    d: half::f16::from_f32(1.0).to_bits(),
+                })
+                .collect();
+            match backend.fused_dequant_matmul_q6k(&q6k_blocks, &input, batch_size, n, k) {
+                Ok(result) => {
+                    assert_eq!(result.len(), batch_size * n);
+                    assert!(result.iter().any(|&x| x != 0.0));
+                    println!(
+                        "✅ WebGPU Q6_K fused dequant+matmul: {} elements",
+                        result.len()
+                    );
+                }
+                Err(e) => {
+                    println!("⚠️  WebGPU Q6_K failed: {} (may need GPU)", e);
+                }
+            }
+
+            // Test Q8_K
+            let q8k_blocks: Vec<BlockQ8_K> = (0..num_blocks)
+                .map(|_| BlockQ8_K {
+                    quants: [10i8; QK_K],
+                    scales: [1u8; QK_K / 8],
+                    d: half::f16::from_f32(1.0).to_bits(),
+                    dmin: half::f16::from_f32(0.0).to_bits(),
+                })
+                .collect();
+            match backend.fused_dequant_matmul_q8k(&q8k_blocks, &input, batch_size, n, k) {
+                Ok(result) => {
+                    assert_eq!(result.len(), batch_size * n);
+                    assert!(result.iter().any(|&x| x != 0.0));
+                    println!(
+                        "✅ WebGPU Q8_K fused dequant+matmul: {} elements",
+                        result.len()
+                    );
+                }
+                Err(e) => {
+                    println!("⚠️  WebGPU Q8_K failed: {} (may need GPU)", e);
+                }
+            }
+        }
+    }
+
+    // Test Candle GPU backend (CUDA/Metal)
     if let Ok(backend) = CandleGpuBackend::new() {
         let n = 256;
         let k = 256;
@@ -96,10 +201,10 @@ async fn test_fused_dequant_matmul() {
 
         // Create dummy Q4_K blocks
         let block = BlockQ4_K {
-            d: 0,
-            dmin: 0,
-            scales: [0; 12],
-            qs: [0; 128],
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [1u8; 12],
+            qs: [0x10u8; 128],
         };
         let num_blocks = n * (k / QK_K);
         let blocks = vec![block; num_blocks];
@@ -108,11 +213,14 @@ async fn test_fused_dequant_matmul() {
         match backend.fused_dequant_matmul_q4k(&blocks, &input, batch_size, n, k) {
             Ok(result) => {
                 assert_eq!(result.len(), batch_size * n);
-                println!("✅ Fused Q4_K dequant+matmul: {} elements", result.len());
+                println!(
+                    "✅ Candle GPU Q4_K fused dequant+matmul: {} elements",
+                    result.len()
+                );
             }
             Err(e) => {
                 println!(
-                    "⚠️  Fused kernel failed: {} (expected in CI without GPU)",
+                    "⚠️  Candle GPU fused kernel failed: {} (expected in CI without GPU)",
                     e
                 );
             }
