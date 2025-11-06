@@ -30,6 +30,11 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Set workspace root
+        run: |
+          echo "REPO_ROOT=$(pwd)" >> $GITHUB_ENV
+          echo "Workspace root: $REPO_ROOT"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -251,21 +256,40 @@ jobs:
             exit 1
           }
           
-          # Start server in background
-          cd ../..
+          # Start server in background (from workspace root)
+          # Use absolute paths from workspace root
+          if [ -z "$REPO_ROOT" ]; then
+            REPO_ROOT="$GITHUB_WORKSPACE"
+          fi
+          
           MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
+          SERVER_BIN="$REPO_ROOT/target/release/realm"
+          WASM_FILE="$REPO_ROOT/target/wasm32-unknown-unknown/release/realm_wasm.wasm"
+          
           echo "Starting server with model: $MODEL_PATH"
+          echo "Workspace root: $REPO_ROOT"
+          echo "Current directory: $(pwd)"
           echo "Model exists: $([ -f "$MODEL_PATH" ] && echo 'yes' || echo 'no')"
+          echo "Server binary: $SERVER_BIN"
+          echo "Server binary exists: $([ -f "$SERVER_BIN" ] && echo 'yes' || echo 'no')"
           
           if [ ! -f "$MODEL_PATH" ]; then
             echo "❌ Model file not found: $MODEL_PATH"
             exit 1
           fi
           
-          timeout 180 target/release/realm serve \
+          if [ ! -f "$SERVER_BIN" ]; then
+            echo "❌ Server binary not found at $SERVER_BIN"
+            echo "Looking for binary in $REPO_ROOT/target/release/:"
+            ls -la "$REPO_ROOT/target/release/" 2>/dev/null | head -5 || echo "Directory does not exist"
+            exit 1
+          fi
+          
+          echo "✅ Starting server..."
+          timeout 180 "$SERVER_BIN" serve \
             --host 127.0.0.1 \
             --port 8080 \
-            --wasm target/wasm32-unknown-unknown/release/realm_wasm.wasm \
+            --wasm "$WASM_FILE" \
             --model "$MODEL_PATH" \
             > /tmp/server_node.log 2>&1 &
           SERVER_PID=$!
@@ -372,21 +396,40 @@ jobs:
             exit 1
           }
           
-          # Start server in background
-          cd ../..
+          # Start server in background (from workspace root)
+          # Use absolute paths from workspace root
+          if [ -z "$REPO_ROOT" ]; then
+            REPO_ROOT="$GITHUB_WORKSPACE"
+          fi
+          
           MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
+          SERVER_BIN="$REPO_ROOT/target/release/realm"
+          WASM_FILE="$REPO_ROOT/target/wasm32-unknown-unknown/release/realm_wasm.wasm"
+          
           echo "Starting server with model: $MODEL_PATH"
+          echo "Workspace root: $REPO_ROOT"
+          echo "Current directory: $(pwd)"
           echo "Model exists: $([ -f "$MODEL_PATH" ] && echo 'yes' || echo 'no')"
+          echo "Server binary: $SERVER_BIN"
+          echo "Server binary exists: $([ -f "$SERVER_BIN" ] && echo 'yes' || echo 'no')"
           
           if [ ! -f "$MODEL_PATH" ]; then
             echo "❌ Model file not found: $MODEL_PATH"
             exit 1
           fi
           
-          timeout 180 target/release/realm serve \
+          if [ ! -f "$SERVER_BIN" ]; then
+            echo "❌ Server binary not found at $SERVER_BIN"
+            echo "Looking for binary in $REPO_ROOT/target/release/:"
+            ls -la "$REPO_ROOT/target/release/" 2>/dev/null | head -5 || echo "Directory does not exist"
+            exit 1
+          fi
+          
+          echo "✅ Starting server..."
+          timeout 180 "$SERVER_BIN" serve \
             --host 127.0.0.1 \
             --port 8081 \
-            --wasm target/wasm32-unknown-unknown/release/realm_wasm.wasm \
+            --wasm "$WASM_FILE" \
             --model "$MODEL_PATH" \
             > /tmp/server_python.log 2>&1 &
           SERVER_PID=$!
