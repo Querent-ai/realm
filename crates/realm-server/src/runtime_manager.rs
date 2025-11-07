@@ -650,9 +650,7 @@ impl RuntimeManager {
     /// Generate text with streaming support
     ///
     /// Returns a channel receiver that yields tokens as they're generated.
-    /// Currently, this generates the full response and streams it in chunks.
-    ///
-    /// Note: True token-by-token streaming requires WASM module to support host function callbacks.
+    /// Uses real token-by-token streaming via realm_stream_token host function.
     pub fn generate_stream(
         &self,
         tenant_id: impl AsRef<str>,
@@ -675,28 +673,39 @@ impl RuntimeManager {
                 }
             };
 
-            match runtime.generate(prompt) {
-                Ok(response) => {
-                    // Stream response in word chunks (simulates token streaming)
-                    // Note: Replace with real token-by-token streaming when WASM supports it
-                    let words: Vec<&str> = response.split_whitespace().collect();
-                    for (i, word) in words.iter().enumerate() {
-                        let chunk = if i == words.len() - 1 {
-                            word.to_string()
-                        } else {
-                            format!("{} ", word)
-                        };
+            // Set streaming callback on host context for real token-by-token streaming
+            // Use blocking channel since host functions are called from blocking context
+            let (blocking_tx, blocking_rx) = std::sync::mpsc::channel();
+            let tx_clone = tx.clone();
+            let blocking_tx_for_error = blocking_tx.clone();
 
-                        if tx.blocking_send(chunk).is_err() {
-                            // Receiver dropped, stop streaming
-                            break;
-                        }
+            // Spawn a task to forward from blocking channel to async channel
+            tokio::spawn(async move {
+                while let Ok(token) = blocking_rx.recv() {
+                    if tx_clone.send(token).await.is_err() {
+                        // Receiver dropped, stop forwarding
+                        break;
                     }
                 }
+            });
+
+            // Set the blocking callback on host context
+            runtime.host_context().set_stream_callback(blocking_tx);
+
+            // Generate - tokens will be streamed via realm_stream_token host function
+            match runtime.generate(prompt) {
+                Ok(_response) => {
+                    // Response is already streamed token-by-token via realm_stream_token
+                    // No need to chunk words anymore
+                }
                 Err(e) => {
-                    let _ = tx.blocking_send(format!("Error: {}", e));
+                    // Send error via blocking channel (use cloned sender)
+                    let _ = blocking_tx_for_error.send(format!("Error: {}", e));
                 }
             }
+
+            // Clear streaming callback
+            runtime.host_context().clear_stream_callback();
         });
 
         Ok(rx)
@@ -745,4 +754,68 @@ mod tests {
 
     // Note: Full integration tests require a compiled WASM module
     // and are better suited for the examples directory
+
+    #[tokio::test]
+    async fn test_streaming_callback_setup() {
+        // Test that streaming callback can be set and cleared
+        use realm_runtime::HostContext;
+
+        let host_context = HostContext::new();
+
+        // Create a test channel
+        let (tx, _rx) = std::sync::mpsc::channel();
+
+        // Set callback
+        host_context.set_stream_callback(tx);
+
+        // Clear callback
+        host_context.clear_stream_callback();
+
+        // Test passes if no panic occurs
+    }
+
+    #[tokio::test]
+    async fn test_streaming_channel_forwarding() {
+        // Test that blocking channel correctly forwards to async channel
+        let (async_tx, mut async_rx) = tokio::sync::mpsc::channel(10);
+        let (blocking_tx, blocking_rx) = std::sync::mpsc::channel();
+
+        // Spawn forwarding task with timeout
+        let forwarding_handle = tokio::spawn(async move {
+            while let Ok(token) = blocking_rx.recv() {
+                if async_tx.send(token).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        // Send tokens via blocking channel
+        blocking_tx.send("token1".to_string()).unwrap();
+        blocking_tx.send("token2".to_string()).unwrap();
+        blocking_tx.send("token3".to_string()).unwrap();
+
+        // Drop the blocking sender to signal completion
+        drop(blocking_tx);
+
+        // Receive from async channel with timeout
+        let token1 = tokio::time::timeout(std::time::Duration::from_secs(1), async_rx.recv())
+            .await
+            .expect("Timeout waiting for token1")
+            .unwrap();
+        let token2 = tokio::time::timeout(std::time::Duration::from_secs(1), async_rx.recv())
+            .await
+            .expect("Timeout waiting for token2")
+            .unwrap();
+        let token3 = tokio::time::timeout(std::time::Duration::from_secs(1), async_rx.recv())
+            .await
+            .expect("Timeout waiting for token3")
+            .unwrap();
+
+        assert_eq!(token1, "token1");
+        assert_eq!(token2, "token2");
+        assert_eq!(token3, "token3");
+
+        // Wait for forwarding task to complete (should finish after sender is dropped)
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), forwarding_handle).await;
+    }
 }

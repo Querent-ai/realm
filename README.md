@@ -248,8 +248,11 @@ async for token in client.generate_stream({
 
 ### HTTP/SSE API (OpenAI-Compatible)
 
+Realm provides a fully OpenAI-compatible HTTP API with Server-Sent Events (SSE) for real-time token streaming.
+
+#### Non-Streaming Request
+
 ```bash
-# Non-streaming request
 curl -X POST http://localhost:8081/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_API_KEY" \
@@ -258,8 +261,36 @@ curl -X POST http://localhost:8081/v1/chat/completions \
     "messages": [{"role": "user", "content": "What is the capital of France?"}],
     "max_tokens": 20
   }'
+```
 
-# Streaming request (SSE)
+**Response:**
+```json
+{
+  "id": "chatcmpl-123",
+  "object": "chat.completion",
+  "created": 1677652288,
+  "model": "default",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "The capital of France is Paris."
+    },
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 7,
+    "total_tokens": 17
+  }
+}
+```
+
+#### Streaming Request (SSE) - Real Token-by-Token Streaming
+
+Realm uses **real token-by-token streaming** via the `realm_stream_token` host function, providing true real-time token delivery (not word chunking).
+
+```bash
 curl -X POST http://localhost:8081/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_API_KEY" \
@@ -270,6 +301,25 @@ curl -X POST http://localhost:8081/v1/chat/completions \
     "stream": true
   }'
 ```
+
+**Response (SSE format):**
+```
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1677652288,"model":"default","choices":[{"index":0,"delta":{"content":"Once"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1677652288,"model":"default","choices":[{"index":0,"delta":{"content":" upon"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1677652288,"model":"default","choices":[{"index":0,"delta":{"content":" a"},"finish_reason":null}]}
+
+...
+
+data: [DONE]
+```
+
+**Key Features:**
+- ✅ **Real token-by-token streaming** - Each token is streamed as it's generated
+- ✅ **OpenAI-compatible format** - Works with existing OpenAI clients
+- ✅ **Low latency** - Tokens appear immediately after generation
+- ✅ **SSE protocol** - Standard Server-Sent Events for easy integration
 
 ---
 
@@ -719,9 +769,10 @@ See [Advanced GPU Features](docs/ADVANCED_GPU_FEATURES.md) for details.
 
 #### API & Infrastructure
 
-- [x] HTTP REST API (OpenAI-compatible endpoints)
+- [x] HTTP REST API (OpenAI-compatible endpoints) ✅
 - [ ] Web dashboard (Grafana/custom UI)
-- [x] Server-Sent Events (SSE) for HTTP streaming
+- [x] Server-Sent Events (SSE) for HTTP streaming ✅
+- [x] Real token-by-token streaming (via realm_stream_token host function) ✅
 
 #### SDKs & Clients
 

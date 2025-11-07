@@ -1,240 +1,244 @@
-# Next Steps & Missing Items
+# Next Steps & Missing Features
 
-## ✅ Completed (This PR)
+**Date**: 2025-01-31  
+**Status**: Codebase is clean, CI-ready, but several features need completion
 
-1. **HTTP/SSE Server** ✅
+---
+
+## ✅ What's Complete & Ready
+
+1. **✅ Code Quality**
+   - All formatting passes (`cargo fmt`)
+   - All Clippy warnings fixed (`-D warnings`)
+   - All tests pass (unit, integration)
+   - CI pipeline configured and ready
+
+2. **✅ HTTP/SSE Server**
    - OpenAI-compatible `/v1/chat/completions` endpoint
-   - Server-Sent Events streaming
-   - Health and metrics endpoints
-   - Tenant authentication
-   - CLI integration (`--http` flag)
+   - Server-Sent Events streaming support
+   - Metrics collection and Prometheus export
+   - Token counting (approximate)
+   - Load tests implemented (require running server)
 
-2. **WASM Tests with Mocked Host Functions** ✅
-   - 7 unit tests in `crates/realm-wasm/tests/host_function_mocks.rs`
-   - Tests tokenization, generation config, host function patterns, KV cache tracking
-   - All tests passing
+3. **✅ Core Infrastructure**
+   - WASM orchestration
+   - Runtime manager with tenant isolation
+   - WebSocket server
+   - Metrics collection
 
-3. **Integration Tests** ✅
-   - HTTP server integration tests in `crates/realm-server/tests/integration.rs`
-   - Tests health, metrics, chat completions validation and structure
-   - Gracefully skips when WASM file not available
+---
 
-4. **Code Quality** ✅
-   - All clippy warnings fixed
-   - Code formatted
-   - Copilot review issues addressed
+## 🔴 High Priority - Core Features
 
-## ❌ Missing & Next Items
+### 1. Real Token-by-Token Streaming ⭐⭐⭐
+**Current State**: Simulates streaming by chunking words  
+**Location**: 
+- `crates/realm-server/src/runtime_manager.rs:680` - "Stream response in word chunks (simulates token streaming)"
+- `crates/realm-server/src/http.rs:296` - "Currently streams word-by-word (simulates token streaming)"
 
-### High Priority (Production Readiness)
-
-#### 1. **Load Tests** 🔴
-**Status**: Not implemented  
-**Location**: Should be in `crates/realm-server/tests/load_tests.rs` or `tests/load/`  
 **What's Needed**:
-- Concurrent request testing (10, 50, 100+ concurrent clients)
-- Throughput measurement (requests/second)
-- Latency percentiles (p50, p95, p99)
-- Memory usage under load
-- Connection pool exhaustion testing
+- WASM host function callbacks for token generation
+- Modify `RuntimeManager::generate_stream()` to use real token callbacks
+- Update WASM module to support streaming callbacks
 
-**Tools**: 
-- Use `criterion` for Rust benchmarks
-- Or `k6`/`locust` for HTTP load testing
-- Or `tokio::spawn` with many concurrent test clients
+**Impact**: Critical for production streaming performance  
+**Effort**: Medium (3-5 days)
 
-**Example Structure**:
-```rust
-#[tokio::test]
-async fn test_concurrent_requests() {
-    // Spawn 100 concurrent requests
-    // Measure latency, throughput
-}
+### 2. WASM Host Function Streaming Callbacks ⭐⭐⭐
+**Current State**: Framework exists, needs implementation  
+**Location**: `crates/realm-wasm/src/lib.rs:467` - "TODO: Refactor to use HOST-provided backends via FFI"
 
-#[tokio::test]
-async fn test_sustained_load() {
-    // Run for 60 seconds
-    // Monitor memory, CPU
-}
-```
-
-#### 2. **Real WASM Streaming Integration** 🟡
-**Status**: Currently simulated  
-**Location**: `crates/realm-server/src/http.rs:236`  
 **What's Needed**:
-- Integrate `generate_with_callback` from WASM layer
-- Real token-by-token streaming via SSE
-- Handle callback returning `false` to stop generation
-- Test streaming with actual WASM module
+- Implement `realm_stream_token(token: String)` host function
+- Wire up callbacks in WASM generation loop
+- Update runtime to handle streaming callbacks
 
-**Current**: Generates full response then chunks it  
-**Needed**: Call WASM callback for each token
+**Impact**: Enables real-time token streaming  
+**Effort**: Medium (3-5 days)
 
-#### 3. **Token Counting** 🟡
-**Status**: Hardcoded to 0  
-**Location**: `crates/realm-server/src/http.rs:219-220`  
+### 3. README Documentation Update ⭐⭐
+**Current State**: README still lists HTTP/SSE as TODO  
+**Location**: `README.md` (lines 684-686 per docs)
+
 **What's Needed**:
-- Count prompt tokens (from input messages)
-- Count completion tokens (from generated text)
-- Use tokenizer from RuntimeManager
-- Return accurate usage stats
+- Update README to reflect HTTP/SSE completion
+- Add examples for HTTP/SSE usage
+- Document streaming API
 
-#### 4. **Metrics Integration** 🟡
-**Status**: Stub implementation  
-**Location**: `crates/realm-server/src/http.rs:110-114`  
+**Impact**: Developer experience  
+**Effort**: Low (1-2 hours)
+
+---
+
+## 🟡 Medium Priority - Feature Integration
+
+### 4. LoRA Runtime Integration ⭐⭐
+**Current State**: Framework complete, not integrated  
+**Location**: 
+- `crates/realm-runtime/src/lora.rs` - Complete framework
+- `crates/realm-models/src/model.rs` - Needs integration
+
 **What's Needed**:
-- Integrate with `realm-metrics` crate
-- Expose Prometheus metrics:
-  - Request count, latency
-  - Token generation rate
-  - Error rates
-  - Active connections
-  - Model inference time
+- Apply LoRA weights during model loading
+- Integrate LoRA into forward pass
+- Add LoRA support to RuntimeManager
 
-### Medium Priority (Enhancements)
+**Impact**: Enables fine-tuning adapters  
+**Effort**: Medium (1 week)
 
-#### 5. **End-to-End Integration Tests** 🟡
-**Status**: Basic tests exist, need full flow  
-**Location**: `crates/realm-server/tests/integration.rs`  
+### 5. Speculative Decoding Integration ⭐⭐
+**Current State**: Framework exists, partially integrated  
+**Location**: `crates/realm-runtime/src/speculative.rs`
+
 **What's Needed**:
-- Full flow: HTTP request → RuntimeManager → WASM → Host Functions → Response
-- Test with actual model file (when available)
-- Test streaming end-to-end
-- Test error handling (invalid requests, model not found, etc.)
-- Test authentication flow
+- Wire up draft model loading
+- Integrate with inference session
+- Add to RuntimeManager
 
-**Current**: Tests skip when WASM not available  
-**Needed**: Optional tests that run when WASM + model available
+**Impact**: 2-3x speedup for generation  
+**Effort**: Medium (1 week)
 
-#### 6. **WASM Generation Tests** 🟡
-**Status**: Stubs exist  
-**Location**: `crates/realm-wasm/tests/generation_tests.rs`  
+### 6. Continuous Batching Integration ⭐
+**Current State**: Framework exists, not integrated  
+**Location**: `crates/realm-runtime/src/batching.rs`
+
 **What's Needed**:
-- Implement actual test bodies
-- Test full generation loop
-- Test KV cache management
-- Test logits processing
-- Test error handling
-- Test multi-token generation
+- Connect to dispatcher request handling
+- Integrate with RuntimeManager
+- Add batching configuration
 
-**Current**: Just placeholder comments  
-**Needed**: Real test implementations
+**Impact**: Better throughput for concurrent requests  
+**Effort**: Medium (1 week)
 
-#### 7. **SDK Load Tests** 🟢
-**Status**: Not implemented  
-**Location**: `sdks/nodejs-ws/tests/` or `sdks/python-ws/tests/`  
+### 7. OpenTelemetry Metrics Export ⭐
+**Current State**: Stubbed with TODOs  
+**Location**: `crates/realm-metrics/src/export/opentelemetry.rs`
+
 **What's Needed**:
-- Test SDKs under concurrent load
-- Test WebSocket connection pooling
-- Test HTTP client connection reuse
-- Test streaming performance
+- Implement OpenTelemetry crate integration
+- Convert MetricSample to OpenTelemetry format
+- Add export configuration
 
-### Low Priority (Future Enhancements)
+**Impact**: Better observability integration  
+**Effort**: Low-Medium (3-5 days)
 
-#### 8. **Distributed Inference Testing** 🟢
-**Status**: Framework exists, untested  
-**Location**: `crates/realm-compute-gpu/src/distributed.rs`  
+---
+
+## 🟢 Low Priority - Future Enhancements
+
+### 8. GPU Backend Completion ⭐
+**Current State**: Stubbed, needs GPU testing  
+**Location**: 
+- `crates/realm-compute-gpu/src/distributed.rs` - NCCL TODOs
+- `crates/realm-runtime/src/attention/flash_attention.cu` - Backward pass TODO
+
 **What's Needed**:
-- Integration tests for tensor/pipeline/data parallelism
-- Simulation tests (don't need actual multi-GPU)
-- Test model sharding
-- Test communication patterns
+- Complete CUDA/Metal/WebGPU implementations
+- Implement NCCL communication primitives
+- GPU testing infrastructure
 
-#### 9. **Continuous Batching Integration** 🟢
-**Status**: Framework exists, not integrated  
-**Location**: `crates/realm-runtime/src/batching.rs`  
+**Impact**: Performance improvements  
+**Effort**: High (2-3 weeks, requires GPU access)
+
+### 9. Additional SDKs ⭐
+**Current State**: JavaScript/Python SDKs exist, Go/Rust mentioned  
+**Location**: `sdks/` directory
+
 **What's Needed**:
-- Wire into HTTP/SSE server
-- Test batching multiple requests
-- Measure throughput improvement
-- Test with different batch sizes
+- Go SDK (WebSocket client)
+- Rust SDK (native client)
+- Fix JavaScript SDK model registry limitations
 
-#### 10. **LoRA Adapter Integration** 🟢
-**Status**: Framework exists, not integrated  
-**Location**: `crates/realm-runtime/src/lora.rs`  
+**Impact**: Broader adoption  
+**Effort**: Medium (3-5 days each)
+
+### 10. Advanced Quantization Formats ⭐
+**Current State**: Only K-quants supported  
+**Location**: Various compute files
+
 **What's Needed**:
-- Test per-tenant LoRA adapters
-- Test adapter loading/unloading
-- Test adapter switching during inference
+- AWQ quantization support
+- GPTQ quantization support
 
-#### 11. **Speculative Decoding Integration** 🟢
-**Status**: Framework exists, not integrated  
-**Location**: `crates/realm-runtime/src/speculative.rs`  
+**Impact**: More model compatibility  
+**Effort**: Medium (1 week each)
+
+### 11. SIMD Optimizations ⭐
+**Current State**: Marked as TODO, low priority  
+**Location**: `crates/realm-compute-cpu/src/fused.rs:2337, 2422`
+
 **What's Needed**:
-- Test draft model + target model flow
-- Measure speedup
-- Test rejection sampling
+- Optimize Q5_0/Q5_1 SIMD implementations
+- Performance benchmarking
 
-## Test Coverage Summary
+**Impact**: Minor performance improvements  
+**Effort**: Low (2-3 days)
 
-### Current Coverage
-- ✅ Unit tests: WASM host function mocks (7 tests)
-- ✅ Integration tests: HTTP endpoints (4 tests, skip if WASM missing)
-- ✅ GPU tests: WebGPU dequantization (comprehensive)
-- ✅ Core library tests: Quantization, tokenization, etc.
+---
 
-### Missing Coverage
-- ❌ Load tests: 0%
-- ❌ End-to-end tests: Partial (skip when WASM missing)
-- ❌ Streaming tests: Simulated only
-- ❌ SDK tests: Basic only, no load tests
-- ❌ Error handling tests: Partial
-- ❌ Authentication tests: Basic only
+## 📋 Immediate Next Steps (This Week)
 
-## Recommended Next Actions
+1. **Update README** (1-2 hours)
+   - Mark HTTP/SSE as complete
+   - Add usage examples
+   - Document streaming API
 
-### Week 1: Critical Tests
-1. **Load Tests** (2-3 days)
-   - Implement concurrent request testing
-   - Measure throughput and latency
-   - Test under sustained load
+2. **Real Token Streaming** (3-5 days)
+   - Implement WASM host function callbacks
+   - Update `generate_stream()` to use real tokens
+   - Test with actual model generation
 
-2. **Real Streaming Integration** (1-2 days)
-   - Wire up WASM callbacks
-   - Test token-by-token streaming
-   - Verify SSE format correctness
+3. **Integration Test Coverage** (2-3 days)
+   - Add tests for streaming with mocked WASM
+   - Verify load tests work with running server
+   - Document how to run load tests
 
-3. **Token Counting** (1 day)
-   - Implement prompt/completion token counting
-   - Test with various inputs
+---
 
-### Week 2: Integration & Metrics
-4. **Metrics Integration** (1-2 days)
-   - Wire up realm-metrics
-   - Expose Prometheus endpoints
-   - Test metrics collection
+## 🎯 Success Criteria
 
-5. **End-to-End Tests** (2-3 days)
-   - Full flow tests with WASM + model
-   - Error scenario testing
-   - Authentication flow testing
+**For Production Readiness**:
+- ✅ Code quality (DONE)
+- ✅ CI pipeline (DONE)
+- ⚠️ Real token streaming (IN PROGRESS)
+- ⚠️ Documentation (NEEDS UPDATE)
+- ⚠️ Integration tests (NEEDS EXPANSION)
 
-### Week 3: Enhancements
-6. **WASM Generation Tests** (2-3 days)
-   - Implement full test suite
-   - Test all generation scenarios
+**For Full Feature Set**:
+- ⚠️ LoRA integration
+- ⚠️ Speculative decoding integration
+- ⚠️ Continuous batching integration
+- ⚠️ GPU backends (requires hardware)
 
-7. **SDK Load Tests** (1-2 days)
-   - Test Node.js and Python SDKs under load
+---
 
-## Quick Wins (Can Do Now)
+## 📊 Priority Matrix
 
-1. **Token Counting** - Straightforward, just need tokenizer
-2. **Metrics Integration** - realm-metrics crate exists, just wire it up
-3. **More Integration Tests** - Add tests for error cases, edge cases
-4. **Documentation** - Add examples for load testing, streaming
+| Feature | Priority | Effort | Impact | Status |
+|---------|----------|--------|--------|--------|
+| Real Token Streaming | 🔴 High | Medium | Critical | ⚠️ In Progress |
+| README Update | 🔴 High | Low | High | ❌ Not Started |
+| LoRA Integration | 🟡 Medium | Medium | High | ❌ Not Started |
+| Speculative Decoding | 🟡 Medium | Medium | High | ⚠️ Partial |
+| Continuous Batching | 🟡 Medium | Medium | Medium | ❌ Not Started |
+| OpenTelemetry Export | 🟡 Medium | Low-Medium | Medium | ❌ Not Started |
+| GPU Backends | 🟢 Low | High | High | ❌ Requires GPU |
+| Additional SDKs | 🟢 Low | Medium | Medium | ⚠️ Partial |
+| Advanced Quantization | 🟢 Low | Medium | Low | ❌ Not Started |
+| SIMD Optimizations | 🟢 Low | Low | Low | ❌ Not Started |
 
-## Testing Tools to Consider
+---
 
-- **Load Testing**: `criterion`, `k6`, `locust`, or custom with `tokio::spawn`
-- **HTTP Testing**: `axum-test` (already used), `reqwest` for client
-- **WebSocket Testing**: `tokio-tungstenite` test client
-- **Benchmarking**: `criterion` for Rust, `time` for Python
-- **Mocking**: Custom mocks (already done for host functions)
+## 🚀 Recommended Order
 
-## Notes
+1. **Week 1**: README update + Real token streaming
+2. **Week 2-3**: LoRA + Speculative Decoding integration
+3. **Week 4**: Continuous batching + OpenTelemetry
+4. **Future**: GPU backends, additional SDKs, quantization formats
 
-- Most missing items are enhancements, not blockers
-- Core functionality is tested and working
-- Load tests are the biggest gap for production readiness
-- Streaming integration is the next logical step after load tests
+---
+
+**Note**: The codebase is in excellent shape for CI/CD. The main gaps are feature integration and real streaming implementation. All critical infrastructure is in place.
+
+
+

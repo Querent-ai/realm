@@ -14,7 +14,7 @@
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex; // No poisoning, faster than std::sync::Mutex
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use wasmtime::{AsContext, Caller, Extern, Linker, Memory, MemoryType, Store};
 
 // Import Candle backends
@@ -386,6 +386,12 @@ pub struct Memory64Runtime {
 
     #[cfg(all(not(target_arch = "wasm32"), any(feature = "cuda", feature = "metal")))]
     gpu_backend: Option<Arc<dyn GpuBackendTrait>>,
+
+    // Streaming callback for token-by-token generation
+    // Used by realm_stream_token host function to send tokens as they're generated
+    // Uses blocking channel since host functions are called from blocking context
+    #[cfg(not(target_arch = "wasm32"))]
+    stream_callback: Arc<Mutex<Option<std::sync::mpsc::Sender<String>>>>,
 }
 
 impl Memory64Runtime {
@@ -403,7 +409,23 @@ impl Memory64Runtime {
             cpu_backend,
             #[cfg(all(not(target_arch = "wasm32"), any(feature = "cuda", feature = "metal")))]
             gpu_backend,
+            #[cfg(not(target_arch = "wasm32"))]
+            stream_callback: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Set streaming callback for token generation
+    /// This callback will be invoked by realm_stream_token host function
+    /// Uses blocking channel since host functions are called from blocking context
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_stream_callback(&self, sender: std::sync::mpsc::Sender<String>) {
+        *self.stream_callback.lock() = Some(sender);
+    }
+
+    /// Clear streaming callback
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn clear_stream_callback(&self) {
+        *self.stream_callback.lock() = None;
     }
 
     /// Create CPU backend (tries Candle first, falls back to none)
@@ -2162,12 +2184,96 @@ impl Memory64Runtime {
             )?;
         }
 
+        // ========================================
+        // Token Streaming (REAL TOKEN-BY-TOKEN STREAMING)
+        // ========================================
+        // Host function: Stream a token as it's generated
+        // This enables real token-by-token streaming instead of word chunking
+        // Parameters: token_ptr, token_len (WASM memory offsets)
+        // Returns: 0 on success, negative on error
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let stream_callback = self.stream_callback.clone();
+            linker.func_wrap(
+                "env",
+                "realm_stream_token",
+                move |mut caller: Caller<'_, ()>, token_ptr: u32, token_len: u32| -> i32 {
+                    // Get WASM memory
+                    let wasm_memory = match caller.get_export("memory") {
+                        Some(Extern::Memory(mem)) => mem,
+                        _ => {
+                            error!("realm_stream_token: No WASM memory export");
+                            return -1;
+                        }
+                    };
+
+                    // Validate pointer
+                    let wasm_mem_size = wasm_memory.data_size(&caller);
+                    let token_end = match (token_ptr as usize).checked_add(token_len as usize) {
+                        Some(end) => end,
+                        None => {
+                            error!("realm_stream_token: Pointer overflow");
+                            return -2;
+                        }
+                    };
+
+                    if token_end > wasm_mem_size {
+                        error!("realm_stream_token: Pointer out of bounds");
+                        return -3;
+                    }
+
+                    // Read token string from WASM memory
+                    let mut token_bytes = vec![0u8; token_len as usize];
+                    if let Err(e) = wasm_memory.read(&caller, token_ptr as usize, &mut token_bytes)
+                    {
+                        error!("realm_stream_token: Failed to read token: {}", e);
+                        return -4;
+                    }
+
+                    // Convert to string
+                    let token = match String::from_utf8(token_bytes) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            error!("realm_stream_token: Invalid UTF-8: {}", e);
+                            return -5;
+                        }
+                    };
+
+                    // Send token to callback (blocking send, but should be fast)
+                    let callback_guard = stream_callback.lock();
+                    if let Some(ref sender) = *callback_guard {
+                        // Use send for blocking channel
+                        // If channel is closed, we log a warning but don't fail
+                        if let Err(e) = sender.send(token.clone()) {
+                            // Channel might be closed - this is okay for streaming
+                            debug!(
+                                "realm_stream_token: Failed to send token (channel closed): {}",
+                                e
+                            );
+                        }
+                    } else {
+                        // No callback set - this is okay, just means streaming is not enabled
+                        debug!("realm_stream_token: No streaming callback set");
+                    }
+
+                    0 // Success
+                },
+            )?;
+        }
+
         Ok(())
     }
 
     /// Get state reference (for testing/debugging)
     pub fn state(&self) -> Arc<Mutex<Memory64State>> {
         self.state.clone()
+    }
+
+    /// Get stream callback reference (for testing)
+    #[cfg(test)]
+    pub fn stream_callback(&self) -> &Arc<Mutex<Option<std::sync::mpsc::Sender<String>>>> {
+        &self.stream_callback
     }
 }
 
@@ -2209,5 +2315,59 @@ mod tests {
         // Valid page-aligned size should succeed
         let result = MemoryRegion::new(0, "test", 0, 65536, "test");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_streaming_callback_set_and_clear() {
+        // Test that streaming callback can be set and cleared
+        let layout = MemoryLayout::single(8, "test").unwrap();
+        let runtime = Memory64Runtime::new(layout, true);
+
+        // Create a test channel
+        let (tx, _rx) = std::sync::mpsc::channel();
+
+        // Set callback
+        runtime.set_stream_callback(tx);
+
+        // Clear callback
+        runtime.clear_stream_callback();
+
+        // Test passes if no panic occurs
+    }
+
+    #[test]
+    fn test_streaming_callback_receives_tokens() {
+        // Test that tokens sent via callback are received correctly
+        let layout = MemoryLayout::single(8, "test").unwrap();
+        let runtime = Memory64Runtime::new(layout, true);
+
+        // Create a test channel
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        // Set callback
+        runtime.set_stream_callback(tx);
+
+        // Simulate sending tokens (in real usage, this would be via realm_stream_token host function)
+        // We can't directly call the host function from tests, but we can test the callback mechanism
+        let callback_guard = runtime.stream_callback().lock();
+        if let Some(ref sender) = *callback_guard {
+            sender.send("test_token".to_string()).unwrap();
+        }
+        drop(callback_guard);
+
+        // Receive token
+        let token = rx.recv().unwrap();
+        assert_eq!(token, "test_token");
+    }
+
+    #[test]
+    fn test_streaming_callback_none_when_not_set() {
+        // Test that callback is None when not set
+        let layout = MemoryLayout::single(8, "test").unwrap();
+        let runtime = Memory64Runtime::new(layout, true);
+
+        // Callback should be None initially
+        let callback_guard = runtime.stream_callback().lock();
+        assert!(callback_guard.is_none());
     }
 }

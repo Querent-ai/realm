@@ -58,6 +58,20 @@ impl HostContext {
     pub fn runtime(&self) -> &Memory64Runtime {
         &self.runtime
     }
+
+    /// Set streaming callback for token generation
+    /// This enables real token-by-token streaming via realm_stream_token host function
+    /// Uses blocking channel since host functions are called from blocking context
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_stream_callback(&self, sender: std::sync::mpsc::Sender<String>) {
+        self.runtime.set_stream_callback(sender);
+    }
+
+    /// Clear streaming callback
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn clear_stream_callback(&self) {
+        self.runtime.clear_stream_callback();
+    }
 }
 
 impl Default for HostContext {
@@ -185,5 +199,34 @@ mod tests {
 
         // Initialize should succeed
         assert!(context.initialize(&mut store).is_ok());
+    }
+
+    #[test]
+    fn test_host_context_streaming_callback() {
+        let context = HostContext::new();
+
+        // Create a test channel
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        // Set callback
+        context.set_stream_callback(tx);
+
+        // Send a test token
+        let callback_guard = context.runtime().stream_callback().lock();
+        if let Some(ref sender) = *callback_guard {
+            sender.send("test".to_string()).unwrap();
+        }
+        drop(callback_guard);
+
+        // Receive token
+        let token = rx.recv().unwrap();
+        assert_eq!(token, "test");
+
+        // Clear callback
+        context.clear_stream_callback();
+
+        // Verify callback is cleared
+        let callback_guard = context.runtime().stream_callback().lock();
+        assert!(callback_guard.is_none());
     }
 }
