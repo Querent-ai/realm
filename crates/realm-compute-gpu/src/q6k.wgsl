@@ -25,6 +25,103 @@ struct Params {
 
 @group(0) @binding(3) var<uniform> params: Params;
 
+// Helper: Get scale with constant index (unroll for 0-15)
+fn get_scale(scales: array<i32, 16>, idx: u32) -> f32 {
+    if (idx == 0u) { return f32(scales[0u]); }
+    else if (idx == 1u) { return f32(scales[1u]); }
+    else if (idx == 2u) { return f32(scales[2u]); }
+    else if (idx == 3u) { return f32(scales[3u]); }
+    else if (idx == 4u) { return f32(scales[4u]); }
+    else if (idx == 5u) { return f32(scales[5u]); }
+    else if (idx == 6u) { return f32(scales[6u]); }
+    else if (idx == 7u) { return f32(scales[7u]); }
+    else if (idx == 8u) { return f32(scales[8u]); }
+    else if (idx == 9u) { return f32(scales[9u]); }
+    else if (idx == 10u) { return f32(scales[10u]); }
+    else if (idx == 11u) { return f32(scales[11u]); }
+    else if (idx == 12u) { return f32(scales[12u]); }
+    else if (idx == 13u) { return f32(scales[13u]); }
+    else if (idx == 14u) { return f32(scales[14u]); }
+    else { return f32(scales[15u]); }
+}
+
+// Helper: Extract byte from u32 array (for ql/qh)
+fn get_byte_from_u32_array(arr: array<u32, 32>, byte_idx: u32) -> u32 {
+    let u32_idx = byte_idx / 4u;
+    let byte_pos = byte_idx % 4u;
+    
+    // Unroll for u32 index (0-31) - this is very verbose but necessary
+    // For now, use a pattern: extract byte from the u32
+    var val: u32 = 0u;
+    if (u32_idx == 0u) { val = arr[0u]; }
+    else if (u32_idx == 1u) { val = arr[1u]; }
+    else if (u32_idx == 2u) { val = arr[2u]; }
+    else if (u32_idx == 3u) { val = arr[3u]; }
+    else if (u32_idx == 4u) { val = arr[4u]; }
+    else if (u32_idx == 5u) { val = arr[5u]; }
+    else if (u32_idx == 6u) { val = arr[6u]; }
+    else if (u32_idx == 7u) { val = arr[7u]; }
+    else if (u32_idx == 8u) { val = arr[8u]; }
+    else if (u32_idx == 9u) { val = arr[9u]; }
+    else if (u32_idx == 10u) { val = arr[10u]; }
+    else if (u32_idx == 11u) { val = arr[11u]; }
+    else if (u32_idx == 12u) { val = arr[12u]; }
+    else if (u32_idx == 13u) { val = arr[13u]; }
+    else if (u32_idx == 14u) { val = arr[14u]; }
+    else if (u32_idx == 15u) { val = arr[15u]; }
+    else if (u32_idx == 16u) { val = arr[16u]; }
+    else if (u32_idx == 17u) { val = arr[17u]; }
+    else if (u32_idx == 18u) { val = arr[18u]; }
+    else if (u32_idx == 19u) { val = arr[19u]; }
+    else if (u32_idx == 20u) { val = arr[20u]; }
+    else if (u32_idx == 21u) { val = arr[21u]; }
+    else if (u32_idx == 22u) { val = arr[22u]; }
+    else if (u32_idx == 23u) { val = arr[23u]; }
+    else if (u32_idx == 24u) { val = arr[24u]; }
+    else if (u32_idx == 25u) { val = arr[25u]; }
+    else if (u32_idx == 26u) { val = arr[26u]; }
+    else if (u32_idx == 27u) { val = arr[27u]; }
+    else if (u32_idx == 28u) { val = arr[28u]; }
+    else if (u32_idx == 29u) { val = arr[29u]; }
+    else if (u32_idx == 30u) { val = arr[30u]; }
+    else { val = arr[31u]; }
+    
+    // Extract byte position
+    if (byte_pos == 0u) { return val & 0xFFu; }
+    else if (byte_pos == 1u) { return (val >> 8u) & 0xFFu; }
+    else if (byte_pos == 2u) { return (val >> 16u) & 0xFFu; }
+    else { return (val >> 24u) & 0xFFu; }
+}
+
+// Helper for qh array (16 u32s)
+fn get_byte_from_qh_array(arr: array<u32, 16>, byte_idx: u32) -> u32 {
+    let u32_idx = byte_idx / 4u;
+    let byte_pos = byte_idx % 4u;
+    
+    var val: u32 = 0u;
+    if (u32_idx == 0u) { val = arr[0u]; }
+    else if (u32_idx == 1u) { val = arr[1u]; }
+    else if (u32_idx == 2u) { val = arr[2u]; }
+    else if (u32_idx == 3u) { val = arr[3u]; }
+    else if (u32_idx == 4u) { val = arr[4u]; }
+    else if (u32_idx == 5u) { val = arr[5u]; }
+    else if (u32_idx == 6u) { val = arr[6u]; }
+    else if (u32_idx == 7u) { val = arr[7u]; }
+    else if (u32_idx == 8u) { val = arr[8u]; }
+    else if (u32_idx == 9u) { val = arr[9u]; }
+    else if (u32_idx == 10u) { val = arr[10u]; }
+    else if (u32_idx == 11u) { val = arr[11u]; }
+    else if (u32_idx == 12u) { val = arr[12u]; }
+    else if (u32_idx == 13u) { val = arr[13u]; }
+    else if (u32_idx == 14u) { val = arr[14u]; }
+    else { val = arr[15u]; }
+    
+    if (byte_pos == 0u) { return val & 0xFFu; }
+    else if (byte_pos == 1u) { return (val >> 8u) & 0xFFu; }
+    else if (byte_pos == 2u) { return (val >> 16u) & 0xFFu; }
+    else { return (val >> 24u) & 0xFFu; }
+}
+
 // Workgroup size: 16x16 threads per output element
 @compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -54,22 +151,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         for (var l = 0u; l < 32u; l++) {
             let is = l / 16u; // 0 or 1 (scale base index)
             
-            // Get ql bytes (ql is stored as bytes, 2 values per byte)
-            let ql_l_byte_idx = l;
-            let ql_l_u32_idx = ql_l_byte_idx / 4u;
-            let ql_l_bit_offset = ((ql_l_byte_idx % 4u) * 8u);
-            let ql_l_byte = (block.ql[ql_l_u32_idx] >> ql_l_bit_offset) & 0xFFu;
+            // Get ql bytes using helper
+            let ql_l_byte = get_byte_from_u32_array(block.ql, l);
+            let ql_l32_byte = get_byte_from_u32_array(block.ql, l + 32u);
             
-            let ql_l32_byte_idx = l + 32u;
-            let ql_l32_u32_idx = ql_l32_byte_idx / 4u;
-            let ql_l32_bit_offset = ((ql_l32_byte_idx % 4u) * 8u);
-            let ql_l32_byte = (block.ql[ql_l32_u32_idx] >> ql_l32_bit_offset) & 0xFFu;
-            
-            // Get qh byte (qh is stored as bytes, 4 values per byte)
-            let qh_l_byte_idx = l;
-            let qh_l_u32_idx = qh_l_byte_idx / 4u;
-            let qh_l_bit_offset = ((qh_l_byte_idx % 4u) * 8u);
-            let qh_l_byte = (block.qh[qh_l_u32_idx] >> qh_l_bit_offset) & 0xFFu;
+            // Get qh byte
+            let qh_l_byte = get_byte_from_qh_array(block.qh, l);
             
             // Extract 4 quantized values (matches CPU: as i8 - 32)
             let q1 = i32((ql_l_byte & 0xFu) | (((qh_l_byte >> 0u) & 3u) << 4u)) - 32i;
@@ -77,23 +164,23 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let q3 = i32((ql_l_byte >> 4u) | (((qh_l_byte >> 4u) & 3u) << 4u)) - 32i;
             let q4 = i32((ql_l32_byte >> 4u) | (((qh_l_byte >> 6u) & 3u) << 4u)) - 32i;
             
-            // Dequantize with correct scales (scales[is], scales[is+2], scales[is+4], scales[is+6])
+            // Dequantize with correct scales using helper
             let k_idx1 = k_start + l;
             let k_idx2 = k_start + l + 32u;
             let k_idx3 = k_start + l + 64u;
             let k_idx4 = k_start + l + 96u;
             
             if (k_idx1 < params.k) {
-                sum += d * f32(block.scales[is]) * f32(q1) * input[batch_idx * params.k + k_idx1];
+                sum += d * get_scale(block.scales, is) * f32(q1) * input[batch_idx * params.k + k_idx1];
             }
             if (k_idx2 < params.k) {
-                sum += d * f32(block.scales[is + 2u]) * f32(q2) * input[batch_idx * params.k + k_idx2];
+                sum += d * get_scale(block.scales, is + 2u) * f32(q2) * input[batch_idx * params.k + k_idx2];
             }
             if (k_idx3 < params.k) {
-                sum += d * f32(block.scales[is + 4u]) * f32(q3) * input[batch_idx * params.k + k_idx3];
+                sum += d * get_scale(block.scales, is + 4u) * f32(q3) * input[batch_idx * params.k + k_idx3];
             }
             if (k_idx4 < params.k) {
-                sum += d * f32(block.scales[is + 6u]) * f32(q4) * input[batch_idx * params.k + k_idx4];
+                sum += d * get_scale(block.scales, is + 6u) * f32(q4) * input[batch_idx * params.k + k_idx4];
             }
         }
         
@@ -103,21 +190,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let sc_offset = 8u; // Offset into scales array for second half
             
             // Get ql bytes
-            let ql_l64_byte_idx = l + 64u;
-            let ql_l64_u32_idx = ql_l64_byte_idx / 4u;
-            let ql_l64_bit_offset = ((ql_l64_byte_idx % 4u) * 8u);
-            let ql_l64_byte = (block.ql[ql_l64_u32_idx] >> ql_l64_bit_offset) & 0xFFu;
-            
-            let ql_l96_byte_idx = l + 96u;
-            let ql_l96_u32_idx = ql_l96_byte_idx / 4u;
-            let ql_l96_bit_offset = ((ql_l96_byte_idx % 4u) * 8u);
-            let ql_l96_byte = (block.ql[ql_l96_u32_idx] >> ql_l96_bit_offset) & 0xFFu;
+            let ql_l64_byte = get_byte_from_u32_array(block.ql, l + 64u);
+            let ql_l96_byte = get_byte_from_u32_array(block.ql, l + 96u);
             
             // Get qh byte
-            let qh_l32_byte_idx = l + 32u;
-            let qh_l32_u32_idx = qh_l32_byte_idx / 4u;
-            let qh_l32_bit_offset = ((qh_l32_byte_idx % 4u) * 8u);
-            let qh_l32_byte = (block.qh[qh_l32_u32_idx] >> qh_l32_bit_offset) & 0xFFu;
+            let qh_l32_byte = get_byte_from_qh_array(block.qh, l + 32u);
             
             // Extract 4 quantized values (as i8 - 32)
             let q1 = i32((ql_l64_byte & 0xFu) | (((qh_l32_byte >> 0u) & 3u) << 4u)) - 32i;
@@ -125,23 +202,23 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let q3 = i32((ql_l64_byte >> 4u) | (((qh_l32_byte >> 4u) & 3u) << 4u)) - 32i;
             let q4 = i32((ql_l96_byte >> 4u) | (((qh_l32_byte >> 6u) & 3u) << 4u)) - 32i;
             
-            // Dequantize with correct scales (sc_offset + is, sc_offset + is + 2, etc.)
+            // Dequantize with correct scales
             let k_idx1 = k_start + l + 128u;
             let k_idx2 = k_start + l + 160u;
             let k_idx3 = k_start + l + 192u;
             let k_idx4 = k_start + l + 224u;
             
             if (k_idx1 < params.k) {
-                sum += d * f32(block.scales[sc_offset + is]) * f32(q1) * input[batch_idx * params.k + k_idx1];
+                sum += d * get_scale(block.scales, sc_offset + is) * f32(q1) * input[batch_idx * params.k + k_idx1];
             }
             if (k_idx2 < params.k) {
-                sum += d * f32(block.scales[sc_offset + is + 2u]) * f32(q2) * input[batch_idx * params.k + k_idx2];
+                sum += d * get_scale(block.scales, sc_offset + is + 2u) * f32(q2) * input[batch_idx * params.k + k_idx2];
             }
             if (k_idx3 < params.k) {
-                sum += d * f32(block.scales[sc_offset + is + 4u]) * f32(q3) * input[batch_idx * params.k + k_idx3];
+                sum += d * get_scale(block.scales, sc_offset + is + 4u) * f32(q3) * input[batch_idx * params.k + k_idx3];
             }
             if (k_idx4 < params.k) {
-                sum += d * f32(block.scales[sc_offset + is + 6u]) * f32(q4) * input[batch_idx * params.k + k_idx4];
+                sum += d * get_scale(block.scales, sc_offset + is + 6u) * f32(q4) * input[batch_idx * params.k + k_idx4];
             }
         }
     }
@@ -150,4 +227,3 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let output_idx = batch_idx * params.n + out_idx;
     output[output_idx] = sum;
 }
-
