@@ -13,6 +13,7 @@ pub mod protocol;
 pub mod rate_limiter;
 pub mod runtime_manager;
 pub mod speculative_integration;
+pub mod tokenization_helpers;
 pub mod websocket;
 
 use crate::auth::ApiKeyStore;

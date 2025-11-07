@@ -32,6 +32,7 @@ use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use realm_core::formats::gguf::ModelMeta;
 use realm_core::tensor::DataType;
+use realm_core::Tokenizer;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -85,6 +86,8 @@ pub struct StoredModel {
     pub total_size: usize,
     /// LoRA adapter ID (if applied)
     pub lora_adapter_id: Option<String>,
+    /// Tokenizer for this model (for tokenization host functions)
+    pub tokenizer: Option<Tokenizer>,
 }
 
 impl StoredModel {
@@ -96,7 +99,18 @@ impl StoredModel {
             tensors: HashMap::new(),
             total_size: 0,
             lora_adapter_id: None,
+            tokenizer: None,
         }
+    }
+
+    /// Set tokenizer for this model
+    pub fn set_tokenizer(&mut self, tokenizer: Tokenizer) {
+        self.tokenizer = Some(tokenizer);
+    }
+
+    /// Get tokenizer for this model
+    pub fn tokenizer(&self) -> Option<&Tokenizer> {
+        self.tokenizer.as_ref()
     }
 
     /// Set LoRA adapter ID
@@ -281,6 +295,18 @@ impl ModelStorage {
 
         // Create stored model
         let mut stored_model = StoredModel::new(model_id, meta.clone());
+
+        // Create and store tokenizer from metadata
+        match Tokenizer::from_gguf(&meta) {
+            Ok(tokenizer) => {
+                stored_model.set_tokenizer(tokenizer);
+                debug!("Tokenizer stored for model {}", model_id);
+            }
+            Err(e) => {
+                warn!("Failed to create tokenizer for model {}: {}", model_id, e);
+                // Continue without tokenizer - model can still be used for inference
+            }
+        }
 
         // Extract and store all tensors
         let _data_offset = parser

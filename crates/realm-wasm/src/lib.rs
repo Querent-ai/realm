@@ -53,6 +53,28 @@ extern "C" {
     fn realm_set_lora_adapter(model_id: u32, adapter_id_ptr: *const u8, adapter_id_len: u32)
         -> i32;
 
+    /// Encode text to token IDs
+    /// Parameters: model_id, text_ptr, text_len, out_ptr, out_max_len
+    /// Returns: number of tokens written on success, negative on error
+    fn realm_encode_tokens(
+        model_id: u32,
+        text_ptr: *const u8,
+        text_len: u32,
+        out_ptr: *mut u32,
+        out_max_len: u32,
+    ) -> i32;
+
+    /// Decode token IDs to text
+    /// Parameters: model_id, token_ids_ptr, token_ids_len, out_ptr, out_max_len
+    /// Returns: number of bytes written on success, negative on error
+    fn realm_decode_tokens(
+        model_id: u32,
+        token_ids_ptr: *const u32,
+        token_ids_len: u32,
+        out_ptr: *mut u8,
+        out_max_len: u32,
+    ) -> i32;
+
     /// Store draft model for speculative decoding
     /// Parameters: gguf_ptr, gguf_len, draft_model_id (WASM memory offsets)
     /// Returns: draft_model_id on success (> 0), negative on error

@@ -3,11 +3,12 @@
 //! This module provides integration between the speculative decoding framework
 //! and the actual generation path in RuntimeManager.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use realm_runtime::speculative::{DraftModel, SpeculativeConfig, SpeculativeDecoder, TargetModel};
 use std::sync::{Arc, Mutex};
 
 use crate::runtime_manager::TenantRuntime;
+use crate::tokenization_helpers::{decode_tokens, encode_text};
 
 /// Wrapper for draft model that uses WASM generation
 pub struct DraftModelWrapper {
@@ -24,20 +25,37 @@ impl DraftModelWrapper {
 
 impl DraftModel for DraftModelWrapper {
     fn generate_draft(&mut self, prompt: &[u32], k: usize) -> realm_core::error::Result<Vec<u32>> {
-        // Convert token IDs to prompt string
-        // Note: This is simplified - in production, we'd use the actual tokenizer
-        let prompt_str = format!("DRAFT:{}", prompt.len());
+        // Decode prompt tokens to text using target model's tokenizer
+        // (We use target model tokenizer since both models should use same tokenizer)
+        let target_model_id = {
+            let runtime_guard = self.runtime.lock().unwrap();
+            runtime_guard.model_id().ok_or_else(|| {
+                realm_core::error::Error::Runtime("Target model ID not available".to_string())
+            })?
+        };
+
+        // Decode prompt tokens to text
+        let prompt_text = decode_tokens(target_model_id, prompt)
+            .map_err(|e| realm_core::error::Error::Runtime(format!("Decode failed: {}", e)))?;
 
         // Generate using draft model
         let mut runtime = self.runtime.lock().unwrap();
-        let _result = runtime.generate(prompt_str).map_err(|e| {
+        let generated_text = runtime.generate(prompt_text).map_err(|e| {
             realm_core::error::Error::Runtime(format!("Draft generation failed: {}", e))
         })?;
 
-        // Parse result back to tokens (simplified - would use tokenizer in production)
-        // For now, return k dummy tokens as placeholder
-        // TODO: Implement proper tokenization/de-tokenization
-        Ok((0..k).map(|i| i as u32 + 1000).collect())
+        // Get draft model ID for tokenization
+        let draft_model_id = runtime.draft_model_id().ok_or_else(|| {
+            realm_core::error::Error::Runtime("Draft model ID not available".to_string())
+        })?;
+        drop(runtime);
+
+        // Encode generated text back to tokens
+        let generated_tokens = encode_text(draft_model_id, &generated_text)
+            .map_err(|e| realm_core::error::Error::Runtime(format!("Encode failed: {}", e)))?;
+
+        // Return first k tokens
+        Ok(generated_tokens.into_iter().take(k).collect())
     }
 }
 
@@ -62,21 +80,45 @@ impl TargetModel for TargetModelWrapper {
     ) -> realm_core::error::Result<Vec<u32>> {
         // Verify draft tokens using target model
         // In speculative decoding, we check if target model would generate the same tokens
-        // For now, accept all draft tokens (simplified)
-        // TODO: Implement proper verification logic
+        let target_model_id = {
+            let runtime_guard = self.runtime.lock().unwrap();
+            runtime_guard.model_id().ok_or_else(|| {
+                realm_core::error::Error::Runtime("Target model ID not available".to_string())
+            })?
+        };
 
-        // Convert to prompt string
-        let prompt_str = format!("TARGET:{}", prompt.len());
+        // Build full sequence: prompt + draft tokens
+        let mut full_sequence = prompt.to_vec();
+        full_sequence.extend_from_slice(draft_tokens);
+        let full_text = decode_tokens(target_model_id, &full_sequence)
+            .map_err(|e| realm_core::error::Error::Runtime(format!("Decode failed: {}", e)))?;
 
         // Generate using target model to verify
         let mut runtime = self.runtime.lock().unwrap();
-        let _result = runtime.generate(prompt_str).map_err(|e| {
+        let target_generated = runtime.generate(full_text).map_err(|e| {
             realm_core::error::Error::Runtime(format!("Target verification failed: {}", e))
         })?;
+        drop(runtime);
 
-        // For now, accept all draft tokens
-        // In production, this would compare target model's predictions with draft tokens
-        Ok(draft_tokens.to_vec())
+        // Encode target model's generation
+        let target_tokens = encode_text(target_model_id, &target_generated)
+            .map_err(|e| realm_core::error::Error::Runtime(format!("Encode failed: {}", e)))?;
+
+        // Compare draft tokens with target model's predictions
+        // Accept tokens until first mismatch
+        let mut accepted = Vec::new();
+        for (i, &draft_token) in draft_tokens.iter().enumerate() {
+            if i < target_tokens.len() && target_tokens[i] == draft_token {
+                accepted.push(draft_token);
+            } else {
+                // First mismatch - stop accepting
+                break;
+            }
+        }
+
+        // If all draft tokens were accepted, we can use them all
+        // Otherwise, we return only the accepted prefix
+        Ok(accepted)
     }
 }
 
@@ -86,46 +128,48 @@ pub fn generate_with_speculative_decoding(
     prompt: String,
     max_tokens: usize,
 ) -> Result<String> {
-    let runtime_guard = runtime.lock().unwrap();
+    // Check if draft model is configured and get model IDs
+    let (target_model_id, draft_model_id) = {
+        let runtime_guard = runtime.lock().unwrap();
+        if runtime_guard.draft_model_config().is_none() {
+            drop(runtime_guard);
+            // No draft model, use standard generation
+            let mut runtime = runtime.lock().unwrap();
+            return runtime.generate(prompt);
+        }
+        let target_id = runtime_guard.model_id();
+        let draft_id = runtime_guard.draft_model_id();
+        (target_id, draft_id)
+    };
 
-    // Check if draft model is configured
-    if let Some(_draft_config) = runtime_guard.draft_model_config() {
-        drop(runtime_guard);
+    // Use speculative decoding
+    let config = SpeculativeConfig {
+        draft_k: 4,
+        max_draft_tokens: 8,
+    };
 
-        // Use speculative decoding
-        let config = SpeculativeConfig {
-            draft_k: 4,
-            max_draft_tokens: 8,
-        };
+    let target_model_id = target_model_id
+        .ok_or_else(|| anyhow::anyhow!("Target model ID not available for speculative decoding"))?;
+    let draft_model_id = draft_model_id
+        .ok_or_else(|| anyhow::anyhow!("Draft model ID not available for speculative decoding"))?;
 
-        // Get model IDs (simplified - would get from model storage)
-        let draft_model_id = 1; // TODO: Get actual draft model ID
-        let target_model_id = 0; // TODO: Get actual target model ID
+    let draft_model = DraftModelWrapper::new(runtime.clone(), draft_model_id);
+    let target_model = TargetModelWrapper::new(runtime.clone(), target_model_id);
 
-        let draft_model = DraftModelWrapper::new(runtime.clone(), draft_model_id);
-        let target_model = TargetModelWrapper::new(runtime.clone(), target_model_id);
+    let mut decoder = SpeculativeDecoder::new(draft_model, target_model, config);
 
-        let mut decoder = SpeculativeDecoder::new(draft_model, target_model, config);
+    // Tokenize prompt using target model's tokenizer
+    let prompt_tokens = encode_text(target_model_id, &prompt)
+        .context("Failed to tokenize prompt for speculative decoding")?;
 
-        // Tokenize prompt (simplified)
-        let prompt_tokens: Vec<u32> = prompt
-            .split_whitespace()
-            .enumerate()
-            .map(|(i, _)| i as u32)
-            .collect();
+    // Generate with speculative decoding
+    let generated_tokens = decoder
+        .generate(&prompt_tokens, max_tokens)
+        .map_err(|e| anyhow::anyhow!("Speculative decoding failed: {}", e))?;
 
-        // Generate with speculative decoding
-        let generated_tokens = decoder
-            .generate(&prompt_tokens, max_tokens)
-            .map_err(|e| anyhow::anyhow!("Speculative decoding failed: {}", e))?;
+    // Detokenize using target model's tokenizer
+    let result = decode_tokens(target_model_id, &generated_tokens)
+        .context("Failed to detokenize speculative decoding result")?;
 
-        // Detokenize (simplified)
-        let result = format!("Generated {} tokens", generated_tokens.len());
-        Ok(result)
-    } else {
-        // No draft model, use standard generation
-        drop(runtime_guard);
-        let mut runtime = runtime.lock().unwrap();
-        runtime.generate(prompt)
-    }
+    Ok(result)
 }

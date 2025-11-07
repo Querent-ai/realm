@@ -2472,6 +2472,186 @@ impl Memory64Runtime {
                     0 // Success
                 },
             )?;
+
+            // Host function: Encode text to token IDs
+            // Parameters: model_id, text_ptr, text_len, out_ptr, out_max_len
+            // Returns: number of tokens written on success, negative on error
+            linker.func_wrap(
+                "env",
+                "realm_encode_tokens",
+                move |mut caller: Caller<'_, ()>,
+                      model_id: u32,
+                      text_ptr: u32,
+                      text_len: u32,
+                      out_ptr: u32,
+                      out_max_len: u32|
+                      -> i32 {
+                    use crate::model_storage::get_global_model_storage;
+
+                    // Get WASM memory
+                    let wasm_memory = match caller.get_export("memory") {
+                        Some(Extern::Memory(mem)) => mem,
+                        _ => {
+                            error!("realm_encode_tokens: No WASM memory export");
+                            return -1;
+                        }
+                    };
+
+                    // Read text from WASM
+                    let mut text_bytes = vec![0u8; text_len as usize];
+                    if let Err(e) = wasm_memory.read(&caller, text_ptr as usize, &mut text_bytes) {
+                        error!("realm_encode_tokens: Failed to read text: {}", e);
+                        return -2;
+                    }
+
+                    let text = match String::from_utf8(text_bytes) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            error!("realm_encode_tokens: Invalid UTF-8: {}", e);
+                            return -3;
+                        }
+                    };
+
+                    // Get tokenizer from model storage
+                    let storage = get_global_model_storage().lock();
+                    let model = match storage.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(_) => {
+                            error!("realm_encode_tokens: Model {} not found", model_id);
+                            return -4;
+                        }
+                    };
+
+                    let tokenizer = match model.tokenizer() {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_encode_tokens: No tokenizer for model {}", model_id);
+                            return -5;
+                        }
+                    };
+
+                    // Encode text to tokens
+                    let tokens = match tokenizer.encode(&text, true) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            error!("realm_encode_tokens: Encoding failed: {}", e);
+                            return -6;
+                        }
+                    };
+
+                    // Check output buffer size
+                    let tokens_bytes = tokens.len() * 4; // u32 = 4 bytes
+                    if tokens_bytes > out_max_len as usize {
+                        error!(
+                            "realm_encode_tokens: Output buffer too small: need {}, have {}",
+                            tokens_bytes, out_max_len
+                        );
+                        return -7;
+                    }
+
+                    // Write tokens to WASM memory
+                    let mut tokens_bytes_vec = Vec::with_capacity(tokens_bytes);
+                    for token_id in &tokens {
+                        tokens_bytes_vec.extend_from_slice(&token_id.to_le_bytes());
+                    }
+
+                    if let Err(e) =
+                        wasm_memory.write(&mut caller, out_ptr as usize, &tokens_bytes_vec)
+                    {
+                        error!("realm_encode_tokens: Failed to write tokens: {}", e);
+                        return -8;
+                    }
+
+                    tokens.len() as i32
+                },
+            )?;
+
+            // Host function: Decode token IDs to text
+            // Parameters: model_id, token_ids_ptr, token_ids_len, out_ptr, out_max_len
+            // Returns: number of bytes written on success, negative on error
+            linker.func_wrap(
+                "env",
+                "realm_decode_tokens",
+                move |mut caller: Caller<'_, ()>,
+                      model_id: u32,
+                      token_ids_ptr: u32,
+                      token_ids_len: u32,
+                      out_ptr: u32,
+                      out_max_len: u32|
+                      -> i32 {
+                    use crate::model_storage::get_global_model_storage;
+
+                    // Get WASM memory
+                    let wasm_memory = match caller.get_export("memory") {
+                        Some(Extern::Memory(mem)) => mem,
+                        _ => {
+                            error!("realm_decode_tokens: No WASM memory export");
+                            return -1;
+                        }
+                    };
+
+                    // Read token IDs from WASM
+                    let token_ids_bytes = (token_ids_len as usize) * 4; // u32 = 4 bytes
+                    let mut token_ids_buffer = vec![0u8; token_ids_bytes];
+                    if let Err(e) =
+                        wasm_memory.read(&caller, token_ids_ptr as usize, &mut token_ids_buffer)
+                    {
+                        error!("realm_decode_tokens: Failed to read token IDs: {}", e);
+                        return -2;
+                    }
+
+                    // Convert to u32 array
+                    let token_ids: Vec<u32> = token_ids_buffer
+                        .chunks_exact(4)
+                        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                        .collect();
+
+                    // Get tokenizer from model storage
+                    let storage = get_global_model_storage().lock();
+                    let model = match storage.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(_) => {
+                            error!("realm_decode_tokens: Model {} not found", model_id);
+                            return -3;
+                        }
+                    };
+
+                    let tokenizer = match model.tokenizer() {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_decode_tokens: No tokenizer for model {}", model_id);
+                            return -4;
+                        }
+                    };
+
+                    // Decode tokens to text
+                    let text = match tokenizer.decode(&token_ids, false) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            error!("realm_decode_tokens: Decoding failed: {}", e);
+                            return -5;
+                        }
+                    };
+
+                    let text_bytes = text.as_bytes();
+                    if text_bytes.len() > out_max_len as usize {
+                        error!(
+                            "realm_decode_tokens: Output buffer too small: need {}, have {}",
+                            text_bytes.len(),
+                            out_max_len
+                        );
+                        return -6;
+                    }
+
+                    // Write text to WASM memory
+                    if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, text_bytes) {
+                        error!("realm_decode_tokens: Failed to write text: {}", e);
+                        return -7;
+                    }
+
+                    text_bytes.len() as i32
+                },
+            )?;
         }
 
         Ok(())

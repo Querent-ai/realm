@@ -49,6 +49,12 @@ pub struct TenantRuntime {
 
     /// Optional draft model configuration for speculative decoding
     draft_model_config: Option<ModelConfig>,
+
+    /// Model ID in model storage (for host function access)
+    model_id: Option<u32>,
+
+    /// Draft model ID in model storage (for speculative decoding)
+    draft_model_id: Option<u32>,
 }
 
 impl TenantRuntime {
@@ -93,6 +99,8 @@ impl TenantRuntime {
             tenant_id,
             lora_adapter_id: None,
             draft_model_config: None,
+            model_id: None,
+            draft_model_id: None,
         })
     }
 
@@ -161,19 +169,21 @@ impl TenantRuntime {
             .call(&mut self.store, (model_ptr, model_bytes.len() as u32))
             .context("loadModel function call failed")?;
 
+        // Get model_id from model storage (stored by realm_store_model host function)
+        use realm_runtime::model_storage::get_global_model_storage;
+        let model_id = {
+            let storage = get_global_model_storage().lock();
+            let models = storage.list_models();
+            models.last().copied().unwrap_or(1)
+        };
+        self.model_id = Some(model_id);
+        info!(
+            "Model ID {} assigned to tenant {}",
+            model_id, self.tenant_id
+        );
+
         // If LoRA adapter is configured, set it for the stored model
-        // Note: The model is stored in model_storage by WASM's loadModel via realm_store_model
-        // We need to get the model_id and set the LoRA adapter
         if let Some(ref adapter_id) = self.lora_adapter_id {
-            use realm_runtime::model_storage::get_global_model_storage;
-
-            // Get the most recently stored model (should be the one we just loaded)
-            let model_id = {
-                let storage = get_global_model_storage().lock();
-                let models = storage.list_models();
-                models.last().copied().unwrap_or(1)
-            };
-
             // Set LoRA adapter directly in model storage
             match get_global_model_storage()
                 .lock()
@@ -257,9 +267,17 @@ impl TenantRuntime {
             )
             .context("loadModel function call failed for draft model")?;
 
+        // Get draft model_id from model storage (stored by realm_store_model host function)
+        use realm_runtime::model_storage::get_global_model_storage;
+        let draft_model_id = {
+            let storage = get_global_model_storage().lock();
+            let models = storage.list_models();
+            models.last().copied().unwrap_or(1)
+        };
+        self.draft_model_id = Some(draft_model_id);
         info!(
-            "Draft model loaded successfully for tenant: {}",
-            self.tenant_id
+            "Draft model ID {} loaded successfully for tenant: {}",
+            draft_model_id, self.tenant_id
         );
         Ok(())
     }
@@ -341,6 +359,16 @@ impl TenantRuntime {
     /// Get draft model configuration (if configured for speculative decoding)
     pub fn draft_model_config(&self) -> Option<&ModelConfig> {
         self.draft_model_config.as_ref()
+    }
+
+    /// Get model ID
+    pub fn model_id(&self) -> Option<u32> {
+        self.model_id
+    }
+
+    /// Get draft model ID
+    pub fn draft_model_id(&self) -> Option<u32> {
+        self.draft_model_id
     }
 }
 
@@ -773,13 +801,30 @@ impl RuntimeManager {
             .ok_or_else(|| anyhow!("No runtime for tenant: {}", tenant_id))?;
 
         // Check if speculative decoding should be used
-        // TODO: Implement full speculative decoding integration
-        // For now, use standard generation even if draft model is configured
-        // The framework is ready, but full integration requires:
-        // 1. Model ID tracking for draft vs target models
-        // 2. Tokenization/de-tokenization integration
-        // 3. Proper verification logic
-        runtime.generate(prompt)
+        if runtime.draft_model_config().is_some() && runtime.draft_model_id().is_some() {
+            // Use speculative decoding
+            drop(runtimes_guard);
+            use crate::speculative_integration::generate_with_speculative_decoding;
+            let runtime_arc = {
+                let mut runtimes = runtimes.lock().unwrap();
+                Arc::new(Mutex::new(runtimes.remove(tenant_id).unwrap()))
+            };
+            let result = generate_with_speculative_decoding(runtime_arc.clone(), prompt, 100)?;
+            // Put runtime back
+            {
+                let mut runtimes = runtimes.lock().unwrap();
+                let runtime =
+                    Arc::try_unwrap(runtime_arc).map_err(|_| anyhow!("Failed to unwrap Arc"))?;
+                let runtime = runtime
+                    .into_inner()
+                    .map_err(|_| anyhow!("Failed to unwrap Mutex"))?;
+                runtimes.insert(tenant_id.to_string(), runtime);
+            }
+            Ok(result)
+        } else {
+            // Standard generation
+            runtime.generate(prompt)
+        }
     }
 
     /// Generate text with streaming support
