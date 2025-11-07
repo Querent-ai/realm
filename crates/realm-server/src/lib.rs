@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod dispatcher;
+pub mod http;
 pub mod metrics_server;
 pub mod orchestrator;
 pub mod pipeline_dsl;

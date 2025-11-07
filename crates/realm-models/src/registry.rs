@@ -575,6 +575,7 @@ impl ModelRegistry {
     }
 
     #[cfg(not(feature = "download"))]
+    #[allow(dead_code)] // Stub implementation when download feature is disabled
     async fn download_from_url(&self, _url: &str, _output_path: &Path) -> Result<()> {
         Err(anyhow!(
             "Download feature not enabled. Enable with 'download' feature flag."

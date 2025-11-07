@@ -25,6 +25,7 @@ realm-runtime = { workspace = true, features = ["memory64-host"] }
 realm-server = { workspace = true }
 clap = { version = "4.5", features = ["derive", "cargo"] }
 tokio = { workspace = true }
+axum = "0.8"
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

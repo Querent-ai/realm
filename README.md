@@ -177,6 +177,18 @@ cargo run --release -p realm-cli -- serve \
     --wasm target/wasm32-unknown-unknown/release/realm_wasm.wasm
 
 # Server ready at ws://127.0.0.1:8080
+
+# Start with HTTP/SSE server (OpenAI-compatible)
+cargo run --release -p realm-cli -- serve \
+    --host 127.0.0.1 \
+    --port 8080 \
+    --http \
+    --http-port 8081 \
+    --model /path/to/model.gguf \
+    --wasm target/wasm32-unknown-unknown/release/realm_wasm.wasm
+
+# WebSocket: ws://127.0.0.1:8080
+# HTTP/SSE: http://127.0.0.1:8081/v1/chat/completions
 ```
 
 ### Use SDKs
@@ -234,6 +246,31 @@ async for token in client.generate_stream({
     print(token, end='', flush=True)
 ```
 
+### HTTP/SSE API (OpenAI-Compatible)
+
+```bash
+# Non-streaming request
+curl -X POST http://localhost:8081/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "default",
+    "messages": [{"role": "user", "content": "What is the capital of France?"}],
+    "max_tokens": 20
+  }'
+
+# Streaming request (SSE)
+curl -X POST http://localhost:8081/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "default",
+    "messages": [{"role": "user", "content": "Tell me a story"}],
+    "max_tokens": 100,
+    "stream": true
+  }'
+```
+
 ---
 
 ## 🎯 Production Status
@@ -249,6 +286,7 @@ async for token in client.generate_stream({
 | **Node.js SDK** | ✅ Production | Manual | HOST-side storage |
 | **Python SDK** | ✅ Production | Manual | WebSocket client |
 | **Server** | ✅ Production | 34 | Multi-tenant, auth |
+| **HTTP/SSE API** | ✅ Production | 4 | OpenAI-compatible, streaming |
 | **CLI** | ✅ Production | Manual | 6 commands |
 
 ### 🟡 Beta Components
@@ -275,7 +313,7 @@ See [Production Readiness Audit](docs/PRODUCTION_READINESS_AUDIT.md) for detaile
 graph TB
     subgraph Clients["Client Layer"]
         WS["WebSocket"]
-        HTTP["HTTP/2 REST"]
+        HTTP["HTTP/SSE<br/>OpenAI-compatible"]
         SDK["SDKs<br/>Node.js, Python"]
         style Clients fill:#1e40af,color:#fff
         style WS fill:#3b82f6,color:#fff
@@ -681,9 +719,9 @@ See [Advanced GPU Features](docs/ADVANCED_GPU_FEATURES.md) for details.
 
 #### API & Infrastructure
 
-- [ ] HTTP REST API (OpenAI-compatible endpoints)
+- [x] HTTP REST API (OpenAI-compatible endpoints)
 - [ ] Web dashboard (Grafana/custom UI)
-- [ ] Server-Sent Events (SSE) for HTTP streaming
+- [x] Server-Sent Events (SSE) for HTTP streaming
 
 #### SDKs & Clients
 

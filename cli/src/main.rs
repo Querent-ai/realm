@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
-use tracing::{info, Level};
+use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[derive(Parser)]
@@ -71,7 +71,7 @@ enum Commands {
         local: bool,
     },
 
-    /// Start WebSocket inference server
+    /// Start inference server (WebSocket and/or HTTP/SSE)
     Serve {
         /// Host to bind to
         #[arg(long, default_value = "127.0.0.1")]
@@ -108,6 +108,14 @@ enum Commands {
         /// Maximum concurrent tenants
         #[arg(long, default_value = "8")]
         max_tenants: usize,
+
+        /// Enable HTTP/SSE server (OpenAI-compatible API)
+        #[arg(long)]
+        http: bool,
+
+        /// HTTP port (defaults to port + 1 if not specified)
+        #[arg(long)]
+        http_port: Option<u16>,
     },
 
     /// Show system information
@@ -319,6 +327,8 @@ fn main() -> Result<()> {
             api_keys,
             gpu,
             max_tenants,
+            http,
+            http_port,
         } => {
             cmd_serve(
                 host,
@@ -330,6 +340,8 @@ fn main() -> Result<()> {
                 api_keys,
                 gpu,
                 max_tenants,
+                http,
+                http_port,
             )?;
         }
         Commands::Info => {
@@ -554,6 +566,8 @@ async fn cmd_serve(
     api_keys: Option<PathBuf>,
     gpu: bool,
     max_tenants: usize,
+    http: bool,
+    http_port: Option<u16>,
 ) -> Result<()> {
     use realm_models::registry::{ModelRegistry, RegistryConfig};
     use realm_server::auth::ApiKeyStoreConfig;
@@ -604,10 +618,18 @@ async fn cmd_serve(
         }
     };
 
-    info!("🌐 {}", "Starting Realm WebSocket Server".green().bold());
+    info!("🌐 {}", "Starting Realm Inference Server".green().bold());
     info!("📦 WASM Module: {}", wasm.display());
     info!("📦 Model: {}", model_path.display());
     info!("🔗 WebSocket: ws://{}:{}", host, port);
+    if http {
+        let http_port_val = http_port.unwrap_or(port + 1);
+        info!("🌐 HTTP/SSE: http://{}:{}", host, http_port_val);
+        info!(
+            "   OpenAI API: http://{}:{}/v1/chat/completions",
+            host, http_port_val
+        );
+    }
     info!("📊 Metrics: http://{}:{}/metrics", host, metrics_port);
     info!("👥 Max tenants: {}", max_tenants);
     info!(
@@ -667,6 +689,9 @@ async fn cmd_serve(
     println!("{}", "Starting server...".cyan().bold());
     println!();
 
+    // Clone wasm path before moving
+    let wasm_for_http = wasm.clone();
+
     // Create runtime manager
     let mut runtime_manager = RuntimeManager::new(wasm)?;
 
@@ -706,7 +731,7 @@ async fn cmd_serve(
 
     // Create dispatcher with both runtime manager and orchestrator
     let dispatcher = realm_server::dispatcher::FunctionDispatcher::with_runtime_and_orchestrator(
-        runtime_manager,
+        runtime_manager.clone(),
         orchestrator,
     );
 
@@ -720,8 +745,8 @@ async fn cmd_serve(
             host: host.clone(),
             port: metrics_port,
         }),
-        api_key_store_config: api_keys.map(|keys_file| ApiKeyStoreConfig {
-            keys_file: Some(keys_file),
+        api_key_store_config: api_keys.as_ref().map(|keys_file| ApiKeyStoreConfig {
+            keys_file: Some(keys_file.clone()),
             in_memory_only: false,
             ..Default::default()
         }),
@@ -731,6 +756,70 @@ async fn cmd_serve(
     // Create server with runtime-enabled dispatcher
     let server = RealmServer::with_dispatcher(config, dispatcher)?;
 
+    // Start HTTP/SSE server if enabled
+    if http {
+        use realm_server::http::{create_router, ServerState};
+        use std::sync::Arc;
+
+        let http_port_val = http_port.unwrap_or(port + 1);
+        let wasm_clone = wasm_for_http.clone();
+        let model_path_clone = model_path.clone();
+        let model_id_clone = model_id.clone();
+        let host_clone = host.clone();
+        let api_keys_clone = api_keys.clone();
+
+        // Wrap runtime manager in Mutex for HTTP server (which expects Arc<Mutex<RuntimeManager>>)
+        let http_state = ServerState {
+            runtime_manager: Arc::new(tokio::sync::Mutex::new(
+                // Create a new runtime manager instance for HTTP
+                // TODO: Share the same instance properly
+                {
+                    let mut rm = RuntimeManager::new(wasm_clone)?;
+                    rm.set_default_model(ModelConfig {
+                        draft_model_path: None,
+                        draft_model_id: None,
+                        model_path: model_path_clone,
+                        model_id: model_id_clone,
+                    });
+                    rm
+                },
+            )),
+            api_key_store: if auth {
+                api_keys_clone.as_ref().map(|keys_file| {
+                    Arc::new(
+                        realm_server::auth::ApiKeyStore::new(
+                            realm_server::auth::ApiKeyStoreConfig {
+                                keys_file: Some(keys_file.clone()),
+                                in_memory_only: false,
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap_or_else(|_| realm_server::auth::ApiKeyStore::in_memory()),
+                    )
+                })
+            } else {
+                None
+            },
+        };
+
+        let http_app = create_router(http_state);
+        let http_listener =
+            tokio::net::TcpListener::bind(format!("{}:{}", host_clone, http_port_val))
+                .await
+                .context("Failed to bind HTTP server")?;
+
+        let host_for_spawn = host_clone.clone();
+        tokio::spawn(async move {
+            info!(
+                "🚀 HTTP/SSE server listening on http://{}:{}",
+                host_for_spawn, http_port_val
+            );
+            axum::serve(http_listener, http_app)
+                .await
+                .unwrap_or_else(|e| error!("HTTP server error: {}", e));
+        });
+    }
+
     println!("{} Server ready!", "✓".green().bold());
     println!();
     println!("{}", "Available functions:".yellow().bold());
@@ -739,7 +828,21 @@ async fn cmd_serve(
     println!("  • health() - Health check");
     println!("  • metadata() - List available functions");
     println!();
-    println!("{}", "Connect with wscat:".yellow().bold());
+    if http {
+        let http_port_val = http_port.unwrap_or(port + 1);
+        let host_display = host.clone();
+        println!("{}", "HTTP/SSE API:".yellow().bold());
+        println!(
+            "  OpenAI-compatible: http://{}:{}/v1/chat/completions",
+            host_display, http_port_val
+        );
+        println!(
+            "  Health check: http://{}:{}/health",
+            host_display, http_port_val
+        );
+        println!();
+    }
+    println!("{}", "WebSocket:".yellow().bold());
     println!("  wscat -c ws://{}:{}", host, port);
     println!();
     println!("{}", "Example function call:".yellow().bold());
