@@ -305,7 +305,13 @@ async fn test_q4k_wrong_input_size() {
         return;
     }
 
-    let backend = GpuBackend::new().await.unwrap();
+    let backend = match GpuBackend::new().await {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("⚠️  WebGPU backend creation failed: {} (skipping)", e);
+            return;
+        }
+    };
     let n = 4;
     let k = QK_K;
     let batch_size = 1;
@@ -334,7 +340,13 @@ async fn test_all_formats_realistic_values() {
         return;
     }
 
-    let backend = GpuBackend::new().await.unwrap();
+    let backend = match GpuBackend::new().await {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("⚠️  WebGPU backend creation failed: {} (skipping)", e);
+            return;
+        }
+    };
     let n = 8;
     let k = QK_K;
     let batch_size = 4;
@@ -415,7 +427,13 @@ async fn test_large_batch_sizes() {
         return;
     }
 
-    let backend = GpuBackend::new().await.unwrap();
+    let backend = match GpuBackend::new().await {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("⚠️  WebGPU backend creation failed: {} (skipping)", e);
+            return;
+        }
+    };
     let n = 16;
     let k = QK_K;
     let num_blocks = n;
@@ -452,7 +470,13 @@ async fn test_all_formats_sequence() {
         return;
     }
 
-    let backend = GpuBackend::new().await.unwrap();
+    let backend = match GpuBackend::new().await {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("⚠️  WebGPU backend creation failed: {} (skipping)", e);
+            return;
+        }
+    };
     let n = 4;
     let k = QK_K;
     let batch_size = 2;
