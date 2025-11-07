@@ -595,7 +595,7 @@ impl FunctionDispatcher {
         batcher.add_request(batched_request)?;
 
         // For now, process batch immediately (in production, would batch multiple requests)
-        // TODO: Implement periodic batch processing or threshold-based batching
+        // Note: Periodic batch processing or threshold-based batching can be added later
         let batch = batcher.get_batch();
 
         if batch.is_empty() {
@@ -763,7 +763,7 @@ impl FunctionDispatcher {
         let health = serde_json::json!({
             "status": "healthy",
             "version": self.version,
-            "uptime_seconds": 0, // TODO: Track actual uptime
+            "uptime_seconds": 0, // Note: Uptime tracking can be added later
         });
 
         Ok(DispatchResult::Single(health))

@@ -1,222 +1,240 @@
-# What's Next - Roadmap
+# Next Steps & Missing Items
 
-**Date**: 2025-01-31  
-**Status**: Production-Ready Core, Optional Enhancements Available
+## ✅ Completed (This PR)
 
----
+1. **HTTP/SSE Server** ✅
+   - OpenAI-compatible `/v1/chat/completions` endpoint
+   - Server-Sent Events streaming
+   - Health and metrics endpoints
+   - Tenant authentication
+   - CLI integration (`--http` flag)
 
-## 🎯 Current Status
+2. **WASM Tests with Mocked Host Functions** ✅
+   - 7 unit tests in `crates/realm-wasm/tests/host_function_mocks.rs`
+   - Tests tokenization, generation config, host function patterns, KV cache tracking
+   - All tests passing
 
-### ✅ Production-Ready Features
-- ✅ Core inference pipeline (CPU + GPU)
-- ✅ All Paris examples working
-- ✅ Multi-tenant architecture
-- ✅ WASM orchestration
-- ✅ GPU acceleration (CUDA/Metal/WebGPU)
-- ✅ WebSocket server
-- ✅ Node.js and Python SDKs
-- ✅ CLI tool
-- ✅ CI/CD pipeline
+3. **Integration Tests** ✅
+   - HTTP server integration tests in `crates/realm-server/tests/integration.rs`
+   - Tests health, metrics, chat completions validation and structure
+   - Gracefully skips when WASM file not available
 
-### ⚠️ Optional Enhancements (Frameworks Complete)
-- ⚠️ LoRA adapters (framework ready, needs RuntimeManager integration)
-- ⚠️ Speculative decoding (framework ready, needs draft model loading)
-- ⚠️ Continuous batching (framework ready, needs dispatcher integration)
+4. **Code Quality** ✅
+   - All clippy warnings fixed
+   - Code formatted
+   - Copilot review issues addressed
 
----
+## ❌ Missing & Next Items
 
-## 🚀 Immediate Next Steps (Priority Order)
+### High Priority (Production Readiness)
 
-### 1. **Test with Real Models** (30 minutes)
-**Goal**: Verify all examples actually produce "Paris" with real models
+#### 1. **Load Tests** 🔴
+**Status**: Not implemented  
+**Location**: Should be in `crates/realm-server/tests/load_tests.rs` or `tests/load/`  
+**What's Needed**:
+- Concurrent request testing (10, 50, 100+ concurrent clients)
+- Throughput measurement (requests/second)
+- Latency percentiles (p50, p95, p99)
+- Memory usage under load
+- Connection pool exhaustion testing
 
-```bash
-# Download a test model
-wget https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+**Tools**: 
+- Use `criterion` for Rust benchmarks
+- Or `k6`/`locust` for HTTP load testing
+- Or `tokio::spawn` with many concurrent test clients
 
-# Test each example
-cd examples/paris/native
-cargo run --release -- /path/to/model.gguf
+**Example Structure**:
+```rust
+#[tokio::test]
+async fn test_concurrent_requests() {
+    // Spawn 100 concurrent requests
+    // Measure latency, throughput
+}
 
-# Verify output contains "Paris"
+#[tokio::test]
+async fn test_sustained_load() {
+    // Run for 60 seconds
+    // Monitor memory, CPU
+}
 ```
 
-**Why**: Confirm the entire stack works end-to-end with real models
+#### 2. **Real WASM Streaming Integration** 🟡
+**Status**: Currently simulated  
+**Location**: `crates/realm-server/src/http.rs:236`  
+**What's Needed**:
+- Integrate `generate_with_callback` from WASM layer
+- Real token-by-token streaming via SSE
+- Handle callback returning `false` to stop generation
+- Test streaming with actual WASM module
 
----
+**Current**: Generates full response then chunks it  
+**Needed**: Call WASM callback for each token
 
-### 2. **Complete LoRA Integration** (2-3 hours)
-**Goal**: Enable per-tenant fine-tuning
+#### 3. **Token Counting** 🟡
+**Status**: Hardcoded to 0  
+**Location**: `crates/realm-server/src/http.rs:219-220`  
+**What's Needed**:
+- Count prompt tokens (from input messages)
+- Count completion tokens (from generated text)
+- Use tokenizer from RuntimeManager
+- Return accurate usage stats
 
-**What to do**:
-- Add `LoRAManager` to `RuntimeManager`
-- Apply LoRA adapters after model loading
-- Add API endpoint to load/unload adapters
-- Test with a real LoRA adapter file
+#### 4. **Metrics Integration** 🟡
+**Status**: Stub implementation  
+**Location**: `crates/realm-server/src/http.rs:110-114`  
+**What's Needed**:
+- Integrate with `realm-metrics` crate
+- Expose Prometheus metrics:
+  - Request count, latency
+  - Token generation rate
+  - Error rates
+  - Active connections
+  - Model inference time
 
-**Files to modify**:
-- `crates/realm-server/src/runtime_manager.rs`
-- `crates/realm-server/src/dispatcher.rs`
+### Medium Priority (Enhancements)
 
-**Impact**: High - Enables per-tenant customization
+#### 5. **End-to-End Integration Tests** 🟡
+**Status**: Basic tests exist, need full flow  
+**Location**: `crates/realm-server/tests/integration.rs`  
+**What's Needed**:
+- Full flow: HTTP request → RuntimeManager → WASM → Host Functions → Response
+- Test with actual model file (when available)
+- Test streaming end-to-end
+- Test error handling (invalid requests, model not found, etc.)
+- Test authentication flow
 
----
+**Current**: Tests skip when WASM not available  
+**Needed**: Optional tests that run when WASM + model available
 
-### 3. **Complete Speculative Decoding** (1-2 hours)
-**Goal**: 2-3x speedup for generation
+#### 6. **WASM Generation Tests** 🟡
+**Status**: Stubs exist  
+**Location**: `crates/realm-wasm/tests/generation_tests.rs`  
+**What's Needed**:
+- Implement actual test bodies
+- Test full generation loop
+- Test KV cache management
+- Test logits processing
+- Test error handling
+- Test multi-token generation
 
-**What to do**:
-- Load draft model alongside target model in `RuntimeManager`
-- Connect `SpeculativeDecoder` to `InferenceSession::next_token_with_model()`
-- Add configuration to generation options
-- Test with TinyLlama (draft) + Llama-2 (target)
+**Current**: Just placeholder comments  
+**Needed**: Real test implementations
 
-**Files to modify**:
-- `crates/realm-server/src/runtime_manager.rs`
-- `crates/realm-runtime/src/inference.rs`
+#### 7. **SDK Load Tests** 🟢
+**Status**: Not implemented  
+**Location**: `sdks/nodejs-ws/tests/` or `sdks/python-ws/tests/`  
+**What's Needed**:
+- Test SDKs under concurrent load
+- Test WebSocket connection pooling
+- Test HTTP client connection reuse
+- Test streaming performance
 
-**Impact**: High - Significant performance improvement
+### Low Priority (Future Enhancements)
 
----
+#### 8. **Distributed Inference Testing** 🟢
+**Status**: Framework exists, untested  
+**Location**: `crates/realm-compute-gpu/src/distributed.rs`  
+**What's Needed**:
+- Integration tests for tensor/pipeline/data parallelism
+- Simulation tests (don't need actual multi-GPU)
+- Test model sharding
+- Test communication patterns
 
-### 4. **Complete Continuous Batching** (3-5 hours)
-**Goal**: Improve throughput for multiple concurrent requests
+#### 9. **Continuous Batching Integration** 🟢
+**Status**: Framework exists, not integrated  
+**Location**: `crates/realm-runtime/src/batching.rs`  
+**What's Needed**:
+- Wire into HTTP/SSE server
+- Test batching multiple requests
+- Measure throughput improvement
+- Test with different batch sizes
 
-**What to do**:
-- Integrate `ContinuousBatcher` into `Dispatcher`
-- Add batch processing logic
-- Add batch dimension support to `Model::forward()`
-- Test with multiple concurrent clients
+#### 10. **LoRA Adapter Integration** 🟢
+**Status**: Framework exists, not integrated  
+**Location**: `crates/realm-runtime/src/lora.rs`  
+**What's Needed**:
+- Test per-tenant LoRA adapters
+- Test adapter loading/unloading
+- Test adapter switching during inference
 
-**Files to modify**:
-- `crates/realm-server/src/dispatcher.rs`
-- `crates/realm-models/src/model.rs`
+#### 11. **Speculative Decoding Integration** 🟢
+**Status**: Framework exists, not integrated  
+**Location**: `crates/realm-runtime/src/speculative.rs`  
+**What's Needed**:
+- Test draft model + target model flow
+- Measure speedup
+- Test rejection sampling
 
-**Impact**: Medium - Throughput improvement (not critical for single-user)
+## Test Coverage Summary
 
----
+### Current Coverage
+- ✅ Unit tests: WASM host function mocks (7 tests)
+- ✅ Integration tests: HTTP endpoints (4 tests, skip if WASM missing)
+- ✅ GPU tests: WebGPU dequantization (comprehensive)
+- ✅ Core library tests: Quantization, tokenization, etc.
 
-## 📊 Testing & Validation
+### Missing Coverage
+- ❌ Load tests: 0%
+- ❌ End-to-end tests: Partial (skip when WASM missing)
+- ❌ Streaming tests: Simulated only
+- ❌ SDK tests: Basic only, no load tests
+- ❌ Error handling tests: Partial
+- ❌ Authentication tests: Basic only
 
-### Unit Tests
-- [ ] Add more deterministic tests for LoRA application
-- [ ] Add tests for speculative decoding
-- [ ] Add tests for continuous batching
-- [ ] Test GPU backends (if hardware available)
+## Recommended Next Actions
 
-### Integration Tests
-- [ ] End-to-end test with real model
-- [ ] Multi-tenant test with multiple concurrent requests
-- [ ] LoRA adapter loading/unloading test
-- [ ] Speculative decoding performance test
+### Week 1: Critical Tests
+1. **Load Tests** (2-3 days)
+   - Implement concurrent request testing
+   - Measure throughput and latency
+   - Test under sustained load
 
----
+2. **Real Streaming Integration** (1-2 days)
+   - Wire up WASM callbacks
+   - Test token-by-token streaming
+   - Verify SSE format correctness
 
-## 🎨 Polish & Documentation
+3. **Token Counting** (1 day)
+   - Implement prompt/completion token counting
+   - Test with various inputs
 
-### Documentation Updates
-- [ ] Update main README with latest features
-- [ ] Create deployment guide
-- [ ] Add performance benchmarks
-- [ ] Document LoRA adapter format
-- [ ] Document speculative decoding setup
+### Week 2: Integration & Metrics
+4. **Metrics Integration** (1-2 days)
+   - Wire up realm-metrics
+   - Expose Prometheus endpoints
+   - Test metrics collection
 
-### Code Quality
-- [ ] Run `cargo fmt --all`
-- [ ] Run `cargo clippy --all-targets -- -D warnings`
-- [ ] Review and fix any remaining TODOs
-- [ ] Add doc comments for new features
+5. **End-to-End Tests** (2-3 days)
+   - Full flow tests with WASM + model
+   - Error scenario testing
+   - Authentication flow testing
 
----
+### Week 3: Enhancements
+6. **WASM Generation Tests** (2-3 days)
+   - Implement full test suite
+   - Test all generation scenarios
 
-## 🚢 Production Deployment
+7. **SDK Load Tests** (1-2 days)
+   - Test Node.js and Python SDKs under load
 
-### Deployment Checklist
-- [ ] Docker image creation
-- [ ] Kubernetes manifests (if needed)
-- [ ] Health check endpoints
-- [ ] Metrics and monitoring
-- [ ] Logging configuration
-- [ ] Security audit (API keys, etc.)
+## Quick Wins (Can Do Now)
 
-### Performance Optimization
-- [ ] Profile GPU usage
-- [ ] Optimize memory usage
-- [ ] Benchmark throughput
-- [ ] Compare with other inference servers
+1. **Token Counting** - Straightforward, just need tokenizer
+2. **Metrics Integration** - realm-metrics crate exists, just wire it up
+3. **More Integration Tests** - Add tests for error cases, edge cases
+4. **Documentation** - Add examples for load testing, streaming
 
----
+## Testing Tools to Consider
 
-## 🔬 Research & Development
+- **Load Testing**: `criterion`, `k6`, `locust`, or custom with `tokio::spawn`
+- **HTTP Testing**: `axum-test` (already used), `reqwest` for client
+- **WebSocket Testing**: `tokio-tungstenite` test client
+- **Benchmarking**: `criterion` for Rust, `time` for Python
+- **Mocking**: Custom mocks (already done for host functions)
 
-### Future Enhancements (Not Blocking)
-- [ ] True fused kernels (Q4_K, Q5_K, etc. on GPU)
-- [ ] Mixed precision (FP16/BF16) support
-- [ ] Quantization at runtime
-- [ ] Multi-GPU support
-- [ ] Model sharding across GPUs
+## Notes
 
----
-
-## 🎯 Recommended Immediate Actions
-
-### Option A: **Ship It!** (Production-Ready)
-**If you want to deploy now**:
-1. ✅ Test with real models (30 min)
-2. ✅ Update documentation (1 hour)
-3. ✅ Deploy to production
-
-**Status**: Core features are production-ready!
-
-### Option B: **Complete Integrations** (Full Feature Set)
-**If you want all features**:
-1. ✅ Complete LoRA integration (2-3 hours)
-2. ✅ Complete Speculative Decoding (1-2 hours)
-3. ✅ Complete Continuous Batching (3-5 hours)
-4. ✅ Test everything (2 hours)
-
-**Total**: ~8-12 hours for full feature set
-
-### Option C: **Incremental** (Recommended)
-**Best approach**:
-1. ✅ Test with real models NOW (30 min)
-2. ✅ Deploy to production with current features
-3. ✅ Add LoRA integration when needed
-4. ✅ Add Speculative Decoding when performance is critical
-5. ✅ Add Continuous Batching when throughput is needed
-
-**Status**: Ship incrementally, add features as needed
-
----
-
-## 📝 Decision Framework
-
-**Choose based on your needs**:
-
-| Need | Priority | Action |
-|------|----------|--------|
-| **Deploy to production** | High | Test with real models → Deploy |
-| **Per-tenant customization** | High | Complete LoRA integration |
-| **Speed improvement** | High | Complete Speculative Decoding |
-| **High throughput** | Medium | Complete Continuous Batching |
-| **Polish & docs** | Low | Update documentation |
-
----
-
-## 🎉 You're Ready!
-
-**Current Status**: ✅ **Production-Ready**
-
-The core Realm platform is complete and working:
-- ✅ All examples produce "Paris"
-- ✅ All code compiles
-- ✅ GPU acceleration works
-- ✅ Multi-tenant architecture works
-- ✅ SDKs are ready
-
-**You can deploy now** and add enhancements incrementally as needed!
-
----
-
-**Last Updated**: 2025-01-31
-
+- Most missing items are enhancements, not blockers
+- Core functionality is tested and working
+- Load tests are the biggest gap for production readiness
+- Streaming integration is the next logical step after load tests

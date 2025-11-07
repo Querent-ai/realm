@@ -777,6 +777,11 @@ async fn cmd_serve(
             Arc::new(tokio::sync::Mutex::new(rm))
         };
 
+        // Initialize metrics collector
+        let metrics = Some(std::sync::Arc::new(std::sync::Mutex::new(
+            realm_metrics::MetricsCollector::new(),
+        )));
+
         let http_state = ServerState {
             runtime_manager: http_runtime_manager,
             api_key_store: if auth {
@@ -795,6 +800,7 @@ async fn cmd_serve(
             } else {
                 None
             },
+            metrics,
         };
 
         let http_app = create_router(http_state);

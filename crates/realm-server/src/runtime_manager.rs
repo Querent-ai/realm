@@ -647,6 +647,61 @@ impl RuntimeManager {
         runtime.generate(prompt)
     }
 
+    /// Generate text with streaming support
+    ///
+    /// Returns a channel receiver that yields tokens as they're generated.
+    /// Currently, this generates the full response and streams it in chunks.
+    ///
+    /// Note: True token-by-token streaming requires WASM module to support host function callbacks.
+    pub fn generate_stream(
+        &self,
+        tenant_id: impl AsRef<str>,
+        prompt: String,
+    ) -> Result<tokio::sync::mpsc::Receiver<String>> {
+        let tenant_id = tenant_id.as_ref().to_string();
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+
+        // Clone runtimes Arc for the spawned task
+        let runtimes = self.runtimes.clone();
+
+        // Spawn blocking task to generate
+        tokio::task::spawn_blocking(move || {
+            let mut runtimes = runtimes.lock().unwrap();
+            let runtime = match runtimes.get_mut(&tenant_id) {
+                Some(rt) => rt,
+                None => {
+                    let _ = tx.blocking_send("Error: No runtime for tenant".to_string());
+                    return;
+                }
+            };
+
+            match runtime.generate(prompt) {
+                Ok(response) => {
+                    // Stream response in word chunks (simulates token streaming)
+                    // Note: Replace with real token-by-token streaming when WASM supports it
+                    let words: Vec<&str> = response.split_whitespace().collect();
+                    for (i, word) in words.iter().enumerate() {
+                        let chunk = if i == words.len() - 1 {
+                            word.to_string()
+                        } else {
+                            format!("{} ", word)
+                        };
+
+                        if tx.blocking_send(chunk).is_err() {
+                            // Receiver dropped, stop streaming
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.blocking_send(format!("Error: {}", e));
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+
     /// Remove a tenant runtime (cleanup)
     pub fn remove_runtime(&self, tenant_id: impl AsRef<str>) -> Result<()> {
         let tenant_id = tenant_id.as_ref();
