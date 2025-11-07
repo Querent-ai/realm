@@ -34,6 +34,7 @@ async fn test_health_check() {
     let state = ServerState {
         runtime_manager,
         api_key_store: None,
+        metrics: None,
     };
 
     let app = create_router(state);
@@ -59,6 +60,7 @@ async fn test_metrics_endpoint() {
     let state = ServerState {
         runtime_manager,
         api_key_store: None,
+        metrics: None,
     };
 
     let app = create_router(state);
@@ -86,6 +88,7 @@ async fn test_chat_completions_validation() {
     let state = ServerState {
         runtime_manager,
         api_key_store: None,
+        metrics: None,
     };
 
     let app = create_router(state);
@@ -109,6 +112,7 @@ async fn test_chat_completions_structure() {
     let state = ServerState {
         runtime_manager,
         api_key_store: None,
+        metrics: None,
     };
 
     let app = create_router(state);

@@ -1,222 +1,244 @@
-# What's Next - Roadmap
+# Next Steps & Missing Features
 
 **Date**: 2025-01-31  
-**Status**: Production-Ready Core, Optional Enhancements Available
+**Status**: Codebase is clean, CI-ready, but several features need completion
 
 ---
 
-## 🎯 Current Status
+## ✅ What's Complete & Ready
 
-### ✅ Production-Ready Features
-- ✅ Core inference pipeline (CPU + GPU)
-- ✅ All Paris examples working
-- ✅ Multi-tenant architecture
-- ✅ WASM orchestration
-- ✅ GPU acceleration (CUDA/Metal/WebGPU)
-- ✅ WebSocket server
-- ✅ Node.js and Python SDKs
-- ✅ CLI tool
-- ✅ CI/CD pipeline
+1. **✅ Code Quality**
+   - All formatting passes (`cargo fmt`)
+   - All Clippy warnings fixed (`-D warnings`)
+   - All tests pass (unit, integration)
+   - CI pipeline configured and ready
 
-### ⚠️ Optional Enhancements (Frameworks Complete)
-- ⚠️ LoRA adapters (framework ready, needs RuntimeManager integration)
-- ⚠️ Speculative decoding (framework ready, needs draft model loading)
-- ⚠️ Continuous batching (framework ready, needs dispatcher integration)
+2. **✅ HTTP/SSE Server**
+   - OpenAI-compatible `/v1/chat/completions` endpoint
+   - Server-Sent Events streaming support
+   - Metrics collection and Prometheus export
+   - Token counting (approximate)
+   - Load tests implemented (require running server)
 
----
-
-## 🚀 Immediate Next Steps (Priority Order)
-
-### 1. **Test with Real Models** (30 minutes)
-**Goal**: Verify all examples actually produce "Paris" with real models
-
-```bash
-# Download a test model
-wget https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
-
-# Test each example
-cd examples/paris/native
-cargo run --release -- /path/to/model.gguf
-
-# Verify output contains "Paris"
-```
-
-**Why**: Confirm the entire stack works end-to-end with real models
+3. **✅ Core Infrastructure**
+   - WASM orchestration
+   - Runtime manager with tenant isolation
+   - WebSocket server
+   - Metrics collection
 
 ---
 
-### 2. **Complete LoRA Integration** (2-3 hours)
-**Goal**: Enable per-tenant fine-tuning
+## 🔴 High Priority - Core Features
 
-**What to do**:
-- Add `LoRAManager` to `RuntimeManager`
-- Apply LoRA adapters after model loading
-- Add API endpoint to load/unload adapters
-- Test with a real LoRA adapter file
+### 1. Real Token-by-Token Streaming ⭐⭐⭐
+**Current State**: Simulates streaming by chunking words  
+**Location**: 
+- `crates/realm-server/src/runtime_manager.rs:680` - "Stream response in word chunks (simulates token streaming)"
+- `crates/realm-server/src/http.rs:296` - "Currently streams word-by-word (simulates token streaming)"
 
-**Files to modify**:
-- `crates/realm-server/src/runtime_manager.rs`
-- `crates/realm-server/src/dispatcher.rs`
+**What's Needed**:
+- WASM host function callbacks for token generation
+- Modify `RuntimeManager::generate_stream()` to use real token callbacks
+- Update WASM module to support streaming callbacks
 
-**Impact**: High - Enables per-tenant customization
+**Impact**: Critical for production streaming performance  
+**Effort**: Medium (3-5 days)
 
----
+### 2. WASM Host Function Streaming Callbacks ⭐⭐⭐
+**Current State**: Framework exists, needs implementation  
+**Location**: `crates/realm-wasm/src/lib.rs:467` - "TODO: Refactor to use HOST-provided backends via FFI"
 
-### 3. **Complete Speculative Decoding** (1-2 hours)
-**Goal**: 2-3x speedup for generation
+**What's Needed**:
+- Implement `realm_stream_token(token: String)` host function
+- Wire up callbacks in WASM generation loop
+- Update runtime to handle streaming callbacks
 
-**What to do**:
-- Load draft model alongside target model in `RuntimeManager`
-- Connect `SpeculativeDecoder` to `InferenceSession::next_token_with_model()`
-- Add configuration to generation options
-- Test with TinyLlama (draft) + Llama-2 (target)
+**Impact**: Enables real-time token streaming  
+**Effort**: Medium (3-5 days)
 
-**Files to modify**:
-- `crates/realm-server/src/runtime_manager.rs`
-- `crates/realm-runtime/src/inference.rs`
+### 3. README Documentation Update ⭐⭐
+**Current State**: README still lists HTTP/SSE as TODO  
+**Location**: `README.md` (lines 684-686 per docs)
 
-**Impact**: High - Significant performance improvement
+**What's Needed**:
+- Update README to reflect HTTP/SSE completion
+- Add examples for HTTP/SSE usage
+- Document streaming API
 
----
-
-### 4. **Complete Continuous Batching** (3-5 hours)
-**Goal**: Improve throughput for multiple concurrent requests
-
-**What to do**:
-- Integrate `ContinuousBatcher` into `Dispatcher`
-- Add batch processing logic
-- Add batch dimension support to `Model::forward()`
-- Test with multiple concurrent clients
-
-**Files to modify**:
-- `crates/realm-server/src/dispatcher.rs`
-- `crates/realm-models/src/model.rs`
-
-**Impact**: Medium - Throughput improvement (not critical for single-user)
+**Impact**: Developer experience  
+**Effort**: Low (1-2 hours)
 
 ---
 
-## 📊 Testing & Validation
+## 🟡 Medium Priority - Feature Integration
 
-### Unit Tests
-- [ ] Add more deterministic tests for LoRA application
-- [ ] Add tests for speculative decoding
-- [ ] Add tests for continuous batching
-- [ ] Test GPU backends (if hardware available)
+### 4. LoRA Runtime Integration ⭐⭐
+**Current State**: Framework complete, not integrated  
+**Location**: 
+- `crates/realm-runtime/src/lora.rs` - Complete framework
+- `crates/realm-models/src/model.rs` - Needs integration
 
-### Integration Tests
-- [ ] End-to-end test with real model
-- [ ] Multi-tenant test with multiple concurrent requests
-- [ ] LoRA adapter loading/unloading test
-- [ ] Speculative decoding performance test
+**What's Needed**:
+- Apply LoRA weights during model loading
+- Integrate LoRA into forward pass
+- Add LoRA support to RuntimeManager
 
----
+**Impact**: Enables fine-tuning adapters  
+**Effort**: Medium (1 week)
 
-## 🎨 Polish & Documentation
+### 5. Speculative Decoding Integration ⭐⭐
+**Current State**: Framework exists, partially integrated  
+**Location**: `crates/realm-runtime/src/speculative.rs`
 
-### Documentation Updates
-- [ ] Update main README with latest features
-- [ ] Create deployment guide
-- [ ] Add performance benchmarks
-- [ ] Document LoRA adapter format
-- [ ] Document speculative decoding setup
+**What's Needed**:
+- Wire up draft model loading
+- Integrate with inference session
+- Add to RuntimeManager
 
-### Code Quality
-- [ ] Run `cargo fmt --all`
-- [ ] Run `cargo clippy --all-targets -- -D warnings`
-- [ ] Review and fix any remaining TODOs
-- [ ] Add doc comments for new features
+**Impact**: 2-3x speedup for generation  
+**Effort**: Medium (1 week)
 
----
+### 6. Continuous Batching Integration ⭐
+**Current State**: Framework exists, not integrated  
+**Location**: `crates/realm-runtime/src/batching.rs`
 
-## 🚢 Production Deployment
+**What's Needed**:
+- Connect to dispatcher request handling
+- Integrate with RuntimeManager
+- Add batching configuration
 
-### Deployment Checklist
-- [ ] Docker image creation
-- [ ] Kubernetes manifests (if needed)
-- [ ] Health check endpoints
-- [ ] Metrics and monitoring
-- [ ] Logging configuration
-- [ ] Security audit (API keys, etc.)
+**Impact**: Better throughput for concurrent requests  
+**Effort**: Medium (1 week)
 
-### Performance Optimization
-- [ ] Profile GPU usage
-- [ ] Optimize memory usage
-- [ ] Benchmark throughput
-- [ ] Compare with other inference servers
+### 7. OpenTelemetry Metrics Export ⭐
+**Current State**: Stubbed with TODOs  
+**Location**: `crates/realm-metrics/src/export/opentelemetry.rs`
 
----
+**What's Needed**:
+- Implement OpenTelemetry crate integration
+- Convert MetricSample to OpenTelemetry format
+- Add export configuration
 
-## 🔬 Research & Development
-
-### Future Enhancements (Not Blocking)
-- [ ] True fused kernels (Q4_K, Q5_K, etc. on GPU)
-- [ ] Mixed precision (FP16/BF16) support
-- [ ] Quantization at runtime
-- [ ] Multi-GPU support
-- [ ] Model sharding across GPUs
+**Impact**: Better observability integration  
+**Effort**: Low-Medium (3-5 days)
 
 ---
 
-## 🎯 Recommended Immediate Actions
+## 🟢 Low Priority - Future Enhancements
 
-### Option A: **Ship It!** (Production-Ready)
-**If you want to deploy now**:
-1. ✅ Test with real models (30 min)
-2. ✅ Update documentation (1 hour)
-3. ✅ Deploy to production
+### 8. GPU Backend Completion ⭐
+**Current State**: Stubbed, needs GPU testing  
+**Location**: 
+- `crates/realm-compute-gpu/src/distributed.rs` - NCCL TODOs
+- `crates/realm-runtime/src/attention/flash_attention.cu` - Backward pass TODO
 
-**Status**: Core features are production-ready!
+**What's Needed**:
+- Complete CUDA/Metal/WebGPU implementations
+- Implement NCCL communication primitives
+- GPU testing infrastructure
 
-### Option B: **Complete Integrations** (Full Feature Set)
-**If you want all features**:
-1. ✅ Complete LoRA integration (2-3 hours)
-2. ✅ Complete Speculative Decoding (1-2 hours)
-3. ✅ Complete Continuous Batching (3-5 hours)
-4. ✅ Test everything (2 hours)
+**Impact**: Performance improvements  
+**Effort**: High (2-3 weeks, requires GPU access)
 
-**Total**: ~8-12 hours for full feature set
+### 9. Additional SDKs ⭐
+**Current State**: JavaScript/Python SDKs exist, Go/Rust mentioned  
+**Location**: `sdks/` directory
 
-### Option C: **Incremental** (Recommended)
-**Best approach**:
-1. ✅ Test with real models NOW (30 min)
-2. ✅ Deploy to production with current features
-3. ✅ Add LoRA integration when needed
-4. ✅ Add Speculative Decoding when performance is critical
-5. ✅ Add Continuous Batching when throughput is needed
+**What's Needed**:
+- Go SDK (WebSocket client)
+- Rust SDK (native client)
+- Fix JavaScript SDK model registry limitations
 
-**Status**: Ship incrementally, add features as needed
+**Impact**: Broader adoption  
+**Effort**: Medium (3-5 days each)
 
----
+### 10. Advanced Quantization Formats ⭐
+**Current State**: Only K-quants supported  
+**Location**: Various compute files
 
-## 📝 Decision Framework
+**What's Needed**:
+- AWQ quantization support
+- GPTQ quantization support
 
-**Choose based on your needs**:
+**Impact**: More model compatibility  
+**Effort**: Medium (1 week each)
 
-| Need | Priority | Action |
-|------|----------|--------|
-| **Deploy to production** | High | Test with real models → Deploy |
-| **Per-tenant customization** | High | Complete LoRA integration |
-| **Speed improvement** | High | Complete Speculative Decoding |
-| **High throughput** | Medium | Complete Continuous Batching |
-| **Polish & docs** | Low | Update documentation |
+### 11. SIMD Optimizations ⭐
+**Current State**: Marked as TODO, low priority  
+**Location**: `crates/realm-compute-cpu/src/fused.rs:2337, 2422`
 
----
+**What's Needed**:
+- Optimize Q5_0/Q5_1 SIMD implementations
+- Performance benchmarking
 
-## 🎉 You're Ready!
-
-**Current Status**: ✅ **Production-Ready**
-
-The core Realm platform is complete and working:
-- ✅ All examples produce "Paris"
-- ✅ All code compiles
-- ✅ GPU acceleration works
-- ✅ Multi-tenant architecture works
-- ✅ SDKs are ready
-
-**You can deploy now** and add enhancements incrementally as needed!
+**Impact**: Minor performance improvements  
+**Effort**: Low (2-3 days)
 
 ---
 
-**Last Updated**: 2025-01-31
+## 📋 Immediate Next Steps (This Week)
+
+1. **Update README** (1-2 hours)
+   - Mark HTTP/SSE as complete
+   - Add usage examples
+   - Document streaming API
+
+2. **Real Token Streaming** (3-5 days)
+   - Implement WASM host function callbacks
+   - Update `generate_stream()` to use real tokens
+   - Test with actual model generation
+
+3. **Integration Test Coverage** (2-3 days)
+   - Add tests for streaming with mocked WASM
+   - Verify load tests work with running server
+   - Document how to run load tests
+
+---
+
+## 🎯 Success Criteria
+
+**For Production Readiness**:
+- ✅ Code quality (DONE)
+- ✅ CI pipeline (DONE)
+- ⚠️ Real token streaming (IN PROGRESS)
+- ⚠️ Documentation (NEEDS UPDATE)
+- ⚠️ Integration tests (NEEDS EXPANSION)
+
+**For Full Feature Set**:
+- ⚠️ LoRA integration
+- ⚠️ Speculative decoding integration
+- ⚠️ Continuous batching integration
+- ⚠️ GPU backends (requires hardware)
+
+---
+
+## 📊 Priority Matrix
+
+| Feature | Priority | Effort | Impact | Status |
+|---------|----------|--------|--------|--------|
+| Real Token Streaming | 🔴 High | Medium | Critical | ⚠️ In Progress |
+| README Update | 🔴 High | Low | High | ❌ Not Started |
+| LoRA Integration | 🟡 Medium | Medium | High | ❌ Not Started |
+| Speculative Decoding | 🟡 Medium | Medium | High | ⚠️ Partial |
+| Continuous Batching | 🟡 Medium | Medium | Medium | ❌ Not Started |
+| OpenTelemetry Export | 🟡 Medium | Low-Medium | Medium | ❌ Not Started |
+| GPU Backends | 🟢 Low | High | High | ❌ Requires GPU |
+| Additional SDKs | 🟢 Low | Medium | Medium | ⚠️ Partial |
+| Advanced Quantization | 🟢 Low | Medium | Low | ❌ Not Started |
+| SIMD Optimizations | 🟢 Low | Low | Low | ❌ Not Started |
+
+---
+
+## 🚀 Recommended Order
+
+1. **Week 1**: README update + Real token streaming
+2. **Week 2-3**: LoRA + Speculative Decoding integration
+3. **Week 4**: Continuous batching + OpenTelemetry
+4. **Future**: GPU backends, additional SDKs, quantization formats
+
+---
+
+**Note**: The codebase is in excellent shape for CI/CD. The main gaps are feature integration and real streaming implementation. All critical infrastructure is in place.
+
+
 

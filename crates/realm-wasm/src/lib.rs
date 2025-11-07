@@ -106,6 +106,14 @@ extern "C" {
         hidden_size: u32,
         out_ptr: *mut f32,
     ) -> i32;
+
+    /// Stream a token as it's generated (REAL TOKEN-BY-TOKEN STREAMING)
+    /// This enables real-time token streaming via host function callbacks
+    /// Parameters:
+    ///   - token_ptr: Pointer to token string in WASM memory
+    ///   - token_len: Length of token string in bytes
+    /// Returns: 0 on success, negative on error
+    fn realm_stream_token(token_ptr: *const u8, token_len: u32) -> i32;
 }
 
 /// Generation configuration for WASM API
@@ -559,11 +567,22 @@ impl Realm {
             .map_err(|e| JsError::new(&format!("Sampling failed: {}", e)))?;
         tokens.push(next);
 
-        // Stream first token if callback provided
+        // Stream first token via host function (real token-by-token streaming)
+        let token_text = tokenizer
+            .decode(&[next], false)
+            .map_err(|e| JsError::new(&format!("Decoding failed: {}", e)))?;
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Call realm_stream_token host function for real streaming
+            let token_bytes = token_text.as_bytes();
+            let token_ptr = token_bytes.as_ptr();
+            let token_len = token_bytes.len() as u32;
+            let _ = unsafe { realm_stream_token(token_ptr, token_len) };
+        }
+
+        // Also support JavaScript callback for compatibility
         if let Some(ref cb) = callback {
-            let token_text = tokenizer
-                .decode(&[next], false)
-                .map_err(|e| JsError::new(&format!("Decoding failed: {}", e)))?;
             let this = JsValue::null();
             let token_js = JsValue::from_str(&token_text);
             let token_id_js = JsValue::from_f64(next as f64);
@@ -617,12 +636,23 @@ impl Realm {
             tokens.push(next);
             generated += 1;
 
-            // Stream token if callback provided
+            // Stream token via host function (real token-by-token streaming)
+            let token_text = tokenizer
+                .decode(&[next], false)
+                .map_err(|e| JsError::new(&format!("Decoding failed: {}", e)))?;
+            accumulated_text.push_str(&token_text);
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                // Call realm_stream_token host function for real streaming
+                let token_bytes = token_text.as_bytes();
+                let token_ptr = token_bytes.as_ptr();
+                let token_len = token_bytes.len() as u32;
+                let _ = unsafe { realm_stream_token(token_ptr, token_len) };
+            }
+
+            // Also support JavaScript callback for compatibility
             if let Some(ref cb) = callback {
-                let token_text = tokenizer
-                    .decode(&[next], false)
-                    .map_err(|e| JsError::new(&format!("Decoding failed: {}", e)))?;
-                accumulated_text.push_str(&token_text);
                 let this = JsValue::null();
                 let token_js = JsValue::from_str(&token_text);
                 let token_id_js = JsValue::from_f64(next as f64);

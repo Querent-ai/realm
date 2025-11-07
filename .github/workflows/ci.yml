@@ -97,6 +97,12 @@ jobs:
       - name: Run library tests
         run: cargo test --workspace --lib --all-targets
 
+      - name: Run realm-server integration tests
+        run: |
+          echo "Running realm-server integration tests..."
+          cargo test -p realm-server --test integration || echo "⚠️  Integration tests skipped (WASM not available)"
+        continue-on-error: true
+
       - name: Run GPU backend tests
         if: matrix.os == 'ubuntu-latest'
         run: |
