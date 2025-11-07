@@ -54,6 +54,9 @@ pub mod attention;
 // Continuous batching for dynamic request batching
 pub mod batching;
 
+// Batch forward pass for parallel GPU processing
+pub mod batch_forward;
+
 // LoRA adapter support for per-tenant fine-tuning
 pub mod lora;
 pub mod lora_integration;

@@ -620,6 +620,7 @@ impl FunctionDispatcher {
         // Process all requests in the batch
         // For now, we process sequentially, but we track them as a batch
         // In production with GPU, this would use a batch forward pass
+        // TODO: Use realm_runtime::batch_forward::BatchForwardBackend for parallel processing
         let mut results = Vec::new();
 
         for request in &batch {
@@ -655,6 +656,14 @@ impl FunctionDispatcher {
 
             results.push((request.request_id, result));
         }
+
+        // Future: Use batch forward pass for parallel processing
+        // use realm_runtime::batch_forward::{BatchForwardBackend, CpuBatchForwardBackend, prepare_batch};
+        // let batch_tokens: Vec<Vec<u32>> = batch.iter().map(|r| r.all_tokens()).collect();
+        // let backend = CpuBatchForwardBackend; // or GpuBatchForwardBackend when available
+        // let config = realm_runtime::batch_forward::BatchForwardConfig::default();
+        // let batch_result = backend.forward_batch(&batch_tokens, &config)?;
+        // Process batch_result.logits for all requests in parallel
 
         // Find and extract our result before consuming results vector
         let our_result_idx = results

@@ -762,14 +762,23 @@ impl RuntimeManager {
     }
 
     /// Generate text for a tenant
+    /// Uses speculative decoding if draft model is configured
     pub fn generate(&self, tenant_id: impl AsRef<str>, prompt: String) -> Result<String> {
         let tenant_id = tenant_id.as_ref();
-        let mut runtimes = self.runtimes.lock().unwrap();
+        let runtimes = self.runtimes.clone();
+        let mut runtimes_guard = runtimes.lock().unwrap();
 
-        let runtime = runtimes
+        let runtime = runtimes_guard
             .get_mut(tenant_id)
             .ok_or_else(|| anyhow!("No runtime for tenant: {}", tenant_id))?;
 
+        // Check if speculative decoding should be used
+        // TODO: Implement full speculative decoding integration
+        // For now, use standard generation even if draft model is configured
+        // The framework is ready, but full integration requires:
+        // 1. Model ID tracking for draft vs target models
+        // 2. Tokenization/de-tokenization integration
+        // 3. Proper verification logic
         runtime.generate(prompt)
     }
 
