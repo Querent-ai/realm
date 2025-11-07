@@ -133,7 +133,7 @@ fn get_quant_byte(quants: array<i32, 64>, byte_idx: u32) -> i32 {
     
     // Sign extend from 8-bit to i32
     if ((byte_val & 0x80u) != 0u) {
-        return i32(byte_val) | 0xFFFFFF00i32;
+        return i32(byte_val) - 256i;
     } else {
         return i32(byte_val);
     }
