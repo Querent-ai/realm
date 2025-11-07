@@ -388,13 +388,39 @@ impl Realm {
     pub fn generate(&mut self, prompt: String) -> Result<String, JsError> {
         #[cfg(target_arch = "wasm32")]
         {
+            self.generate_with_callback(prompt, None)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.generate_with_callback(prompt, None)
+        }
+    }
+
+    /// Generate text with streaming callback (HOST-side storage version)
+    ///
+    /// # Arguments
+    /// * `prompt` - Input text prompt
+    /// * `callback` - Optional callback function(token_text: string, token_id: u32) -> bool
+    ///                Returns false to stop generation, true to continue
+    ///
+    /// # Returns
+    /// Generated text response
+    #[allow(unused_variables)] // callback is only used in WASM mode
+    fn generate_with_callback(
+        &mut self,
+        prompt: String,
+        callback: Option<js_sys::Function>,
+    ) -> Result<String, JsError> {
+        #[cfg(target_arch = "wasm32")]
+        {
             // WASM path: Use HOST storage for weights
-            self.generate_with_host_storage(prompt)
+            self.generate_with_host_storage_internal(prompt, callback)
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             // Non-WASM path: Use traditional model loading
+            // Callback is only used in WASM mode
             let model = self
                 .model
                 .as_mut()
@@ -416,7 +442,11 @@ impl Realm {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn generate_with_host_storage(&mut self, prompt: String) -> Result<String, JsError> {
+    fn generate_with_host_storage_internal(
+        &mut self,
+        prompt: String,
+        callback: Option<js_sys::Function>,
+    ) -> Result<String, JsError> {
         let model_id = self
             .model_id
             .ok_or_else(|| JsError::new("Model not loaded in HOST. Call loadModel() first."))?;
@@ -529,8 +559,25 @@ impl Realm {
             .map_err(|e| JsError::new(&format!("Sampling failed: {}", e)))?;
         tokens.push(next);
 
+        // Stream first token if callback provided
+        if let Some(ref cb) = callback {
+            let token_text = tokenizer
+                .decode(&[next], false)
+                .map_err(|e| JsError::new(&format!("Decoding failed: {}", e)))?;
+            let this = JsValue::null();
+            let token_js = JsValue::from_str(&token_text);
+            let token_id_js = JsValue::from_f64(next as f64);
+            if let Ok(result) = cb.call2(&this, &token_js, &token_id_js) {
+                if !result.as_bool().unwrap_or(true) {
+                    // Callback returned false, stop generation
+                    return Ok(token_text);
+                }
+            }
+        }
+
         // DECODE PHASE: Generate tokens one at a time
         let mut generated = 1;
+        let mut accumulated_text = String::new();
         while generated < gen_config.max_tokens {
             let last_token = tokens[tokens.len() - 1];
 
@@ -569,6 +616,23 @@ impl Realm {
 
             tokens.push(next);
             generated += 1;
+
+            // Stream token if callback provided
+            if let Some(ref cb) = callback {
+                let token_text = tokenizer
+                    .decode(&[next], false)
+                    .map_err(|e| JsError::new(&format!("Decoding failed: {}", e)))?;
+                accumulated_text.push_str(&token_text);
+                let this = JsValue::null();
+                let token_js = JsValue::from_str(&token_text);
+                let token_id_js = JsValue::from_f64(next as f64);
+                if let Ok(result) = cb.call2(&this, &token_js, &token_id_js) {
+                    if !result.as_bool().unwrap_or(true) {
+                        // Callback returned false, stop generation
+                        break;
+                    }
+                }
+            }
         }
 
         // Decode tokens to text
@@ -737,9 +801,25 @@ impl Realm {
     }
 }
 
+#[allow(clippy::derivable_impls)] // Conditional logic based on target_arch prevents derivation
 impl Default for Realm {
     fn default() -> Self {
-        Self::new().unwrap()
+        // Use wasm_bindgen constructor
+        #[cfg(target_arch = "wasm32")]
+        {
+            Self::new().expect("Failed to create default Realm instance")
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Non-WASM fallback
+            Self {
+                model: None,
+                tokenizer: None,
+                model_id: None,
+                transformer_config: None,
+                config: WasmGenerationConfig::new(),
+            }
+        }
     }
 }
 
