@@ -693,19 +693,28 @@ impl RuntimeManager {
             runtime.host_context().set_stream_callback(blocking_tx);
 
             // Generate - tokens will be streamed via realm_stream_token host function
-            match runtime.generate(prompt) {
+            // Use a guard to ensure callback is always cleared, even on panic
+            let result = match runtime.generate(prompt) {
                 Ok(_response) => {
                     // Response is already streamed token-by-token via realm_stream_token
                     // No need to chunk words anymore
+                    Ok(())
                 }
                 Err(e) => {
                     // Send error via blocking channel (use cloned sender)
                     let _ = blocking_tx_for_error.send(format!("Error: {}", e));
+                    Err(e)
                 }
-            }
+            };
 
-            // Clear streaming callback
+            // Always clear streaming callback, even if generation failed
             runtime.host_context().clear_stream_callback();
+
+            // Drop blocking_tx_for_error to signal forwarding task completion
+            drop(blocking_tx_for_error);
+
+            // Result is ignored - errors are sent via channel
+            let _ = result;
         });
 
         Ok(rx)

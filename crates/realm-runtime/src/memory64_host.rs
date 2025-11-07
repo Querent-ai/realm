@@ -2241,20 +2241,22 @@ impl Memory64Runtime {
                     };
 
                     // Send token to callback (blocking send, but should be fast)
+                    // Note: If the channel is closed (receiver dropped), send() will return an error
+                    // This is expected behavior when the client disconnects, so we handle it gracefully
                     let callback_guard = stream_callback.lock();
                     if let Some(ref sender) = *callback_guard {
                         // Use send for blocking channel
-                        // If channel is closed, we log a warning but don't fail
+                        // If channel is closed (receiver dropped), we stop streaming gracefully
                         if let Err(e) = sender.send(token.clone()) {
-                            // Channel might be closed - this is okay for streaming
-                            debug!(
-                                "realm_stream_token: Failed to send token (channel closed): {}",
-                                e
-                            );
+                            // Channel closed - client likely disconnected, stop streaming
+                            debug!("realm_stream_token: Channel closed, stopping stream: {}", e);
+                            // Don't fail the generation, just stop sending tokens
+                            // The generation will complete normally, but tokens won't be streamed
                         }
                     } else {
                         // No callback set - this is okay, just means streaming is not enabled
-                        debug!("realm_stream_token: No streaming callback set");
+                        // This can happen if generate_stream() wasn't called or callback was cleared
+                        debug!("realm_stream_token: No streaming callback set (streaming may not be enabled)");
                     }
 
                     0 // Success

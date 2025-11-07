@@ -360,8 +360,14 @@ async fn generate_stream(
 
             match rx.recv().await {
                 Some(chunk) => {
-                    // Check if this is an error
+                    // Check if this is an error message from the generation process
                     if chunk.starts_with("Error:") {
+                        // Record error in metrics if available
+                        if let Some(ref m) = metrics {
+                            m.lock().unwrap().finish_request();
+                        }
+
+                        // Send error event and terminate stream
                         return Some((
                             Ok(Event::default().data(format!(r#"{{"error": "{}"}}"#, chunk))),
                             (
@@ -374,7 +380,7 @@ async fn generate_stream(
                                 accumulated_content,
                                 token_count,
                                 max_tokens,
-                                true,
+                                true, // Set send_done to prevent further processing
                             ),
                         ));
                     }
