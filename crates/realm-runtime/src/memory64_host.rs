@@ -1389,6 +1389,130 @@ impl Memory64Runtime {
                         }
                     };
 
+                    // Helper: Dequantize WeightFormat to f32
+                    fn dequantize_weight_format_to_f32(
+                        weight: &realm_models::WeightFormat,
+                    ) -> std::result::Result<Vec<f32>, anyhow::Error> {
+                        use realm_core::quant::{
+                            dequantize_q2_k, dequantize_q3_k, dequantize_q4_0, dequantize_q4_1,
+                            dequantize_q4_k, dequantize_q5_0, dequantize_q5_1, dequantize_q5_k,
+                            dequantize_q6_k, dequantize_q8_0, dequantize_q8_1, dequantize_q8_k,
+                            Q4_BLOCK_SIZE, Q8_BLOCK_SIZE, QK_K,
+                        };
+
+                        match weight {
+                            realm_models::WeightFormat::F32(w) => Ok(w.clone()),
+                            realm_models::WeightFormat::Q4K(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * QK_K);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; QK_K];
+                                    dequantize_q4_k(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                            realm_models::WeightFormat::Q5K(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * QK_K);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; QK_K];
+                                    dequantize_q5_k(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                            realm_models::WeightFormat::Q6K(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * QK_K);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; QK_K];
+                                    dequantize_q6_k(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                            realm_models::WeightFormat::Q8K(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * QK_K);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; QK_K];
+                                    dequantize_q8_k(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                            realm_models::WeightFormat::Q2K(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * QK_K);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; QK_K];
+                                    dequantize_q2_k(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                            realm_models::WeightFormat::Q3K(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * QK_K);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; QK_K];
+                                    dequantize_q3_k(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                            realm_models::WeightFormat::Q40(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                                    dequantize_q4_0(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                            realm_models::WeightFormat::Q41(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                                    dequantize_q4_1(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                            realm_models::WeightFormat::Q50(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                                    dequantize_q5_0(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                            realm_models::WeightFormat::Q51(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                                    dequantize_q5_1(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                            realm_models::WeightFormat::Q80(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * Q8_BLOCK_SIZE);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; Q8_BLOCK_SIZE];
+                                    dequantize_q8_0(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                            realm_models::WeightFormat::Q81(blocks) => {
+                                let mut output = Vec::with_capacity(blocks.len() * Q8_BLOCK_SIZE);
+                                for block in blocks {
+                                    let mut block_output = vec![0.0f32; Q8_BLOCK_SIZE];
+                                    dequantize_q8_1(block, &mut block_output)?;
+                                    output.extend_from_slice(&block_output);
+                                }
+                                Ok(output)
+                            }
+                        }
+                    }
+
                     // Helper: Apply LoRA to WeightFormat if adapter is set
                     // For quantized weights, dequantize to F32, apply LoRA, then use F32
                     fn apply_lora_to_weight_format(
@@ -1402,13 +1526,11 @@ impl Memory64Runtime {
                         if let Some(adapter_id) = lora_adapter_id {
                             use crate::lora::get_global_lora_manager;
 
-                            // Dequantize to F32 if needed
-                            let f32_weights = match weight {
-                                realm_models::WeightFormat::F32(w) => w,
-                                _ => {
-                                    // For quantized weights, we'd need to dequantize
-                                    // For now, skip LoRA for quantized weights (can be enhanced later)
-                                    debug!("LoRA: Skipping quantized weight {} (dequantization not yet implemented)", weight_name);
+                            // Dequantize to F32 if needed (supports all quantization types)
+                            let f32_weights = match dequantize_weight_format_to_f32(&weight) {
+                                Ok(w) => w,
+                                Err(e) => {
+                                    debug!("LoRA: Failed to dequantize weight {}: {}, skipping LoRA", weight_name, e);
                                     return Ok(weight);
                                 }
                             };
