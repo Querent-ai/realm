@@ -5,7 +5,7 @@
 
 use realm_core::error::{Error, Result};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// LoRA adapter weights
 #[derive(Debug, Clone)]
@@ -154,6 +154,15 @@ impl Default for LoRAManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Global LoRA manager instance (thread-safe)
+/// Similar to model_storage, this provides a global access point for LoRA adapters
+static GLOBAL_LORA_MANAGER: OnceLock<Arc<Mutex<LoRAManager>>> = OnceLock::new();
+
+/// Get the global LoRA manager instance
+pub fn get_global_lora_manager() -> &'static Arc<Mutex<LoRAManager>> {
+    GLOBAL_LORA_MANAGER.get_or_init(|| Arc::new(Mutex::new(LoRAManager::new())))
 }
 
 #[cfg(test)]

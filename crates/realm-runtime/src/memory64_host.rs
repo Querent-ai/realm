@@ -1272,7 +1272,7 @@ impl Memory64Runtime {
 
                     // Get model and config from storage - extract ALL tensor data while lock is held
                     use crate::model_storage::get_global_model_storage;
-                    let (config, hidden_size, attn_norm_tensor, wq_tensor, wk_tensor, wv_tensor, wo_tensor, ffn_norm_tensor, w_gate_tensor, w_up_tensor, w_down_tensor) = {
+                    let (config, hidden_size, lora_adapter_id, attn_norm_tensor, wq_tensor, wk_tensor, wv_tensor, wo_tensor, ffn_norm_tensor, w_gate_tensor, w_up_tensor, w_down_tensor) = {
                         let storage = get_global_model_storage().lock();
                         let model = match storage.get_model(model_id) {
                             Ok(m) => m,
@@ -1283,6 +1283,7 @@ impl Memory64Runtime {
                         };
                         let config = model.extract_config();
                         let hidden_size = config.hidden_size;
+                        let lora_adapter_id = model.lora_adapter_id().map(|s| s.to_string());
 
                         // Clone all tensors we need while lock is held
                         let attn_norm_tensor = match model.get_tensor(&format!("blk.{}.attn_norm.weight", layer_idx)) {
@@ -1349,7 +1350,7 @@ impl Memory64Runtime {
                             }
                         };
 
-                        (config, hidden_size, attn_norm_tensor, wq_tensor, wk_tensor, wv_tensor, wo_tensor, ffn_norm_tensor, w_gate_tensor, w_up_tensor, w_down_tensor)
+                        (config, hidden_size, lora_adapter_id, attn_norm_tensor, wq_tensor, wk_tensor, wv_tensor, wo_tensor, ffn_norm_tensor, w_gate_tensor, w_up_tensor, w_down_tensor)
                     };
                     let seq_len = hidden_states.len() / hidden_size;
 
@@ -1387,6 +1388,53 @@ impl Memory64Runtime {
                             return -8;
                         }
                     };
+
+                    // Helper: Apply LoRA to WeightFormat if adapter is set
+                    // For quantized weights, dequantize to F32, apply LoRA, then use F32
+                    fn apply_lora_to_weight_format(
+                        weight: realm_models::WeightFormat,
+                        lora_adapter_id: Option<&str>,
+                        layer_name: &str,
+                        weight_name: &str,
+                        out_dim: usize,
+                        in_dim: usize,
+                    ) -> std::result::Result<realm_models::WeightFormat, anyhow::Error> {
+                        if let Some(adapter_id) = lora_adapter_id {
+                            use crate::lora::get_global_lora_manager;
+
+                            // Dequantize to F32 if needed
+                            let f32_weights = match weight {
+                                realm_models::WeightFormat::F32(w) => w,
+                                _ => {
+                                    // For quantized weights, we'd need to dequantize
+                                    // For now, skip LoRA for quantized weights (can be enhanced later)
+                                    debug!("LoRA: Skipping quantized weight {} (dequantization not yet implemented)", weight_name);
+                                    return Ok(weight);
+                                }
+                            };
+
+                            // Apply LoRA
+                            let lora_manager = get_global_lora_manager();
+                            let full_layer_name = format!("{}.{}", layer_name, weight_name);
+                            match lora_manager.lock() {
+                                Ok(manager_guard) => {
+                                    match manager_guard.apply_to_weights(adapter_id, &full_layer_name, &f32_weights, out_dim, in_dim) {
+                                        Ok(modified) => Ok(realm_models::WeightFormat::F32(modified)),
+                                        Err(e) => {
+                                            debug!("LoRA: Failed to apply to {}: {}, using base weights", weight_name, e);
+                                            Ok(realm_models::WeightFormat::F32(f32_weights)) // Fall back to base weights
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    debug!("LoRA: Mutex lock failed, using base weights");
+                                    Ok(realm_models::WeightFormat::F32(f32_weights)) // Fall back to base weights
+                                }
+                            }
+                        } else {
+                            Ok(weight) // No LoRA adapter, use base weights
+                        }
+                    }
 
                     // Helper: Convert quantized tensor to WeightFormat (for fused ops)
                     fn quantized_to_weight_format(tensor: &crate::model_storage::QuantizedTensor) -> std::result::Result<realm_models::WeightFormat, anyhow::Error> {
@@ -1539,8 +1587,17 @@ impl Memory64Runtime {
                     }
 
                     // Load attention weights (as WeightFormat for fused ops) - using cloned tensors
+                    // Apply LoRA if adapter is configured
+                    let layer_name = format!("layer.{}", layer_idx);
+                    let hidden_size = config.hidden_size;
+
                     let wq = match quantized_to_weight_format(&wq_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            match apply_lora_to_weight_format(w.clone(), lora_adapter_id.as_deref(), &layer_name, "attn_q", hidden_size, hidden_size) {
+                                Ok(modified) => modified,
+                                Err(_) => w, // Fall back to original on error
+                            }
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wq to WeightFormat: {}", e);
                             return -15;
@@ -1548,7 +1605,12 @@ impl Memory64Runtime {
                     };
 
                     let wk = match quantized_to_weight_format(&wk_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            match apply_lora_to_weight_format(w.clone(), lora_adapter_id.as_deref(), &layer_name, "attn_k", hidden_size, hidden_size) {
+                                Ok(modified) => modified,
+                                Err(_) => w, // Fall back to original on error
+                            }
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wk to WeightFormat: {}", e);
                             return -17;
@@ -1556,7 +1618,12 @@ impl Memory64Runtime {
                     };
 
                     let wv = match quantized_to_weight_format(&wv_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            match apply_lora_to_weight_format(w.clone(), lora_adapter_id.as_deref(), &layer_name, "attn_v", hidden_size, hidden_size) {
+                                Ok(modified) => modified,
+                                Err(_) => w, // Fall back to original on error
+                            }
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wv to WeightFormat: {}", e);
                             return -19;
@@ -1564,7 +1631,12 @@ impl Memory64Runtime {
                     };
 
                     let wo = match quantized_to_weight_format(&wo_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            match apply_lora_to_weight_format(w.clone(), lora_adapter_id.as_deref(), &layer_name, "attn_output", hidden_size, hidden_size) {
+                                Ok(modified) => modified,
+                                Err(_) => w, // Fall back to original on error
+                            }
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wo to WeightFormat: {}", e);
                             return -21;
@@ -1641,8 +1713,14 @@ impl Memory64Runtime {
                     };
 
                     // Load FFN weights - using cloned tensors
+                    // Apply LoRA if adapter is configured
                     let w_gate = match quantized_to_weight_format(&w_gate_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            match apply_lora_to_weight_format(w.clone(), lora_adapter_id.as_deref(), &layer_name, "ffn_gate", config.intermediate_size, hidden_size) {
+                                Ok(modified) => modified,
+                                Err(_) => w, // Fall back to original on error
+                            }
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert w_gate to WeightFormat: {}", e);
                             return -23;
@@ -1650,7 +1728,12 @@ impl Memory64Runtime {
                     };
 
                     let w_up = match quantized_to_weight_format(&w_up_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            match apply_lora_to_weight_format(w.clone(), lora_adapter_id.as_deref(), &layer_name, "ffn_up", config.intermediate_size, hidden_size) {
+                                Ok(modified) => modified,
+                                Err(_) => w, // Fall back to original on error
+                            }
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert w_up to WeightFormat: {}", e);
                             return -25;
@@ -1658,7 +1741,12 @@ impl Memory64Runtime {
                     };
 
                     let w_down = match quantized_to_weight_format(&w_down_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            match apply_lora_to_weight_format(w.clone(), lora_adapter_id.as_deref(), &layer_name, "ffn_down", hidden_size, config.intermediate_size) {
+                                Ok(modified) => modified,
+                                Err(_) => w, // Fall back to original on error
+                            }
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert w_down to WeightFormat: {}", e);
                             return -27;

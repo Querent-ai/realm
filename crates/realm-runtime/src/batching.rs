@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 pub struct BatchedRequest {
     pub request_id: u64,
     pub prompt_tokens: Vec<u32>,
+    pub prompt_text: Option<String>, // Store original prompt text for reconstruction
     pub generated_tokens: Vec<u32>,
     pub max_tokens: usize,
     pub is_complete: bool,
@@ -22,6 +23,24 @@ impl BatchedRequest {
         Self {
             request_id,
             prompt_tokens,
+            prompt_text: None,
+            generated_tokens: Vec::new(),
+            max_tokens,
+            is_complete: false,
+        }
+    }
+
+    /// Create a new batched request with prompt text
+    pub fn with_prompt_text(
+        request_id: u64,
+        prompt_tokens: Vec<u32>,
+        prompt_text: String,
+        max_tokens: usize,
+    ) -> Self {
+        Self {
+            request_id,
+            prompt_tokens,
+            prompt_text: Some(prompt_text),
             generated_tokens: Vec::new(),
             max_tokens,
             is_complete: false,

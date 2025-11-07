@@ -161,9 +161,106 @@ impl TenantRuntime {
             .call(&mut self.store, (model_ptr, model_bytes.len() as u32))
             .context("loadModel function call failed")?;
 
+        // If LoRA adapter is configured, set it for the stored model
+        // Note: The model is stored in model_storage by WASM's loadModel via realm_store_model
+        // We need to get the model_id and set the LoRA adapter
+        if let Some(ref adapter_id) = self.lora_adapter_id {
+            use realm_runtime::model_storage::get_global_model_storage;
+
+            // Get the most recently stored model (should be the one we just loaded)
+            let model_id = {
+                let storage = get_global_model_storage().lock();
+                let models = storage.list_models();
+                models.last().copied().unwrap_or(1)
+            };
+
+            // Set LoRA adapter directly in model storage
+            match get_global_model_storage()
+                .lock()
+                .set_lora_adapter(model_id, adapter_id.clone())
+            {
+                Ok(()) => {
+                    info!(
+                        "LoRA adapter '{}' set for model {} (tenant: {})",
+                        adapter_id, model_id, self.tenant_id
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to set LoRA adapter '{}' for model {} (tenant: {}): {}",
+                        adapter_id, model_id, self.tenant_id, e
+                    );
+                }
+            }
+        }
+
         info!("Model loaded successfully for tenant: {}", self.tenant_id);
 
         self.model_config = Some(config);
+        Ok(())
+    }
+
+    /// Load draft model for speculative decoding
+    /// This loads the draft model into model storage similar to the target model
+    pub fn load_draft_model(&mut self, config: ModelConfig) -> Result<()> {
+        info!(
+            "Loading draft model for tenant {}: {:?}",
+            self.tenant_id, config.model_path
+        );
+
+        // Read draft model bytes
+        let draft_model_bytes = std::fs::read(&config.model_path)
+            .with_context(|| format!("Failed to read draft model file: {:?}", config.model_path))?;
+
+        debug!(
+            "Read {} bytes from draft model file for tenant {}",
+            draft_model_bytes.len(),
+            self.tenant_id
+        );
+
+        // Get the loadModel function from WASM
+        let load_model = self
+            .instance
+            .get_typed_func::<(u32, u32), ()>(&mut self.store, "loadModel")
+            .context("Failed to get loadModel function from WASM")?;
+
+        // Allocate memory in WASM for draft model bytes
+        let memory = self
+            .instance
+            .get_memory(&mut self.store, "memory")
+            .context("Failed to get WASM memory")?;
+
+        // Grow memory if needed
+        let needed_pages = (draft_model_bytes.len() / 65536) + 1;
+        let current_pages = memory.size(&self.store);
+
+        if needed_pages > current_pages as usize {
+            let pages_to_grow = needed_pages - current_pages as usize;
+            memory
+                .grow(&mut self.store, pages_to_grow as u64)
+                .with_context(|| {
+                    format!("Failed to grow WASM memory by {} pages", pages_to_grow)
+                })?;
+        }
+
+        // Write draft model bytes to WASM memory (use different offset to avoid conflicts)
+        let draft_model_ptr = 10 * 1024 * 1024; // 10MB offset
+        memory
+            .write(&mut self.store, draft_model_ptr, &draft_model_bytes)
+            .context("Failed to write draft model bytes to WASM memory")?;
+
+        // Call loadModel for draft model
+        load_model
+            .call(
+                &mut self.store,
+                (draft_model_ptr as u32, draft_model_bytes.len() as u32),
+            )
+            .context("loadModel function call failed for draft model")?;
+
+        info!(
+            "Draft model loaded successfully for tenant: {}",
+            self.tenant_id
+        );
         Ok(())
     }
 
@@ -377,9 +474,9 @@ impl RuntimeManager {
                         runtime.lora_adapter_id = Some(adapter_id.to_string());
                     }
 
-                    // Store draft model config if available
+                    // Store draft model config if available and load it
                     if let Some(ref draft_path) = model_config.draft_model_path {
-                        runtime.draft_model_config = Some(ModelConfig {
+                        let draft_config = ModelConfig {
                             model_path: draft_path.clone(),
                             model_id: model_config
                                 .draft_model_id
@@ -387,11 +484,19 @@ impl RuntimeManager {
                                 .unwrap_or_else(|| format!("{}_draft", model_config.model_id)),
                             draft_model_path: None,
                             draft_model_id: None,
-                        });
+                        };
+                        runtime.draft_model_config = Some(draft_config.clone());
                         info!(
                             "Draft model configured for tenant {}: {:?}",
                             tenant_id, draft_path
                         );
+                        // Load draft model for speculative decoding
+                        if let Err(e) = runtime.load_draft_model(draft_config) {
+                            warn!(
+                                "Failed to load draft model for tenant {}: {}. Speculative decoding will be disabled.",
+                                tenant_id, e
+                            );
+                        }
                     }
                 }
 
@@ -542,10 +647,31 @@ impl RuntimeManager {
     }
 
     /// Load a LoRA adapter
+    /// This registers the adapter both in RuntimeManager and the global LoRA manager
+    /// so it can be accessed by realm_forward_layer during inference
     pub fn load_lora_adapter(&self, adapter: realm_runtime::lora::LoRAWeights) -> Result<()> {
         let adapter_id = adapter.adapter_id.clone();
-        self.lora_manager.load_adapter(adapter)?;
-        info!("LoRA adapter loaded: {}", adapter_id);
+
+        // Register with RuntimeManager's LoRA manager
+        self.lora_manager.load_adapter(adapter.clone())?;
+
+        // Also register with global LoRA manager for realm_forward_layer access
+        use realm_runtime::lora::get_global_lora_manager;
+        let global_manager = get_global_lora_manager();
+        match global_manager.lock() {
+            Ok(manager_guard) => {
+                manager_guard.load_adapter(adapter)?;
+            }
+            Err(e) => {
+                warn!("Failed to lock global LoRA manager: {:?}", e);
+                // Continue - adapter is still registered in RuntimeManager
+            }
+        }
+
+        info!(
+            "LoRA adapter loaded: {} (registered in both RuntimeManager and global manager)",
+            adapter_id
+        );
         Ok(())
     }
 

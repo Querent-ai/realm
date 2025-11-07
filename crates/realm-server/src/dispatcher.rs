@@ -588,8 +588,13 @@ impl FunctionDispatcher {
             .map(|(i, _)| i as u32)
             .collect();
 
-        // Create batched request
-        let batched_request = BatchedRequest::new(request_id, prompt_tokens, options.max_tokens);
+        // Create batched request with prompt text for proper reconstruction
+        let batched_request = BatchedRequest::with_prompt_text(
+            request_id,
+            prompt_tokens,
+            options.prompt.clone(),
+            options.max_tokens,
+        );
 
         // Add to batch queue
         batcher.add_request(batched_request)?;
@@ -618,19 +623,18 @@ impl FunctionDispatcher {
         let mut results = Vec::new();
 
         for request in &batch {
-            // Reconstruct prompt from tokens
-            // NOTE: This is a placeholder implementation. For production, we would:
-            // 1. Store tokenizer in RuntimeManager and expose via host function, OR
-            // 2. Include original prompt text in BatchedRequest (recommended)
-            // The tokenizer is currently loaded inside WASM, so accessing it requires
-            // either exposing it via host function or including prompt text in batch requests.
-            // Current implementation works for testing but should be replaced for production.
-            let prompt = request
-                .prompt_tokens
-                .iter()
-                .map(|t| format!("word_{}", t))
-                .collect::<Vec<_>>()
-                .join(" ");
+            // Use stored prompt text if available, otherwise reconstruct from tokens
+            let prompt = if let Some(ref prompt_text) = request.prompt_text {
+                prompt_text.clone()
+            } else {
+                // Fallback: reconstruct from tokens (simplified)
+                request
+                    .prompt_tokens
+                    .iter()
+                    .map(|t| format!("word_{}", t))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
 
             // Create options for this request
             let request_options = GenerateOptions {
