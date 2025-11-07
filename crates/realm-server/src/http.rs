@@ -230,7 +230,7 @@ async fn chat_completions(
 async fn generate_stream(
     tenant_id: String,
     prompt: String,
-    _max_tokens: usize,
+    _max_tokens: usize, // TODO: This will be used when integrating with WASM streaming callbacks (see comment on line 236)
     runtime_manager: Arc<Mutex<RuntimeManager>>,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     // TODO: Integrate with WASM streaming callback for real token-by-token streaming
@@ -260,12 +260,9 @@ async fn generate_stream(
                             "finish_reason": null
                         }]
                     });
-                    Ok(Event::default().data(format!(
-                        "data: {}",
-                        serde_json::to_string(&data).unwrap_or_default()
-                    )))
+                    Ok(Event::default().data(serde_json::to_string(&data).unwrap_or_default()))
                 })
-                .chain(std::iter::once(Ok(Event::default().data("data: [DONE]"))))
+                .chain(std::iter::once(Ok(Event::default().data("[DONE]"))))
                 .collect();
 
             stream::iter(events)
@@ -273,7 +270,7 @@ async fn generate_stream(
         Err(_) => {
             // Return error event
             stream::iter(vec![Ok(
-                Event::default().data(r#"data: {"error": "Generation failed"}"#)
+                Event::default().data(r#"{"error": "Generation failed"}"#)
             )])
         }
     }

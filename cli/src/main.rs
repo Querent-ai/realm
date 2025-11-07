@@ -689,11 +689,8 @@ async fn cmd_serve(
     println!("{}", "Starting server...".cyan().bold());
     println!();
 
-    // Clone wasm path before moving
-    let wasm_for_http = wasm.clone();
-
-    // Create runtime manager
-    let mut runtime_manager = RuntimeManager::new(wasm)?;
+    // Create RuntimeManager for WebSocket dispatcher (expects Arc<RuntimeManager>)
+    let mut runtime_manager = RuntimeManager::new(wasm.clone())?;
 
     // Set default model
     let model_id = "default".to_string();
@@ -762,28 +759,26 @@ async fn cmd_serve(
         use std::sync::Arc;
 
         let http_port_val = http_port.unwrap_or(port + 1);
-        let wasm_clone = wasm_for_http.clone();
-        let model_path_clone = model_path.clone();
-        let model_id_clone = model_id.clone();
         let host_clone = host.clone();
         let api_keys_clone = api_keys.clone();
 
-        // Wrap runtime manager in Mutex for HTTP server (which expects Arc<Mutex<RuntimeManager>>)
+        // Share the same RuntimeManager instance by wrapping in Arc<Mutex> for HTTP server
+        // Note: We create a new instance because dispatcher expects Arc<RuntimeManager>
+        // while HTTP expects Arc<Mutex<RuntimeManager>>. In the future, we should refactor
+        // to use a shared wrapper type.
+        let http_runtime_manager = {
+            let mut rm = RuntimeManager::new(wasm.clone())?;
+            rm.set_default_model(ModelConfig {
+                draft_model_path: None,
+                draft_model_id: None,
+                model_path: model_path.clone(),
+                model_id: model_id.clone(),
+            });
+            Arc::new(tokio::sync::Mutex::new(rm))
+        };
+
         let http_state = ServerState {
-            runtime_manager: Arc::new(tokio::sync::Mutex::new(
-                // Create a new runtime manager instance for HTTP
-                // TODO: Share the same instance properly
-                {
-                    let mut rm = RuntimeManager::new(wasm_clone)?;
-                    rm.set_default_model(ModelConfig {
-                        draft_model_path: None,
-                        draft_model_id: None,
-                        model_path: model_path_clone,
-                        model_id: model_id_clone,
-                    });
-                    rm
-                },
-            )),
+            runtime_manager: http_runtime_manager,
             api_key_store: if auth {
                 api_keys_clone.as_ref().map(|keys_file| {
                     Arc::new(

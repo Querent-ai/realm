@@ -405,6 +405,7 @@ impl Realm {
     ///
     /// # Returns
     /// Generated text response
+    #[allow(unused_variables)] // callback is only used in WASM mode
     fn generate_with_callback(
         &mut self,
         prompt: String,
@@ -419,9 +420,7 @@ impl Realm {
         #[cfg(not(target_arch = "wasm32"))]
         {
             // Non-WASM path: Use traditional model loading
-            // Callback is only used in WASM mode, so we ignore it here
-            let _callback = callback;
-
+            // Callback is only used in WASM mode
             let model = self
                 .model
                 .as_mut()
@@ -808,10 +807,7 @@ impl Default for Realm {
         // Use wasm_bindgen constructor
         #[cfg(target_arch = "wasm32")]
         {
-            Self::new().unwrap_or_else(|_| {
-                // Fallback if new() fails
-                panic!("Failed to create default Realm instance");
-            })
+            Self::new().expect("Failed to create default Realm instance")
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -822,8 +818,6 @@ impl Default for Realm {
                 model_id: None,
                 transformer_config: None,
                 config: WasmGenerationConfig::new(),
-                #[cfg(target_arch = "wasm32")]
-                kv_caches: None,
             }
         }
     }
