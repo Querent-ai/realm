@@ -293,9 +293,7 @@ async fn chat_completions(
 /// Generate streaming response
 ///
 /// Uses RuntimeManager::generate_stream() to stream tokens as they're generated.
-/// Currently streams word-by-word (simulates token streaming).
-///
-/// Note: True token-by-token streaming requires WASM module to support host function callbacks.
+/// Uses real token-by-token streaming via realm_stream_token host function.
 async fn generate_stream(
     tenant_id: String,
     prompt: String,
@@ -384,8 +382,9 @@ async fn generate_stream(
                     accumulated_content.push_str(&chunk);
                     token_count += 1;
 
-                    // Check max_tokens limit
-                    if token_count >= max_tokens {
+                    // Check max_tokens limit using approximate token count for accuracy
+                    let current_tokens = count_tokens_approx(&accumulated_content);
+                    if current_tokens >= max_tokens {
                         let completion_tokens = count_tokens_approx(&accumulated_content);
                         let final_data = json!({
                             "id": completion_id,
@@ -439,7 +438,7 @@ async fn generate_stream(
                                 accumulated_content,
                                 token_count,
                                 max_tokens,
-                                false,
+                                true, // Set send_done to true to prevent duplicate final events
                             ),
                         ));
                     }
@@ -528,7 +527,7 @@ async fn generate_stream(
                             accumulated_content,
                             token_count,
                             max_tokens,
-                            false,
+                            true, // Set send_done to true after sending final event to prevent [DONE] from being sent twice
                         ),
                     ))
                 }

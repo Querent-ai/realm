@@ -163,7 +163,10 @@ async fn test_concurrent_chat_completions() {
 
     latencies.sort();
     let avg_latency = if !latencies.is_empty() {
-        latencies.iter().sum::<Duration>() / latencies.len() as u32
+        // Use nanosecond precision to avoid integer division precision loss
+        let total_nanos: u128 = latencies.iter().map(|d| d.as_nanos()).sum();
+        let avg_nanos = total_nanos / latencies.len() as u128;
+        Duration::from_nanos(avg_nanos as u64)
     } else {
         Duration::ZERO
     };
