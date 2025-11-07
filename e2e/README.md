@@ -15,7 +15,7 @@ This directory contains comprehensive end-to-end tests that verify:
 
 1. **Start the Realm server:**
    ```bash
-   cd /home/puneet/realm
+   cd <project-root>
    cargo run --bin realm-server
    ```
 

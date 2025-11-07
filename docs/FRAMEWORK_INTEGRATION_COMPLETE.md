@@ -99,7 +99,7 @@ let dispatcher = FunctionDispatcher::with_runtime(runtime_manager)
 
 ## 🧪 E2E Tests
 
-**Location**: `/home/puneet/realm/e2e/`
+**Location**: `e2e/`
 
 **Tests Created**:
 - ✅ `test-paris.js` - Paris generation verification (basic inference)

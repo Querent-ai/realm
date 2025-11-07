@@ -39,6 +39,9 @@ async function testParisGeneration() {
         try {
             console.log(`  Testing: ${testCase.name} (prompt: "${testCase.prompt}")`);
             
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
+            
             const response = await fetch(`${SERVER_URL}/v1/completions`, {
                 method: 'POST',
                 headers: {
@@ -49,8 +52,10 @@ async function testParisGeneration() {
                     max_tokens: 50,
                     stream: false
                 }),
-                timeout: TIMEOUT
+                signal: controller.signal
             });
+            
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -77,6 +82,9 @@ async function testParisGeneration() {
     // Test streaming
     try {
         console.log('  Testing: Streaming response');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
+        
         const response = await fetch(`${SERVER_URL}/v1/completions`, {
             method: 'POST',
             headers: {
@@ -87,8 +95,10 @@ async function testParisGeneration() {
                 max_tokens: 50,
                 stream: true
             }),
-            timeout: TIMEOUT
+            signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);

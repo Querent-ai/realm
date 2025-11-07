@@ -24,10 +24,15 @@ async function testLoRAIntegration() {
 
     // Test that server is running
     try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
+        
         const response = await fetch(`${SERVER_URL}/health`, {
             method: 'GET',
-            timeout: TIMEOUT
+            signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
 
         if (response.ok) {
             console.log('  ✅ Server is running\n');

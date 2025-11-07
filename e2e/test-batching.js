@@ -26,8 +26,11 @@ async function testContinuousBatching() {
     console.log(`  Sending ${concurrentRequests} concurrent requests...\n`);
 
     const startTime = Date.now();
-    const promises = prompts.map((prompt, i) =>
-        fetch(`${SERVER_URL}/v1/completions`, {
+    const promises = prompts.map((prompt, i) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
+        
+        return fetch(`${SERVER_URL}/v1/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -37,8 +40,9 @@ async function testContinuousBatching() {
                 max_tokens: 20,
                 stream: false
             }),
-            timeout: TIMEOUT
+            signal: controller.signal
         }).then(async (response) => {
+            clearTimeout(timeoutId);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
@@ -49,8 +53,11 @@ async function testContinuousBatching() {
                 text: data.choices?.[0]?.text || data.text || '',
                 time: Date.now() - startTime,
             };
-        })
-    );
+        }).catch((error) => {
+            clearTimeout(timeoutId);
+            throw error;
+        });
+    });
 
     try {
         const results = await Promise.all(promises);
