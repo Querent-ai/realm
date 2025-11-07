@@ -7,6 +7,7 @@ import { RealmWebSocketClient } from "../client";
 async function main() {
   const client = new RealmWebSocketClient({
     url: "ws://localhost:8080",
+    model: "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
     apiKey: process.env.REALM_API_KEY,
   });
 
@@ -34,6 +35,7 @@ async function main() {
     try {
       const invalidClient = new RealmWebSocketClient({
         url: "ws://localhost:8080",
+        model: "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
         apiKey: "invalid-key",
       });
       await invalidClient.connect();

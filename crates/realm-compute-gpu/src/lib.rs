@@ -53,6 +53,10 @@ pub struct GpuBackend {
     device: std::sync::Mutex<wgpu::Device>,
     queue: std::sync::Mutex<wgpu::Queue>,
     matmul_pipeline: std::sync::Mutex<wgpu::ComputePipeline>,
+    q4k_pipeline: std::sync::Mutex<wgpu::ComputePipeline>,
+    q5k_pipeline: std::sync::Mutex<wgpu::ComputePipeline>,
+    q6k_pipeline: std::sync::Mutex<wgpu::ComputePipeline>,
+    q8k_pipeline: std::sync::Mutex<wgpu::ComputePipeline>,
 }
 
 impl GpuBackend {
@@ -101,10 +105,63 @@ impl GpuBackend {
             entry_point: "main",
         });
 
+        // Load and compile dequant shaders
+        let q4k_shader_source = include_str!("q4k.wgsl");
+        let q4k_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("q4k shader"),
+            source: wgpu::ShaderSource::Wgsl(q4k_shader_source.into()),
+        });
+        let q4k_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("q4k pipeline"),
+            layout: None,
+            module: &q4k_shader,
+            entry_point: "main",
+        });
+
+        let q5k_shader_source = include_str!("q5k.wgsl");
+        let q5k_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("q5k shader"),
+            source: wgpu::ShaderSource::Wgsl(q5k_shader_source.into()),
+        });
+        let q5k_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("q5k pipeline"),
+            layout: None,
+            module: &q5k_shader,
+            entry_point: "main",
+        });
+
+        let q6k_shader_source = include_str!("q6k.wgsl");
+        let q6k_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("q6k shader"),
+            source: wgpu::ShaderSource::Wgsl(q6k_shader_source.into()),
+        });
+        let q6k_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("q6k pipeline"),
+            layout: None,
+            module: &q6k_shader,
+            entry_point: "main",
+        });
+
+        let q8k_shader_source = include_str!("q8k.wgsl");
+        let q8k_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("q8k shader"),
+            source: wgpu::ShaderSource::Wgsl(q8k_shader_source.into()),
+        });
+        let q8k_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("q8k pipeline"),
+            layout: None,
+            module: &q8k_shader,
+            entry_point: "main",
+        });
+
         Ok(Self {
             device: std::sync::Mutex::new(device),
             queue: std::sync::Mutex::new(queue),
             matmul_pipeline: std::sync::Mutex::new(matmul_pipeline),
+            q4k_pipeline: std::sync::Mutex::new(q4k_pipeline),
+            q5k_pipeline: std::sync::Mutex::new(q5k_pipeline),
+            q6k_pipeline: std::sync::Mutex::new(q6k_pipeline),
+            q8k_pipeline: std::sync::Mutex::new(q8k_pipeline),
         })
     }
 
@@ -246,6 +303,695 @@ impl GpuBackend {
         Ok(result)
     }
 
+    /// GPU-native fused dequantization + matmul for Q4_K
+    fn fused_dequant_matmul_q4k_gpu(
+        &self,
+        blocks: &[BlockQ4_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        use realm_core::quant::QK_K;
+
+        // Validate inputs
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q4_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        if input.len() != batch_size * k {
+            return Err(Error::InvalidShape(format!(
+                "Input size mismatch: expected {}, got {}",
+                batch_size * k,
+                input.len()
+            )));
+        }
+
+        let device = self
+            .device
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU device: {}", e)))?;
+
+        // Upload blocks to GPU (convert f16 to f32 for d and dmin)
+        // Block layout: d (f32, 4 bytes), dmin (f32, 4 bytes), scales (12 bytes), qs (128 bytes)
+        let blocks_bytes: Vec<u8> = blocks
+            .iter()
+            .flat_map(|block| {
+                // Convert BlockQ4_K to bytes, converting f16 to f32
+                let d_f32 = half::f16::from_bits(block.d).to_f32();
+                let dmin_f32 = half::f16::from_bits(block.dmin).to_f32();
+                let mut bytes = Vec::with_capacity(4 + 4 + 12 + 128);
+                bytes.extend_from_slice(bytemuck::bytes_of(&d_f32));
+                bytes.extend_from_slice(bytemuck::bytes_of(&dmin_f32));
+                bytes.extend_from_slice(&block.scales);
+                bytes.extend_from_slice(&block.qs);
+                bytes
+            })
+            .collect();
+
+        let blocks_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q4k blocks"),
+            contents: &blocks_bytes,
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q4k input"),
+            contents: bytemuck::cast_slice(input),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("q4k output"),
+            size: (batch_size * n * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        // Params uniform buffer
+        let num_k_blocks = num_blocks_per_row as u32;
+        let params = [
+            batch_size as u32,
+            n as u32,
+            k as u32,
+            num_k_blocks,
+            0u32, // padding
+        ];
+        let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q4k params"),
+            contents: bytemuck::cast_slice(&params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        // Create bind group
+        let pipeline = self
+            .q4k_pipeline
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU pipeline: {}", e)))?;
+        let bind_group_layout = pipeline.get_bind_group_layout(0);
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("q4k bind group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: blocks_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: output_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        // Dispatch compute
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("q4k encoder"),
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("q4k pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+
+            // Dispatch: ceil(n/16) x ceil(batch_size/16)
+            let workgroups_x = (n as u32).div_ceil(16);
+            let workgroups_y = (batch_size as u32).div_ceil(16);
+            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+        }
+
+        // Copy result to staging buffer
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("q4k staging"),
+            size: (batch_size * n * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        encoder.copy_buffer_to_buffer(
+            &output_buffer,
+            0,
+            &staging_buffer,
+            0,
+            (batch_size * n * 4) as u64,
+        );
+
+        let queue = self
+            .queue
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU queue: {}", e)))?;
+        queue.submit(Some(encoder.finish()));
+
+        // Read back result
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+
+        device.poll(wgpu::Maintain::Wait);
+        pollster::block_on(receiver)
+            .map_err(|_| Error::Runtime("Failed to receive buffer".to_string()))?
+            .map_err(|e| Error::Runtime(format!("Failed to map buffer: {:?}", e)))?;
+
+        let data = buffer_slice.get_mapped_range();
+        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok(result)
+    }
+
+    /// GPU-native fused dequantization + matmul for Q5_K
+    fn fused_dequant_matmul_q5k_gpu(
+        &self,
+        blocks: &[BlockQ5_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        use realm_core::quant::QK_K;
+
+        // Similar to Q4_K but with Q5_K block structure
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q5_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        if input.len() != batch_size * k {
+            return Err(Error::InvalidShape(format!(
+                "Input size mismatch: expected {}, got {}",
+                batch_size * k,
+                input.len()
+            )));
+        }
+
+        let device = self
+            .device
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU device: {}", e)))?;
+
+        // Upload blocks (convert f16 d to f32)
+        let blocks_bytes: Vec<u8> = blocks
+            .iter()
+            .flat_map(|block| {
+                let d_f32 = half::f16::from_bits(block.d).to_f32();
+                let mut bytes = Vec::with_capacity(std::mem::size_of::<BlockQ5_K>());
+                bytes.extend_from_slice(bytemuck::cast_slice(&block.ql));
+                bytes.extend_from_slice(bytemuck::cast_slice(&block.qh));
+                bytes.extend_from_slice(bytemuck::cast_slice(&block.scales));
+                bytes.extend_from_slice(bytemuck::bytes_of(&d_f32));
+                bytes
+            })
+            .collect();
+
+        let blocks_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q5k blocks"),
+            contents: &blocks_bytes,
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q5k input"),
+            contents: bytemuck::cast_slice(input),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("q5k output"),
+            size: (batch_size * n * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let num_k_blocks = num_blocks_per_row as u32;
+        let params = [batch_size as u32, n as u32, k as u32, num_k_blocks, 0u32];
+        let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q5k params"),
+            contents: bytemuck::cast_slice(&params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let pipeline = self
+            .q5k_pipeline
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU pipeline: {}", e)))?;
+        let bind_group_layout = pipeline.get_bind_group_layout(0);
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("q5k bind group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: blocks_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: output_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("q5k encoder"),
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("q5k pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            let workgroups_x = (n as u32).div_ceil(16);
+            let workgroups_y = (batch_size as u32).div_ceil(16);
+            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+        }
+
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("q5k staging"),
+            size: (batch_size * n * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        encoder.copy_buffer_to_buffer(
+            &output_buffer,
+            0,
+            &staging_buffer,
+            0,
+            (batch_size * n * 4) as u64,
+        );
+
+        let queue = self
+            .queue
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU queue: {}", e)))?;
+        queue.submit(Some(encoder.finish()));
+
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+
+        device.poll(wgpu::Maintain::Wait);
+        pollster::block_on(receiver)
+            .map_err(|_| Error::Runtime("Failed to receive buffer".to_string()))?
+            .map_err(|e| Error::Runtime(format!("Failed to map buffer: {:?}", e)))?;
+
+        let data = buffer_slice.get_mapped_range();
+        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok(result)
+    }
+
+    /// GPU-native fused dequantization + matmul for Q6_K
+    fn fused_dequant_matmul_q6k_gpu(
+        &self,
+        blocks: &[BlockQ6_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        use realm_core::quant::QK_K;
+
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q6_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        if input.len() != batch_size * k {
+            return Err(Error::InvalidShape(format!(
+                "Input size mismatch: expected {}, got {}",
+                batch_size * k,
+                input.len()
+            )));
+        }
+
+        let device = self
+            .device
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU device: {}", e)))?;
+
+        let blocks_bytes: Vec<u8> = blocks
+            .iter()
+            .flat_map(|block| {
+                let d_f32 = half::f16::from_bits(block.d).to_f32();
+                let mut bytes = Vec::with_capacity(std::mem::size_of::<BlockQ6_K>());
+                bytes.extend_from_slice(bytemuck::cast_slice(&block.ql));
+                bytes.extend_from_slice(bytemuck::cast_slice(&block.qh));
+                bytes.extend_from_slice(bytemuck::cast_slice(&block.scales));
+                bytes.extend_from_slice(bytemuck::bytes_of(&d_f32));
+                bytes
+            })
+            .collect();
+
+        let blocks_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q6k blocks"),
+            contents: &blocks_bytes,
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q6k input"),
+            contents: bytemuck::cast_slice(input),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("q6k output"),
+            size: (batch_size * n * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let num_k_blocks = num_blocks_per_row as u32;
+        let params = [batch_size as u32, n as u32, k as u32, num_k_blocks, 0u32];
+        let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q6k params"),
+            contents: bytemuck::cast_slice(&params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let pipeline = self
+            .q6k_pipeline
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU pipeline: {}", e)))?;
+        let bind_group_layout = pipeline.get_bind_group_layout(0);
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("q6k bind group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: blocks_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: output_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("q6k encoder"),
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("q6k pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            let workgroups_x = (n as u32).div_ceil(16);
+            let workgroups_y = (batch_size as u32).div_ceil(16);
+            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+        }
+
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("q6k staging"),
+            size: (batch_size * n * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        encoder.copy_buffer_to_buffer(
+            &output_buffer,
+            0,
+            &staging_buffer,
+            0,
+            (batch_size * n * 4) as u64,
+        );
+
+        let queue = self
+            .queue
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU queue: {}", e)))?;
+        queue.submit(Some(encoder.finish()));
+
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+
+        device.poll(wgpu::Maintain::Wait);
+        pollster::block_on(receiver)
+            .map_err(|_| Error::Runtime("Failed to receive buffer".to_string()))?
+            .map_err(|e| Error::Runtime(format!("Failed to map buffer: {:?}", e)))?;
+
+        let data = buffer_slice.get_mapped_range();
+        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok(result)
+    }
+
+    /// GPU-native fused dequantization + matmul for Q8_K
+    fn fused_dequant_matmul_q8k_gpu(
+        &self,
+        blocks: &[BlockQ8_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        use realm_core::quant::QK_K;
+
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q8_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        if input.len() != batch_size * k {
+            return Err(Error::InvalidShape(format!(
+                "Input size mismatch: expected {}, got {}",
+                batch_size * k,
+                input.len()
+            )));
+        }
+
+        let device = self
+            .device
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU device: {}", e)))?;
+
+        let blocks_bytes: Vec<u8> = blocks
+            .iter()
+            .flat_map(|block| {
+                let d_f32 = half::f16::from_bits(block.d).to_f32();
+                let dmin_f32 = half::f16::from_bits(block.dmin).to_f32();
+                let mut bytes = Vec::with_capacity(std::mem::size_of::<BlockQ8_K>());
+                bytes.extend_from_slice(bytemuck::cast_slice(&block.quants));
+                bytes.extend_from_slice(bytemuck::cast_slice(&block.scales));
+                bytes.extend_from_slice(bytemuck::bytes_of(&d_f32));
+                bytes.extend_from_slice(bytemuck::bytes_of(&dmin_f32));
+                bytes
+            })
+            .collect();
+
+        let blocks_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q8k blocks"),
+            contents: &blocks_bytes,
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q8k input"),
+            contents: bytemuck::cast_slice(input),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("q8k output"),
+            size: (batch_size * n * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let num_k_blocks = num_blocks_per_row as u32;
+        let params = [batch_size as u32, n as u32, k as u32, num_k_blocks, 0u32];
+        let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("q8k params"),
+            contents: bytemuck::cast_slice(&params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let pipeline = self
+            .q8k_pipeline
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU pipeline: {}", e)))?;
+        let bind_group_layout = pipeline.get_bind_group_layout(0);
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("q8k bind group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: blocks_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: output_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("q8k encoder"),
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("q8k pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            let workgroups_x = (n as u32).div_ceil(16);
+            let workgroups_y = (batch_size as u32).div_ceil(16);
+            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+        }
+
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("q8k staging"),
+            size: (batch_size * n * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        encoder.copy_buffer_to_buffer(
+            &output_buffer,
+            0,
+            &staging_buffer,
+            0,
+            (batch_size * n * 4) as u64,
+        );
+
+        let queue = self
+            .queue
+            .lock()
+            .map_err(|e| Error::Runtime(format!("Failed to lock GPU queue: {}", e)))?;
+        queue.submit(Some(encoder.finish()));
+
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+
+        device.poll(wgpu::Maintain::Wait);
+        pollster::block_on(receiver)
+            .map_err(|_| Error::Runtime("Failed to receive buffer".to_string()))?
+            .map_err(|e| Error::Runtime(format!("Failed to map buffer: {:?}", e)))?;
+
+        let data = buffer_slice.get_mapped_range();
+        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok(result)
+    }
+
     /// Check if GPU is available
     pub fn is_available() -> bool {
         #[cfg(target_arch = "wasm32")]
@@ -304,59 +1050,8 @@ impl GpuBackendTrait for GpuBackend {
         n: usize,
         k: usize,
     ) -> Result<Vec<f32>> {
-        use realm_core::quant::{dequantize_q4_k, QK_K};
-
-        // Validate inputs
-        if !k.is_multiple_of(QK_K) {
-            return Err(Error::InvalidShape(format!(
-                "K dimension {} must be multiple of {}",
-                k, QK_K
-            )));
-        }
-
-        let num_blocks_per_row = k / QK_K;
-        let expected_blocks = n * num_blocks_per_row;
-
-        if blocks.len() != expected_blocks {
-            return Err(Error::InvalidShape(format!(
-                "Expected {} Q4_K blocks, got {}",
-                expected_blocks,
-                blocks.len()
-            )));
-        }
-
-        // Dequantize weights on CPU: [n, k]
-        let mut dequantized_weights = vec![0.0f32; n * k];
-
-        for out_idx in 0..n {
-            for k_block in 0..num_blocks_per_row {
-                let block_idx = out_idx * num_blocks_per_row + k_block;
-                let block = &blocks[block_idx];
-
-                let dequant_offset = out_idx * k + k_block * QK_K;
-                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
-
-                dequantize_q4_k(block, dequant_slice)
-                    .map_err(|e| Error::Runtime(format!("Q4_K dequantization failed: {}", e)))?;
-            }
-        }
-
-        // Transpose weights: [n, k] -> [k, n] for matmul
-        let mut weights_transposed = vec![0.0f32; k * n];
-        for i in 0..n {
-            for j in 0..k {
-                weights_transposed[j * n + i] = dequantized_weights[i * k + j];
-            }
-        }
-
-        // Perform matmul on GPU: input [batch_size, k] @ weights_transposed [k, n] -> [batch_size, n]
-        self.matmul(
-            input,
-            &weights_transposed,
-            batch_size as u32,
-            k as u32,
-            n as u32,
-        )
+        // Use GPU-native implementation
+        self.fused_dequant_matmul_q4k_gpu(blocks, input, batch_size, n, k)
     }
 
     fn fused_dequant_matmul_q5k(
@@ -367,57 +1062,8 @@ impl GpuBackendTrait for GpuBackend {
         n: usize,
         k: usize,
     ) -> Result<Vec<f32>> {
-        use realm_core::quant::{dequantize_q5_k, QK_K};
-
-        if !k.is_multiple_of(QK_K) {
-            return Err(Error::InvalidShape(format!(
-                "K dimension {} must be multiple of {}",
-                k, QK_K
-            )));
-        }
-
-        let num_blocks_per_row = k / QK_K;
-        let expected_blocks = n * num_blocks_per_row;
-
-        if blocks.len() != expected_blocks {
-            return Err(Error::InvalidShape(format!(
-                "Expected {} Q5_K blocks, got {}",
-                expected_blocks,
-                blocks.len()
-            )));
-        }
-
-        // Dequantize on CPU, then GPU matmul
-        let mut dequantized_weights = vec![0.0f32; n * k];
-
-        for out_idx in 0..n {
-            for k_block in 0..num_blocks_per_row {
-                let block_idx = out_idx * num_blocks_per_row + k_block;
-                let block = &blocks[block_idx];
-
-                let dequant_offset = out_idx * k + k_block * QK_K;
-                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
-
-                dequantize_q5_k(block, dequant_slice)
-                    .map_err(|e| Error::Runtime(format!("Q5_K dequantization failed: {}", e)))?;
-            }
-        }
-
-        // Transpose and matmul
-        let mut weights_transposed = vec![0.0f32; k * n];
-        for i in 0..n {
-            for j in 0..k {
-                weights_transposed[j * n + i] = dequantized_weights[i * k + j];
-            }
-        }
-
-        self.matmul(
-            input,
-            &weights_transposed,
-            batch_size as u32,
-            k as u32,
-            n as u32,
-        )
+        // Use GPU-native implementation
+        self.fused_dequant_matmul_q5k_gpu(blocks, input, batch_size, n, k)
     }
 
     fn fused_dequant_matmul_q6k(
@@ -428,57 +1074,8 @@ impl GpuBackendTrait for GpuBackend {
         n: usize,
         k: usize,
     ) -> Result<Vec<f32>> {
-        use realm_core::quant::{dequantize_q6_k, QK_K};
-
-        if !k.is_multiple_of(QK_K) {
-            return Err(Error::InvalidShape(format!(
-                "K dimension {} must be multiple of {}",
-                k, QK_K
-            )));
-        }
-
-        let num_blocks_per_row = k / QK_K;
-        let expected_blocks = n * num_blocks_per_row;
-
-        if blocks.len() != expected_blocks {
-            return Err(Error::InvalidShape(format!(
-                "Expected {} Q6_K blocks, got {}",
-                expected_blocks,
-                blocks.len()
-            )));
-        }
-
-        // Dequantize on CPU, then GPU matmul
-        let mut dequantized_weights = vec![0.0f32; n * k];
-
-        for out_idx in 0..n {
-            for k_block in 0..num_blocks_per_row {
-                let block_idx = out_idx * num_blocks_per_row + k_block;
-                let block = &blocks[block_idx];
-
-                let dequant_offset = out_idx * k + k_block * QK_K;
-                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
-
-                dequantize_q6_k(block, dequant_slice)
-                    .map_err(|e| Error::Runtime(format!("Q6_K dequantization failed: {}", e)))?;
-            }
-        }
-
-        // Transpose and matmul
-        let mut weights_transposed = vec![0.0f32; k * n];
-        for i in 0..n {
-            for j in 0..k {
-                weights_transposed[j * n + i] = dequantized_weights[i * k + j];
-            }
-        }
-
-        self.matmul(
-            input,
-            &weights_transposed,
-            batch_size as u32,
-            k as u32,
-            n as u32,
-        )
+        // Use GPU-native implementation
+        self.fused_dequant_matmul_q6k_gpu(blocks, input, batch_size, n, k)
     }
 
     fn fused_dequant_matmul_q8k(
@@ -489,57 +1086,8 @@ impl GpuBackendTrait for GpuBackend {
         n: usize,
         k: usize,
     ) -> Result<Vec<f32>> {
-        use realm_core::quant::{dequantize_q8_k, QK_K};
-
-        if !k.is_multiple_of(QK_K) {
-            return Err(Error::InvalidShape(format!(
-                "K dimension {} must be multiple of {}",
-                k, QK_K
-            )));
-        }
-
-        let num_blocks_per_row = k / QK_K;
-        let expected_blocks = n * num_blocks_per_row;
-
-        if blocks.len() != expected_blocks {
-            return Err(Error::InvalidShape(format!(
-                "Expected {} Q8_K blocks, got {}",
-                expected_blocks,
-                blocks.len()
-            )));
-        }
-
-        // Dequantize on CPU, then GPU matmul
-        let mut dequantized_weights = vec![0.0f32; n * k];
-
-        for out_idx in 0..n {
-            for k_block in 0..num_blocks_per_row {
-                let block_idx = out_idx * num_blocks_per_row + k_block;
-                let block = &blocks[block_idx];
-
-                let dequant_offset = out_idx * k + k_block * QK_K;
-                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
-
-                dequantize_q8_k(block, dequant_slice)
-                    .map_err(|e| Error::Runtime(format!("Q8_K dequantization failed: {}", e)))?;
-            }
-        }
-
-        // Transpose and matmul
-        let mut weights_transposed = vec![0.0f32; k * n];
-        for i in 0..n {
-            for j in 0..k {
-                weights_transposed[j * n + i] = dequantized_weights[i * k + j];
-            }
-        }
-
-        self.matmul(
-            input,
-            &weights_transposed,
-            batch_size as u32,
-            k as u32,
-            n as u32,
-        )
+        // Use GPU-native implementation
+        self.fused_dequant_matmul_q8k_gpu(blocks, input, batch_size, n, k)
     }
 
     fn name(&self) -> &'static str {
@@ -551,44 +1099,331 @@ impl GpuBackendTrait for GpuBackend {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_matmul_simple() {
-        pollster::block_on(async {
-            // Try to initialize GPU - skip test if unavailable
-            let gpu = match GpuBackend::new().await {
-                Ok(gpu) => gpu,
-                Err(e) => {
-                    eprintln!("⚠️  GPU not available, skipping test: {}", e);
-                    return; // Skip test gracefully
-                }
+    #[tokio::test]
+    async fn test_gpu_backend_creation() {
+        if !GpuBackend::is_available() {
+            eprintln!("GPU not available, skipping test");
+            return;
+        }
+
+        match GpuBackend::new().await {
+            Ok(_backend) => {
+                println!("✅ GPU backend created successfully");
+            }
+            Err(e) => {
+                eprintln!(
+                    "⚠️  GPU backend creation failed: {} (expected in CI without GPU)",
+                    e
+                );
+                // Skip test gracefully in CI environments without GPU
+                return;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_matmul() {
+        if !GpuBackend::is_available() {
+            eprintln!("GPU not available, skipping test");
+            return;
+        }
+
+        let backend = match GpuBackend::new().await {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "⚠️  GPU backend creation failed: {} (expected in CI without GPU)",
+                    e
+                );
+                return;
+            }
+        };
+
+        // Simple 2x2 matmul
+        let a = vec![1.0, 2.0, 3.0, 4.0]; // [2, 2]
+        let b = vec![5.0, 6.0, 7.0, 8.0]; // [2, 2]
+        let result = backend.matmul(&a, &b, 2, 2, 2).unwrap();
+
+        // Expected: [[19, 22], [43, 50]]
+        assert_eq!(result.len(), 4);
+        assert!((result[0] - 19.0).abs() < 0.001);
+        assert!((result[1] - 22.0).abs() < 0.001);
+        assert!((result[2] - 43.0).abs() < 0.001);
+        assert!((result[3] - 50.0).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_fused_dequant_matmul_q4k() {
+        if !GpuBackend::is_available() {
+            eprintln!("GPU not available, skipping test");
+            return;
+        }
+
+        use realm_core::quant::{BlockQ4_K, QK_K};
+
+        let backend = match GpuBackend::new().await {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "⚠️  GPU backend creation failed: {} (expected in CI without GPU)",
+                    e
+                );
+                return;
+            }
+        };
+
+        // Create test blocks
+        let n = 4;
+        let k = QK_K; // 256
+        let batch_size = 2;
+        let num_blocks_per_row = k / QK_K; // 1
+        let num_blocks = n * num_blocks_per_row; // 4
+
+        let mut blocks = Vec::with_capacity(num_blocks);
+        for _ in 0..num_blocks {
+            let mut block = BlockQ4_K {
+                d: half::f16::from_f32(1.0).to_bits(),
+                dmin: half::f16::from_f32(0.0).to_bits(),
+                scales: [0u8; 12],
+                qs: [0u8; 128],
             };
+            // Set some test values
+            block.scales[0] = 1;
+            block.qs[0] = 0x10; // Lower nibble = 0, upper nibble = 1
+            blocks.push(block);
+        }
 
-            // 2x3 @ 3x2 = 2x2
-            #[rustfmt::skip]
-            let a = vec![
-                1.0, 2.0, 3.0,
-                4.0, 5.0, 6.0,
-            ];
+        let input = vec![1.0f32; batch_size * k];
 
-            #[rustfmt::skip]
-            let b = vec![
-                1.0, 2.0,
-                3.0, 4.0,
-                5.0, 6.0,
-            ];
+        let result = backend
+            .fused_dequant_matmul_q4k(&blocks, &input, batch_size, n, k)
+            .unwrap();
 
-            let result = gpu.matmul(&a, &b, 2, 3, 2).expect("Matmul failed");
+        assert_eq!(result.len(), batch_size * n);
+    }
 
-            // Expected:
-            // [1*1 + 2*3 + 3*5,  1*2 + 2*4 + 3*6]   = [22, 28]
-            // [4*1 + 5*3 + 6*5,  4*2 + 5*4 + 6*6]   = [49, 64]
-            assert_eq!(result.len(), 4);
-            assert!((result[0] - 22.0).abs() < 0.001);
-            assert!((result[1] - 28.0).abs() < 0.001);
-            assert!((result[2] - 49.0).abs() < 0.001);
-            assert!((result[3] - 64.0).abs() < 0.001);
+    #[tokio::test]
+    async fn test_fused_dequant_matmul_q5k() {
+        if !GpuBackend::is_available() {
+            eprintln!("GPU not available, skipping test");
+            return;
+        }
 
-            // println!("✅ GPU matmul test passed!");
-        });
+        use realm_core::quant::{BlockQ5_K, QK_K};
+
+        let backend = match GpuBackend::new().await {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "⚠️  GPU backend creation failed: {} (expected in CI without GPU)",
+                    e
+                );
+                return;
+            }
+        };
+
+        let n = 4;
+        let k = QK_K;
+        let batch_size = 2;
+        let num_blocks_per_row = k / QK_K;
+        let num_blocks = n * num_blocks_per_row;
+
+        let mut blocks = Vec::with_capacity(num_blocks);
+        for _ in 0..num_blocks {
+            let mut block = BlockQ5_K {
+                ql: [0u8; QK_K / 2],
+                qh: [0u8; QK_K / 8],
+                scales: [1i8; QK_K / 16],
+                d: half::f16::from_f32(1.0).to_bits(),
+            };
+            block.ql[0] = 0x10;
+            blocks.push(block);
+        }
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend
+            .fused_dequant_matmul_q5k(&blocks, &input, batch_size, n, k)
+            .unwrap();
+
+        assert_eq!(result.len(), batch_size * n);
+    }
+
+    #[tokio::test]
+    async fn test_fused_dequant_matmul_q6k() {
+        if !GpuBackend::is_available() {
+            eprintln!("GPU not available, skipping test");
+            return;
+        }
+
+        use realm_core::quant::{BlockQ6_K, QK_K};
+
+        let backend = match GpuBackend::new().await {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "⚠️  GPU backend creation failed: {} (expected in CI without GPU)",
+                    e
+                );
+                return;
+            }
+        };
+
+        let n = 4;
+        let k = QK_K;
+        let batch_size = 2;
+        let num_blocks_per_row = k / QK_K;
+        let num_blocks = n * num_blocks_per_row;
+
+        let mut blocks = Vec::with_capacity(num_blocks);
+        for _ in 0..num_blocks {
+            let mut block = BlockQ6_K {
+                ql: [0u8; QK_K / 2],
+                qh: [0u8; QK_K / 4],
+                scales: [1i8; QK_K / 16],
+                d: half::f16::from_f32(1.0).to_bits(),
+            };
+            block.ql[0] = 0x10;
+            blocks.push(block);
+        }
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend
+            .fused_dequant_matmul_q6k(&blocks, &input, batch_size, n, k)
+            .unwrap();
+
+        assert_eq!(result.len(), batch_size * n);
+    }
+
+    #[tokio::test]
+    async fn test_fused_dequant_matmul_q8k() {
+        if !GpuBackend::is_available() {
+            eprintln!("GPU not available, skipping test");
+            return;
+        }
+
+        use realm_core::quant::{BlockQ8_K, QK_K};
+
+        let backend = match GpuBackend::new().await {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "⚠️  GPU backend creation failed: {} (expected in CI without GPU)",
+                    e
+                );
+                return;
+            }
+        };
+
+        let n = 4;
+        let k = QK_K;
+        let batch_size = 2;
+        let num_blocks_per_row = k / QK_K;
+        let num_blocks = n * num_blocks_per_row;
+
+        let mut blocks = Vec::with_capacity(num_blocks);
+        for _ in 0..num_blocks {
+            let mut block = BlockQ8_K {
+                quants: [0i8; QK_K],
+                scales: [1u8; QK_K / 8],
+                d: half::f16::from_f32(1.0).to_bits(),
+                dmin: half::f16::from_f32(0.0).to_bits(),
+            };
+            block.quants[0] = 10;
+            blocks.push(block);
+        }
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend
+            .fused_dequant_matmul_q8k(&blocks, &input, batch_size, n, k)
+            .unwrap();
+
+        assert_eq!(result.len(), batch_size * n);
+        assert!(result.iter().any(|&x| x != 0.0));
+    }
+
+    #[tokio::test]
+    async fn test_fused_dequant_matmul_all_formats() {
+        if !GpuBackend::is_available() {
+            eprintln!("GPU not available, skipping test");
+            return;
+        }
+
+        use realm_core::quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K, QK_K};
+
+        let backend = match GpuBackend::new().await {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "⚠️  GPU backend creation failed: {} (expected in CI without GPU)",
+                    e
+                );
+                return;
+            }
+        };
+
+        let n = 2;
+        let k = QK_K;
+        let batch_size = 1;
+        let num_blocks = n;
+
+        // Test Q4_K
+        let q4k_blocks: Vec<BlockQ4_K> = (0..num_blocks)
+            .map(|_| BlockQ4_K {
+                d: half::f16::from_f32(1.0).to_bits(),
+                dmin: half::f16::from_f32(0.0).to_bits(),
+                scales: [1u8; 12],
+                qs: [0x10u8; 128],
+            })
+            .collect();
+        let input = vec![1.0f32; batch_size * k];
+        let q4k_result = backend
+            .fused_dequant_matmul_q4k(&q4k_blocks, &input, batch_size, n, k)
+            .unwrap();
+        assert_eq!(q4k_result.len(), batch_size * n);
+
+        // Test Q5_K
+        let q5k_blocks: Vec<BlockQ5_K> = (0..num_blocks)
+            .map(|_| BlockQ5_K {
+                ql: [0x10u8; QK_K / 2],
+                qh: [0u8; QK_K / 8],
+                scales: [1i8; QK_K / 16],
+                d: half::f16::from_f32(1.0).to_bits(),
+            })
+            .collect();
+        let q5k_result = backend
+            .fused_dequant_matmul_q5k(&q5k_blocks, &input, batch_size, n, k)
+            .unwrap();
+        assert_eq!(q5k_result.len(), batch_size * n);
+
+        // Test Q6_K
+        let q6k_blocks: Vec<BlockQ6_K> = (0..num_blocks)
+            .map(|_| BlockQ6_K {
+                ql: [0x10u8; QK_K / 2],
+                qh: [0u8; QK_K / 4],
+                scales: [1i8; QK_K / 16],
+                d: half::f16::from_f32(1.0).to_bits(),
+            })
+            .collect();
+        let q6k_result = backend
+            .fused_dequant_matmul_q6k(&q6k_blocks, &input, batch_size, n, k)
+            .unwrap();
+        assert_eq!(q6k_result.len(), batch_size * n);
+
+        // Test Q8_K
+        let q8k_blocks: Vec<BlockQ8_K> = (0..num_blocks)
+            .map(|_| BlockQ8_K {
+                quants: [10i8; QK_K],
+                scales: [1u8; QK_K / 8],
+                d: half::f16::from_f32(1.0).to_bits(),
+                dmin: half::f16::from_f32(0.0).to_bits(),
+            })
+            .collect();
+        let q8k_result = backend
+            .fused_dequant_matmul_q8k(&q8k_blocks, &input, batch_size, n, k)
+            .unwrap();
+        assert_eq!(q8k_result.len(), batch_size * n);
     }
 }

@@ -7,6 +7,7 @@ import { RealmWebSocketClient } from "../client";
 async function main() {
   const client = new RealmWebSocketClient({
     url: "ws://localhost:8080",
+    model: "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
     apiKey: process.env.REALM_API_KEY,
   });
 
@@ -16,8 +17,6 @@ async function main() {
 
     console.log("\nGenerating with streaming...");
     
-    // Note: Full streaming implementation pending server support
-    // For now, this will yield the complete result
     for await (const token of client.generateStream({
       prompt: "Tell me a short story about a robot.",
       max_tokens: 100,

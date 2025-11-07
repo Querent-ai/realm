@@ -267,17 +267,63 @@ class RealmWebSocketClient:
 
         Yields:
             Generated tokens as they arrive
-
-        Note: Streaming requires proper handling of streaming responses.
-        For now, this returns the full result. Full streaming support
-        will be implemented when server streaming is fully functional.
         """
+        if not self.is_connected():
+            raise ConnectionError("Not connected to server. Call connect() first.")
+
+        # Queue for tokens (since we can't yield from callback)
+        token_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        stream_complete = False
+        stream_error: Optional[Exception] = None
+
+        def stream_callback(data: Any) -> None:
+            nonlocal stream_complete, stream_error
+            
+            token_data = data
+            if isinstance(token_data, dict):
+                token = token_data.get("token")
+                is_final = token_data.get("is_final", False)
+                
+                if token:
+                    token_queue.put_nowait(token)
+                
+                if is_final:
+                    token_queue.put_nowait(None)  # Signal completion
+                    stream_complete = True
+
+        # Start the generation request with streaming callback
         stream_options = {**options, "stream": True}
-        
-        # For now, get full result and yield it
-        # TODO: Implement proper streaming when server supports it
-        result = await self.generate(stream_options)
-        yield result["text"]
+        call_future = self._call_function(
+            "generate",
+            {
+                "prompt": stream_options["prompt"],
+                "model": self.model,
+                "max_tokens": stream_options.get("max_tokens", 100),
+                "temperature": stream_options.get("temperature", 0.7),
+                "stream": True,
+            },
+            stream_callback=stream_callback,
+        )
+
+        try:
+            # Yield tokens as they arrive
+            while not stream_complete and stream_error is None:
+                try:
+                    token = await asyncio.wait_for(token_queue.get(), timeout=1.0)
+                    if token is None:
+                        break
+                    yield token
+                except asyncio.TimeoutError:
+                    # Check if call completed
+                    if stream_complete:
+                        break
+                    continue
+
+            # Wait for final response
+            await call_future
+        except Exception as e:
+            stream_error = e
+            raise
 
     async def execute_pipeline(
         self, pipeline_name: str, input_data: PipelineInput

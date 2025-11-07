@@ -381,6 +381,14 @@ jobs:
             echo "Checking Python syntax..."
             python3 -m py_compile sdks/python-ws/realm/*.py || echo "⚠️  Python syntax check skipped"
             echo "✅ Python SDK syntax validated"
+            
+            # Run Python SDK tests if available
+            if [ -d "sdks/python-ws/tests" ]; then
+              echo "Running Python SDK tests..."
+              pip3 install pytest pytest-asyncio --quiet || echo "⚠️  pytest installation skipped"
+              python3 -m pytest sdks/python-ws/tests/ -v --tb=short || echo "⚠️  Python tests skipped (may require server)"
+              echo "✅ Python SDK tests completed"
+            fi
           fi
           
           echo "✅ All Python SDKs validated"

@@ -191,11 +191,21 @@ const client = new RealmWebSocketClient({
 });
 
 await client.connect();
+
+// Non-streaming generation
 const result = await client.generate({
     prompt: 'What is the capital of France?',
     max_tokens: 20,
 });
 console.log(result.text); // "Paris"
+
+// Streaming generation
+for await (const token of client.generateStream({
+    prompt: 'Tell me a story',
+    max_tokens: 100,
+})) {
+    process.stdout.write(token);
+}
 ```
 
 ```python
@@ -208,11 +218,20 @@ client = RealmWebSocketClient(
 )
 
 await client.connect()
+
+# Non-streaming generation
 result = await client.generate({
     'prompt': 'What is the capital of France?',
     'max_tokens': 20,
 })
 print(result['text'])  # "Paris"
+
+# Streaming generation
+async for token in client.generate_stream({
+    'prompt': 'Tell me a story',
+    'max_tokens': 100,
+}):
+    print(token, end='', flush=True)
 ```
 
 ---
@@ -236,7 +255,7 @@ print(result['text'])  # "Paris"
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| **GPU Backend** | 🟡 Beta | CUDA/Metal/WebGPU, all K-quant types |
+| **GPU Backend** | 🟡 Beta | CUDA/Metal/WebGPU tested, all K-quant types |
 | **Continuous Batching** | 🟡 Beta | Framework implemented |
 | **LoRA Adapters** | 🟡 Beta | Framework ready |
 | **Speculative Decoding** | 🟡 Beta | Framework integrated |
@@ -387,7 +406,7 @@ graph TB
 - **Metrics Export**: Prometheus-compatible endpoints
 - **Authentication**: API key-based with tenant isolation
 - **Rate Limiting**: Token bucket algorithm per tenant
-- **Streaming**: Real-time token streaming via WebSocket
+- **Streaming**: Real-time token streaming via WebSocket (✅ Node.js & Python SDKs)
 
 ---
 
@@ -674,8 +693,8 @@ See [Advanced GPU Features](docs/ADVANCED_GPU_FEATURES.md) for details.
 #### Desktop & Deployment
 
 - [ ] **Tauri Desktop App** - Standalone GUI application for local inference
-- [ ] **Terraform Modules** - Infrastructure as Code for cloud deployment
-- [ ] **Helm Charts** - Kubernetes deployment templates
+- [x] **Terraform Modules** - Infrastructure as Code for cloud deployment (✅ AWS EC2/EKS complete)
+- [x] **Helm Charts** - Kubernetes deployment templates (✅ Complete)
 - [ ] **Docker Compose** - Multi-service local development setup
 
 #### Optimization & Features

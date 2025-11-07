@@ -15,6 +15,7 @@ import {
   RealmClientOptions,
   EventCallback,
   ErrorCallback,
+  TokenData,
 } from "./types";
 
 export class RealmWebSocketClient {
@@ -289,17 +290,94 @@ export class RealmWebSocketClient {
   /**
    * Generate text with streaming
    * 
-   * Note: Streaming requires proper handling of streaming responses.
-   * For now, this returns the full result. Full streaming support
-   * will be implemented when server streaming is fully functional.
+   * Yields tokens as they are generated from the server.
+   * Each yielded value is a token string.
    */
   async *generateStream(options: GenerationOptions): AsyncGenerator<string, void, unknown> {
+    if (!this.isConnected()) {
+      throw new Error("Not connected to server. Call connect() first.");
+    }
+
+    // Queue for tokens (since we can't yield from event handler)
+    const tokenQueue: Array<{ type: "token" | "done" | "error"; value?: string | Error }> = [];
+    let queueResolver: ((value: { type: "token" | "done" | "error"; value?: string | Error }) => void) | null = null;
+
+    const getNextToken = (): Promise<{ type: "token" | "done" | "error"; value?: string | Error }> => {
+      if (tokenQueue.length > 0) {
+        const item = tokenQueue.shift()!;
+        if (queueResolver) {
+          const resolver = queueResolver;
+          queueResolver = null;
+          resolver(item);
+        }
+        return Promise.resolve(item);
+      }
+      return new Promise((resolve) => {
+        queueResolver = resolve;
+      });
+    };
+
+    const pushToken = (item: { type: "token" | "done" | "error"; value?: string | Error }) => {
+      if (queueResolver) {
+        const resolver = queueResolver;
+        queueResolver = null;
+        resolver(item);
+      } else {
+        tokenQueue.push(item);
+      }
+    };
+
+    // Use existing callFunction with streaming callback
     const streamOptions = { ...options, stream: true };
-    
-    // For now, get full result and yield it
-    // TODO: Implement proper streaming when server supports it
-    const result = await this.generate(streamOptions);
-    yield result.text;
+    let streamComplete = false;
+    let streamError: Error | null = null;
+
+    const streamCallback = (data: any) => {
+      const tokenData = data as TokenData;
+      if (tokenData && tokenData.token) {
+        pushToken({ type: "token", value: tokenData.token });
+      }
+      if (tokenData && tokenData.is_final) {
+        pushToken({ type: "done" });
+        streamComplete = true;
+      }
+    };
+
+    // Start the generation request with streaming callback
+    const callPromise = this.callFunction("generate", {
+      prompt: streamOptions.prompt,
+      model: this.model,
+      max_tokens: streamOptions.max_tokens ?? 100,
+      temperature: streamOptions.temperature ?? 0.7,
+      stream: true,
+    }, streamCallback).catch((error) => {
+      streamError = error;
+      pushToken({ type: "error", value: error });
+    });
+
+    try {
+      // Yield tokens as they arrive
+      while (!streamComplete && !streamError) {
+        const item = await getNextToken();
+
+        if (item.type === "token" && item.value) {
+          yield item.value as string;
+        } else if (item.type === "done") {
+          break;
+        } else if (item.type === "error") {
+          throw item.value as Error;
+        }
+      }
+
+      // Wait for final response
+      await callPromise;
+    } catch (error) {
+      // If error occurred, make sure to yield it
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(String(error));
+    }
   }
 
   /**
