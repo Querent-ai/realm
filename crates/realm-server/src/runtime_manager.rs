@@ -324,85 +324,136 @@ impl TenantRuntime {
         let has_wbindgen_malloc = export_names.iter().any(|n| n == "__wbindgen_malloc");
         debug!("__wbindgen_malloc available: {}", has_wbindgen_malloc);
 
-        // OPTION 2: Skip constructor, use fixed pointer
-        // Since constructor calls are failing, we'll try using a fixed pointer
-        // and see if the methods work without proper initialization.
-        // This is a workaround - the methods might not validate the this pointer.
-
-        // Try to allocate memory for Realm struct using __wbindgen_malloc
-        let realm_this = if let Some(malloc_func) =
-            self.instance.get_func(&mut self.store, "__wbindgen_malloc")
+        // PATTERN 1 (Recommended): wasm-bindgen constructor returns the instance
+        // The Rust constructor is: pub fn new() -> Result<Realm, JsError>
+        // wasm-bindgen exports this as a function that RETURNS a pointer to the initialized Realm
+        // We should NOT allocate memory ourselves - let Rust/wasm-bindgen do it
+        let realm_this = if let Some(realm_new_func) =
+            self.instance.get_func(&mut self.store, "realm_new")
         {
-            // Allocate memory for Realm struct
-            if let Ok(malloc_typed) = malloc_func.typed::<u32, u32>(&self.store) {
-                let ptr = malloc_typed
-                    .call(&mut self.store, 200) // Allocate ~200 bytes for Realm struct
-                    .context("Failed to call __wbindgen_malloc (typed)")?;
-                debug!("Allocated Realm struct memory at pointer: {}", ptr);
-                ptr
-            } else {
-                use wasmtime::Val;
-                let malloc_args = vec![Val::I32(200)];
-                let mut malloc_results = vec![Val::I32(0)];
-                malloc_func
-                    .call(&mut self.store, &malloc_args, &mut malloc_results)
-                    .context("Failed to call __wbindgen_malloc (untyped)")?;
-                match malloc_results[0] {
-                    Val::I32(ptr) => {
+            let func_ty = realm_new_func.ty(&self.store);
+            let param_count = func_ty.params().len();
+            let result_count = func_ty.results().len();
+
+            debug!(
+                "realm_new signature: {} params, {} results (Pattern 1: returns instance)",
+                param_count, result_count
+            );
+
+            // Pattern 1: Constructor takes no params, returns pointer to initialized Realm
+            if param_count == 0 && result_count == 1 {
+                if let Ok(realm_new_typed) = realm_new_func.typed::<(), u32>(&self.store) {
+                    let ptr = realm_new_typed.call(&mut self.store, ()).map_err(|e| {
+                        error!("realm_new constructor (Pattern 1) failed: {:?}", e);
+                        anyhow::anyhow!("Failed to call realm_new constructor: {}", e)
+                    })?;
+                    debug!(
+                        "realm_new (Pattern 1) returned initialized Realm pointer: {}",
+                        ptr
+                    );
+                    ptr
+                } else {
+                    // Fallback to untyped call
+                    use wasmtime::Val;
+                    let mut results = vec![Val::I32(0)];
+                    realm_new_func
+                        .call(&mut self.store, &[], &mut results)
+                        .map_err(|e| {
+                            error!("realm_new constructor (Pattern 1, untyped) failed: {:?}", e);
+                            anyhow::anyhow!("Failed to call realm_new constructor: {}", e)
+                        })?;
+                    match results[0] {
+                        Val::I32(ptr) => {
+                            debug!("realm_new (Pattern 1, untyped) returned pointer: {}", ptr);
+                            ptr as u32
+                        }
+                        Val::I64(ptr) => {
+                            debug!(
+                                "realm_new (Pattern 1, untyped) returned I64 pointer: {}",
+                                ptr
+                            );
+                            ptr as u32
+                        }
+                        v => anyhow::bail!("Unexpected return type from realm_new: {:?}", v),
+                    }
+                }
+            } else if param_count == 1 && result_count == 0 {
+                // Pattern 3 (fragile but required): Constructor takes pointer, writes into it
+                // wasm-bindgen with --target web generates this pattern
+                // We need to allocate memory using __wbindgen_malloc and pass it to constructor
+                warn!("realm_new has Pattern 3 signature (in-place constructor) - implementing correctly");
+
+                // Allocate memory for Realm struct using __wbindgen_malloc
+                // This ensures proper alignment and memory management
+                let realm_ptr = if let Some(malloc_func) =
+                    self.instance.get_func(&mut self.store, "__wbindgen_malloc")
+                {
+                    if let Ok(malloc_typed) = malloc_func.typed::<u32, u32>(&self.store) {
+                        // Allocate enough space for Realm struct (estimate ~200 bytes)
+                        let ptr = malloc_typed
+                            .call(&mut self.store, 200)
+                            .context("Failed to allocate memory for Realm struct")?;
                         debug!(
-                            "Allocated Realm struct memory at pointer: {} (untyped)",
+                            "Allocated Realm struct memory at pointer: {} (via __wbindgen_malloc)",
                             ptr
                         );
-                        ptr as u32
+                        ptr
+                    } else {
+                        use wasmtime::Val;
+                        let malloc_args = vec![Val::I32(200)];
+                        let mut malloc_results = vec![Val::I32(0)];
+                        malloc_func
+                            .call(&mut self.store, &malloc_args, &mut malloc_results)
+                            .context("Failed to allocate memory for Realm struct (untyped)")?;
+                        match malloc_results[0] {
+                            Val::I32(ptr) => {
+                                debug!(
+                                    "Allocated Realm struct memory at pointer: {} (untyped)",
+                                    ptr
+                                );
+                                ptr as u32
+                            }
+                            _ => anyhow::bail!("__wbindgen_malloc returned unexpected type"),
+                        }
                     }
-                    _ => anyhow::bail!("__wbindgen_malloc returned unexpected type"),
-                }
+                } else {
+                    anyhow::bail!(
+                        "__wbindgen_malloc not available - cannot allocate memory for Realm struct"
+                    );
+                };
+
+                // Call constructor with allocated pointer - it will initialize the struct in-place
+                use wasmtime::Val;
+                let args = vec![Val::I32(realm_ptr as i32)];
+                let mut results = Vec::new();
+                realm_new_func
+                    .call(&mut self.store, &args, &mut results)
+                    .map_err(|e| {
+                        error!(
+                            "realm_new constructor (Pattern 3) failed with pointer {}: {:?}",
+                            realm_ptr, e
+                        );
+                        anyhow::anyhow!("Failed to initialize Realm struct: {}", e)
+                    })?;
+                debug!(
+                    "realm_new (Pattern 3) successfully initialized Realm struct at pointer: {}",
+                    realm_ptr
+                );
+                realm_ptr
+            } else {
+                anyhow::bail!(
+                    "realm_new has unexpected signature: {} params, {} results. \
+                    Expected Pattern 1: () -> u32 (constructor returns instance)",
+                    param_count,
+                    result_count
+                );
             }
         } else {
-            // Fallback: use a safe offset in WASM memory
-            let memory = self
-                .instance
-                .get_memory(&mut self.store, "memory")
-                .context("Failed to get WASM memory")?;
-            let mem_size = memory.data_size(&self.store);
-            let fallback_ptr = (mem_size + 1024) as u32;
-            debug!(
-                "Using fallback Realm pointer: {} (memory size: {})",
-                fallback_ptr, mem_size
-            );
-            fallback_ptr
+            anyhow::bail!("realm_new function not found in WASM exports");
         };
 
-        // Try calling constructor, but don't fail if it doesn't work
-        // We'll proceed with the allocated pointer anyway
-        if let Some(realm_new_func) = self.instance.get_func(&mut self.store, "realm_new") {
-            use wasmtime::Val;
-            let args = vec![Val::I32(realm_this as i32)];
-            let mut results = Vec::new();
-            match realm_new_func.call(&mut self.store, &args, &mut results) {
-                Ok(()) => {
-                    debug!(
-                        "realm_new constructor succeeded, using pointer: {}",
-                        realm_this
-                    );
-                }
-                Err(e) => {
-                    warn!("realm_new constructor failed (continuing anyway): {:?}", e);
-                    debug!(
-                        "Proceeding with allocated pointer {} without constructor initialization",
-                        realm_this
-                    );
-                }
-            }
-        } else {
-            debug!(
-                "realm_new function not found, using allocated pointer: {}",
-                realm_this
-            );
-        }
-
         debug!(
-            "Using Realm instance with this pointer: {} (constructor may not have been called)",
+            "Realm instance created and initialized with this pointer: {}",
             realm_this
         );
 

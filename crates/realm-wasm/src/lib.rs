@@ -234,13 +234,16 @@ pub struct Realm {
 #[wasm_bindgen]
 impl Realm {
     /// Create a new Realm instance
+    ///
+    /// Returns a fully-initialized Realm instance (Pattern 1: constructor returns instance)
+    /// This ensures wasm-bindgen generates the correct signature: () -> u32
     #[wasm_bindgen(constructor)]
-    pub fn new() -> Result<Realm, JsError> {
+    pub fn new() -> Realm {
         // Set up better panic messages for WASM debugging (web mode only)
         #[cfg(all(target_arch = "wasm32", not(feature = "server")))]
         console_error_panic_hook::set_once();
 
-        Ok(Realm {
+        Realm {
             model: None,
             tokenizer: None,
             model_id: None,
@@ -248,7 +251,7 @@ impl Realm {
             config: WasmGenerationConfig::new(),
             #[cfg(target_arch = "wasm32")]
             kv_caches: None,
-        })
+        }
     }
 
     /// Load a model from GGUF bytes (HOST-side storage version)
@@ -870,7 +873,7 @@ impl Default for Realm {
         // Use wasm_bindgen constructor
         #[cfg(target_arch = "wasm32")]
         {
-            Self::new().expect("Failed to create default Realm instance")
+            Self::new() // No longer returns Result, so no expect needed
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -926,12 +929,14 @@ mod tests {
     #[test]
     fn test_realm_creation() {
         let realm = Realm::new();
-        assert!(realm.is_ok());
+        // Constructor now returns Realm directly (not Result)
+        assert!(realm.model.is_none());
+        assert!(realm.tokenizer.is_none());
     }
 
     #[test]
     fn test_config() {
-        let mut realm = Realm::new().unwrap();
+        let mut realm = Realm::new();
         let mut config = WasmGenerationConfig::new();
         config.max_tokens = 200;
         config.temperature = 0.8;
@@ -942,7 +947,7 @@ mod tests {
 
     #[test]
     fn test_not_loaded() {
-        let realm = Realm::new().unwrap();
+        let realm = Realm::new();
         assert!(!realm.is_loaded());
         // Skip generate() test on non-WASM targets since it calls wasm-bindgen imports
         #[cfg(target_arch = "wasm32")]
