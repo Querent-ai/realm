@@ -31,6 +31,20 @@ impl BatchedRequest {
     }
 
     /// Create a new batched request with prompt text
+    ///
+    /// This creates a batched request with the original prompt text stored for proper
+    /// reconstruction during batch processing. The prompt text is used to reconstruct
+    /// the full sequence when processing batched requests, ensuring accurate tokenization
+    /// and generation.
+    ///
+    /// # Parameters
+    /// - `request_id`: Unique identifier for this request
+    /// - `prompt_tokens`: Tokenized prompt as a vector of token IDs
+    /// - `prompt_text`: Original prompt text (stored for reconstruction)
+    /// - `max_tokens`: Maximum number of tokens to generate
+    ///
+    /// # Returns
+    /// A new `BatchedRequest` instance with the prompt text stored in `prompt_text` field.
     pub fn with_prompt_text(
         request_id: u64,
         prompt_tokens: Vec<u32>,

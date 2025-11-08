@@ -42,13 +42,19 @@ async function testParisGeneration() {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
             
-            const response = await fetch(`${SERVER_URL}/v1/completions`, {
+            const response = await fetch(`${SERVER_URL}/v1/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    prompt: testCase.prompt,
+                    model: 'realm-model',
+                    messages: [
+                        {
+                            role: 'user',
+                            content: testCase.prompt
+                        }
+                    ],
                     max_tokens: 50,
                     stream: false
                 }),
@@ -62,7 +68,7 @@ async function testParisGeneration() {
             }
 
             const data = await response.json();
-            const text = data.choices?.[0]?.text || data.text || '';
+            const text = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || data.text || '';
             
             console.log(`    Response: "${text.trim()}"`);
             
@@ -85,13 +91,19 @@ async function testParisGeneration() {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
         
-        const response = await fetch(`${SERVER_URL}/v1/completions`, {
+        const response = await fetch(`${SERVER_URL}/v1/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                prompt: 'What is the capital of France?',
+                model: 'realm-model',
+                messages: [
+                    {
+                        role: 'user',
+                        content: 'What is the capital of France?'
+                    }
+                ],
                 max_tokens: 50,
                 stream: true
             }),

@@ -30,13 +30,19 @@ async function testContinuousBatching() {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
         
-        return fetch(`${SERVER_URL}/v1/completions`, {
+        return fetch(`${SERVER_URL}/v1/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                prompt,
+                model: 'realm-model',
+                messages: [
+                    {
+                        role: 'user',
+                        content: prompt
+                    }
+                ],
                 max_tokens: 20,
                 stream: false
             }),
@@ -50,7 +56,7 @@ async function testContinuousBatching() {
             return {
                 index: i,
                 prompt,
-                text: data.choices?.[0]?.text || data.text || '',
+                text: data.choices?.[0]?.message?.content || data.choices?.[0]?.text || data.text || '',
                 time: Date.now() - startTime,
             };
         }).catch((error) => {

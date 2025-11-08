@@ -77,6 +77,6 @@ All tests should pass when:
    - Verify model path in server configuration
 
 3. **WASM errors:**
-   - Check that WASM module is built: `cargo build --target wasm32-unknown-unknown`
+   - Check that the WASM module is built (see the main build documentation for instructions)
    - Verify WASM path in server configuration
 

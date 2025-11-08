@@ -12,6 +12,13 @@ build: ## Build all crates in release mode
 	@echo "Building WASM module..."
 	cd crates/realm-wasm && wasm-pack build --target web
 
+wasm-server: ## Build server WASM (with server feature, uses tracing instead of web_sys::console)
+	@echo "🔨 Building server WASM (with server feature, uses tracing instead of web_sys::console)..."
+	cd crates/realm-wasm && wasm-pack build --target web --no-default-features --features server
+	@mkdir -p crates/realm-wasm/pkg-server
+	@cp crates/realm-wasm/pkg/realm_wasm_bg.wasm crates/realm-wasm/pkg-server/ 2>/dev/null || true
+	@echo "✅ Server WASM built: crates/realm-wasm/pkg-server/realm_wasm_bg.wasm"
+
 build-dev: ## Build all crates in debug mode
 	cargo build
 
@@ -76,6 +83,7 @@ ci-build: ## CI build target
 	cargo build --workspace --all-targets
 	cd crates/realm-wasm && wasm-pack build --target web
 
+
 ci-test: ## CI test target
 	cargo test --workspace --all-targets
 
@@ -94,9 +102,9 @@ e2e-setup: ## Setup e2e test environment (build binaries, install deps)
 		echo "  Building realm server..."; \
 		cargo build --release --bin realm; \
 	fi
-	@if [ ! -f "crates/realm-wasm/pkg/realm_wasm_bg.wasm" ] && [ ! -f "wasm-pkg/realm_wasm_bg.wasm" ]; then \
-		echo "  Building WASM module..."; \
-		cd crates/realm-wasm && wasm-pack build --target web && cd ../..; \
+	@if [ ! -f "crates/realm-wasm/pkg-server/realm_wasm_bg.wasm" ]; then \
+		echo "  Building server WASM module..."; \
+		$(MAKE) wasm-server; \
 	fi
 	@if [ ! -d "e2e/node_modules" ]; then \
 		echo "  Installing e2e dependencies..."; \
@@ -110,9 +118,43 @@ e2e-run: ## Run e2e tests (assumes server is running)
 
 e2e-server: ## Start server for e2e tests (runs in background)
 	@echo "🚀 Starting Realm server for E2E tests..."
+	@# Stop any existing server first
+	@$(MAKE) e2e-stop > /dev/null 2>&1 || true
+	@# Wait a bit for ports to be released (TIME_WAIT cleanup)
+	@sleep 2
+	@# Check if ports 3000 or 3001 are still in use and clean them up
+	@for PORT in 3000 3001; do \
+		if command -v lsof > /dev/null 2>&1; then \
+			for i in 1 2 3; do \
+				if lsof -ti:$$PORT > /dev/null 2>&1; then \
+					EXISTING_PID=$$(lsof -ti:$$PORT | head -1); \
+					if [ $$i -eq 1 ]; then \
+						echo "  Port $$PORT is in use by PID $$EXISTING_PID, stopping..."; \
+					fi; \
+					kill -9 $$EXISTING_PID 2>/dev/null || true; \
+					sleep 1; \
+				else \
+					break; \
+				fi; \
+			done; \
+		fi; \
+	done
+	@# Final check - wait a bit more and verify ports are free
+	@sleep 1
+	@if command -v lsof > /dev/null 2>&1; then \
+		if lsof -ti:3000 > /dev/null 2>&1 || lsof -ti:3001 > /dev/null 2>&1; then \
+			echo "  ⚠️  Warning: Ports 3000 or 3001 are still in use after cleanup"; \
+			echo "     Please stop processes manually:"; \
+			lsof -ti:3000 2>/dev/null | xargs -r echo "       Port 3000: kill -9" || true; \
+			lsof -ti:3001 2>/dev/null | xargs -r echo "       Port 3001: kill -9" || true; \
+			exit 1; \
+		fi; \
+	fi
 	@if [ ! -f "/tmp/realm-e2e-server.pid" ] || ! kill -0 $$(cat /tmp/realm-e2e-server.pid) 2>/dev/null; then \
 		WASM_FILE=""; \
-		if [ -f "crates/realm-wasm/pkg/realm_wasm_bg.wasm" ]; then \
+		if [ -f "crates/realm-wasm/pkg-server/realm_wasm_bg.wasm" ]; then \
+			WASM_FILE="crates/realm-wasm/pkg-server/realm_wasm_bg.wasm"; \
+		elif [ -f "crates/realm-wasm/pkg/realm_wasm_bg.wasm" ]; then \
 			WASM_FILE="crates/realm-wasm/pkg/realm_wasm_bg.wasm"; \
 		elif [ -f "wasm-pkg/realm_wasm_bg.wasm" ]; then \
 			WASM_FILE="wasm-pkg/realm_wasm_bg.wasm"; \
@@ -129,7 +171,7 @@ e2e-server: ## Start server for e2e tests (runs in background)
 				--wasm "$$WASM_FILE" \
 				--model "$$MODEL_FILE" \
 				--host 127.0.0.1 \
-				--port 3000 \
+				--port 3001 \
 				--http \
 				--http-port 3000 \
 				> /tmp/realm-e2e-server.log 2>&1 & \
@@ -140,22 +182,41 @@ e2e-server: ## Start server for e2e tests (runs in background)
 			echo "     Model: $$MODEL_FILE"; \
 			./target/release/realm serve \
 				--host 127.0.0.1 \
-				--port 3000 \
+				--port 3001 \
 				--http \
 				--http-port 3000 \
 				> /tmp/realm-e2e-server.log 2>&1 & \
 			echo $$! > /tmp/realm-e2e-server.pid; \
 		fi; \
 		echo "  Waiting for server to be ready..."; \
+		# Give server a moment to start binding \
+		sleep 2; \
+		# Check if server process is still running \
+		if ! kill -0 $$(cat /tmp/realm-e2e-server.pid) 2>/dev/null; then \
+			echo "  ❌ Server process died immediately after starting"; \
+			echo "  Logs:"; \
+			tail -30 /tmp/realm-e2e-server.log; \
+			exit 1; \
+		fi; \
 		for i in $$(seq 1 30); do \
 			if curl -s http://localhost:3000/health > /dev/null 2>&1; then \
 				echo "  ✓ Server is ready (PID: $$(cat /tmp/realm-e2e-server.pid))"; \
 				exit 0; \
 			fi; \
+			# Check if server process died \
+			if ! kill -0 $$(cat /tmp/realm-e2e-server.pid) 2>/dev/null; then \
+				echo "  ❌ Server process died during startup"; \
+				echo "  Logs:"; \
+				tail -30 /tmp/realm-e2e-server.log; \
+				exit 1; \
+			fi; \
 			if [ $$i -eq 30 ]; then \
 				echo "  ❌ Server failed to start after 30 seconds"; \
+				echo "  Checking port status..."; \
+				lsof -ti:3000 2>/dev/null && echo "    Port 3000 is in use" || echo "    Port 3000 is free"; \
+				lsof -ti:3001 2>/dev/null && echo "    Port 3001 is in use" || echo "    Port 3001 is free"; \
 				echo "  Logs:"; \
-				tail -20 /tmp/realm-e2e-server.log; \
+				tail -30 /tmp/realm-e2e-server.log; \
 				exit 1; \
 			fi; \
 			sleep 1; \
@@ -184,8 +245,9 @@ e2e-full: ## Full e2e test run (setup, start server, run tests, cleanup)
 	@echo "🧪 Running full E2E test suite..."
 	@$(MAKE) e2e-setup
 	@$(MAKE) e2e-server || (echo "❌ Failed to start server"; exit 1)
-	@trap '$(MAKE) e2e-cleanup' EXIT INT TERM; \
+	@PROJECT_ROOT=$$(pwd); \
+		trap 'cd $$PROJECT_ROOT && $(MAKE) e2e-cleanup' EXIT INT TERM; \
 		cd e2e && REALM_SERVER_URL=http://localhost:3000 npm run test:all; \
 		TEST_RESULT=$$?; \
-		$(MAKE) e2e-cleanup; \
+		cd $$PROJECT_ROOT && $(MAKE) e2e-cleanup; \
 		exit $$TEST_RESULT
