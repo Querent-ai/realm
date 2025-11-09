@@ -1375,6 +1375,113 @@ impl Memory64Runtime {
             },
         )?;
 
+        // Host function: Get model metadata (config + tokenizer info) as JSON
+        // Parameters: model_id, out_ptr, out_max_len
+        // Returns: number of bytes written on success, negative on error
+        // The JSON contains: config (TransformerConfig) and tokenizer metadata
+        linker.func_wrap(
+            "env",
+            "realm_get_model_metadata",
+            move |mut caller: Caller<'_, ()>,
+                  model_id: u32,
+                  out_ptr: u32,
+                  out_max_len: u32|
+                  -> i32 {
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_get_model_metadata: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                let wasm_mem_size = wasm_memory.data_size(&caller);
+
+                // Validate output pointer
+                let out_end = match (out_ptr as usize).checked_add(out_max_len as usize) {
+                    Some(end) => end,
+                    None => {
+                        error!("realm_get_model_metadata: Output pointer overflow");
+                        return -2;
+                    }
+                };
+
+                if out_end > wasm_mem_size {
+                    error!("realm_get_model_metadata: Output pointer out of bounds");
+                    return -3;
+                }
+
+                // Get model from storage
+                use crate::model_storage::get_global_model_storage;
+                let (config, has_tokenizer) = {
+                    let storage = get_global_model_storage().lock();
+                    let model = match storage.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!(
+                                "realm_get_model_metadata: Model {} not found: {}",
+                                model_id, e
+                            );
+                            return -4;
+                        }
+                    };
+                    let config = model.extract_config();
+                    let has_tokenizer = model.tokenizer().is_some();
+                    (config, has_tokenizer)
+                };
+
+                // Serialize config to JSON
+                use serde_json;
+                let metadata_json = serde_json::json!({
+                    "config": {
+                        "vocab_size": config.vocab_size,
+                        "hidden_size": config.hidden_size,
+                        "num_layers": config.num_layers,
+                        "num_heads": config.num_heads,
+                        "num_kv_heads": config.num_kv_heads,
+                        "intermediate_size": config.intermediate_size,
+                        "max_seq_len": config.max_seq_len,
+                        "rope_theta": config.rope_theta,
+                        "rms_norm_eps": config.rms_norm_eps,
+                    },
+                    "has_tokenizer": has_tokenizer,
+                });
+
+                let json_bytes = match serde_json::to_string(&metadata_json) {
+                    Ok(s) => s.into_bytes(),
+                    Err(e) => {
+                        error!("realm_get_model_metadata: Failed to serialize: {}", e);
+                        return -5;
+                    }
+                };
+
+                // Check if output buffer is large enough
+                if json_bytes.len() > out_max_len as usize {
+                    error!(
+                        "realm_get_model_metadata: Buffer too small: need {} bytes, got {}",
+                        json_bytes.len(),
+                        out_max_len
+                    );
+                    return -6;
+                }
+
+                // Write JSON to WASM memory
+                if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, &json_bytes) {
+                    error!("realm_get_model_metadata: Failed to write JSON: {}", e);
+                    return -7;
+                }
+
+                debug!(
+                    "realm_get_model_metadata: Wrote {} bytes of metadata for model {}",
+                    json_bytes.len(),
+                    model_id
+                );
+
+                json_bytes.len() as i32
+            },
+        )?;
+
         // Host function: Remove model from storage (cleanup)
         // Parameters: model_id
         // Returns: 0 on success, negative on error

@@ -38,6 +38,9 @@ pub struct TenantRuntime {
     /// Host context for Memory64 and GPU operations
     host_context: Arc<HostContext>,
 
+    /// Realm instance pointer (from realm_new)
+    realm_this: Option<u32>,
+
     /// Model configuration
     model_config: Option<ModelConfig>,
 
@@ -219,119 +222,9 @@ impl TenantRuntime {
 
         info!("Runtime created for tenant: {}", tenant_id);
 
-        Ok(Self {
-            store,
-            instance,
-            host_context,
-            model_config: None,
-            tenant_id,
-            lora_adapter_id: None,
-            draft_model_config: None,
-            model_id: None,
-            draft_model_id: None,
-        })
-    }
-
-    /// Helper: Load model bytes into WASM memory and call loadModel
-    /// Returns the memory pointer where the model was written
-    fn load_model_into_wasm(&mut self, model_bytes: &[u8], memory_offset: usize) -> Result<u32> {
-        // Allocate memory in WASM for model bytes
-        let memory = self
-            .instance
-            .get_memory(&mut self.store, "memory")
-            .context("Failed to get WASM memory")?;
-
-        // Get current memory size
-        let mem_size = memory.data_size(&self.store);
-        debug!("Current WASM memory size: {} bytes", mem_size);
-
-        // Grow memory if needed
-        let needed_pages = (model_bytes.len() / 65536) + 1;
-        let current_pages = memory.size(&self.store);
-
-        if needed_pages > current_pages as usize {
-            let pages_to_grow = needed_pages - current_pages as usize;
-            memory
-                .grow(&mut self.store, pages_to_grow as u64)
-                .with_context(|| {
-                    format!("Failed to grow WASM memory by {} pages", pages_to_grow)
-                })?;
-            debug!(
-                "Grew WASM memory from {} to {} pages",
-                current_pages,
-                current_pages + pages_to_grow as u64
-            );
-        }
-
-        // Write model bytes to WASM memory at the specified offset
-        let model_ptr = memory_offset;
-        memory
-            .write(&mut self.store, model_ptr, model_bytes)
-            .context("Failed to write model bytes to WASM memory")?;
-
-        debug!("Wrote model bytes to WASM memory at offset {}", model_ptr);
-
-        // List all exports for debugging (collect names first to avoid borrow issues)
-        let export_names: Vec<String> = self
-            .instance
-            .exports(&mut self.store)
-            .map(|e| e.name().to_string())
-            .collect();
-        debug!("Available WASM exports: {:?}", export_names);
-
-        // Check if we need to call __wbg_init or similar initialization function first
-        // JavaScript examples call __wbg_init before creating Realm instances
-        if let Some(init_func) = self.instance.get_func(&mut self.store, "__wbg_init") {
-            debug!("Found __wbg_init function, calling it...");
-            let init_ty = init_func.ty(&self.store);
-            debug!(
-                "__wbg_init signature: {} params, {} results",
-                init_ty.params().len(),
-                init_ty.results().len()
-            );
-
-            // Try calling with no arguments (most common)
-            if init_ty.params().len() == 0 {
-                if let Ok(init_typed) = init_func.typed::<(), ()>(&self.store) {
-                    init_typed
-                        .call(&mut self.store, ())
-                        .context("Failed to call __wbg_init")?;
-                    debug!("Successfully called __wbg_init");
-                } else {
-                    let mut results = Vec::new();
-                    init_func
-                        .call(&mut self.store, &[], &mut results)
-                        .context("Failed to call __wbg_init (untyped)")?;
-                    debug!("Successfully called __wbg_init (untyped)");
-                }
-            }
-        } else if let Some(init_sync) = self.instance.get_func(&mut self.store, "initSync") {
-            debug!("Found initSync function, calling it...");
-            let init_ty = init_sync.ty(&self.store);
-            if init_ty.params().len() == 0 {
-                if let Ok(init_typed) = init_sync.typed::<(), ()>(&self.store) {
-                    init_typed
-                        .call(&mut self.store, ())
-                        .context("Failed to call initSync")?;
-                    debug!("Successfully called initSync");
-                }
-            }
-        } else {
-            debug!("No __wbg_init or initSync function found, proceeding without initialization");
-        }
-
-        // Check if __wbindgen_malloc is available
-        let has_wbindgen_malloc = export_names.iter().any(|n| n == "__wbindgen_malloc");
-        debug!("__wbindgen_malloc available: {}", has_wbindgen_malloc);
-
-        // PATTERN 1 (Recommended): wasm-bindgen constructor returns the instance
-        // The Rust constructor is: pub fn new() -> Result<Realm, JsError>
-        // wasm-bindgen exports this as a function that RETURNS a pointer to the initialized Realm
-        // We should NOT allocate memory ourselves - let Rust/wasm-bindgen do it
-        let realm_this = if let Some(realm_new_func) =
-            self.instance.get_func(&mut self.store, "realm_new")
-        {
-            let func_ty = realm_new_func.ty(&self.store);
+        // Create Realm instance (realm_new) immediately after instantiation
+        let realm_this = if let Some(realm_new_func) = instance.get_func(&mut store, "realm_new") {
+            let func_ty = realm_new_func.ty(&store);
             let param_count = func_ty.params().len();
             let result_count = func_ty.results().len();
 
@@ -342,155 +235,170 @@ impl TenantRuntime {
 
             // Pattern 1: Constructor takes no params, returns pointer to initialized Realm
             if param_count == 0 && result_count == 1 {
-                if let Ok(realm_new_typed) = realm_new_func.typed::<(), u32>(&self.store) {
-                    let ptr = realm_new_typed.call(&mut self.store, ()).map_err(|e| {
-                        error!("realm_new constructor (Pattern 1) failed: {:?}", e);
-                        anyhow::anyhow!("Failed to call realm_new constructor: {}", e)
-                    })?;
-                    debug!(
-                        "realm_new (Pattern 1) returned initialized Realm pointer: {}",
-                        ptr
-                    );
-                    ptr
+                if let Ok(realm_new_typed) = realm_new_func.typed::<(), u32>(&store) {
+                    match realm_new_typed.call(&mut store, ()) {
+                        Ok(ptr) => {
+                            debug!(
+                                "realm_new (Pattern 1) returned initialized Realm pointer: {}",
+                                ptr
+                            );
+                            Some(ptr)
+                        }
+                        Err(e) => {
+                            error!("realm_new constructor (Pattern 1) failed: {:?}", e);
+                            None
+                        }
+                    }
                 } else {
                     // Fallback to untyped call
                     use wasmtime::Val;
                     let mut results = vec![Val::I32(0)];
-                    realm_new_func
-                        .call(&mut self.store, &[], &mut results)
-                        .map_err(|e| {
+                    match realm_new_func.call(&mut store, &[], &mut results) {
+                        Ok(()) => match results[0] {
+                            Val::I32(ptr) => {
+                                debug!("realm_new (Pattern 1, untyped) returned pointer: {}", ptr);
+                                Some(ptr as u32)
+                            }
+                            Val::I64(ptr) => {
+                                debug!(
+                                    "realm_new (Pattern 1, untyped) returned I64 pointer: {}",
+                                    ptr
+                                );
+                                Some(ptr as u32)
+                            }
+                            v => {
+                                error!("Unexpected return type from realm_new: {:?}", v);
+                                None
+                            }
+                        },
+                        Err(e) => {
                             error!("realm_new constructor (Pattern 1, untyped) failed: {:?}", e);
-                            anyhow::anyhow!("Failed to call realm_new constructor: {}", e)
-                        })?;
-                    match results[0] {
-                        Val::I32(ptr) => {
-                            debug!("realm_new (Pattern 1, untyped) returned pointer: {}", ptr);
-                            ptr as u32
+                            None
                         }
-                        Val::I64(ptr) => {
-                            debug!(
-                                "realm_new (Pattern 1, untyped) returned I64 pointer: {}",
-                                ptr
-                            );
-                            ptr as u32
-                        }
-                        v => anyhow::bail!("Unexpected return type from realm_new: {:?}", v),
                     }
                 }
             } else if param_count == 1 && result_count == 0 {
-                // Pattern 3 (fragile but required): Constructor takes pointer, writes into it
-                // wasm-bindgen with --target web generates this pattern
-                // We need to allocate memory using __wbindgen_malloc and pass it to constructor
+                // Pattern 3: Constructor takes pointer, writes into it
                 warn!("realm_new has Pattern 3 signature (in-place constructor) - implementing correctly");
 
                 // Allocate memory for Realm struct using __wbindgen_malloc
-                // This ensures proper alignment and memory management
                 let realm_ptr = if let Some(malloc_func) =
-                    self.instance.get_func(&mut self.store, "__wbindgen_malloc")
+                    instance.get_func(&mut store, "__wbindgen_malloc")
                 {
-                    if let Ok(malloc_typed) = malloc_func.typed::<u32, u32>(&self.store) {
-                        // Allocate enough space for Realm struct (estimate ~200 bytes)
-                        let ptr = malloc_typed
-                            .call(&mut self.store, 200)
-                            .context("Failed to allocate memory for Realm struct")?;
-                        debug!(
-                            "Allocated Realm struct memory at pointer: {} (via __wbindgen_malloc)",
-                            ptr
-                        );
-                        ptr
+                    if let Ok(malloc_typed) = malloc_func.typed::<u32, u32>(&store) {
+                        match malloc_typed.call(&mut store, 200) {
+                            Ok(ptr) => {
+                                debug!("Allocated Realm struct memory at pointer: {} (via __wbindgen_malloc)", ptr);
+                                Some(ptr)
+                            }
+                            Err(e) => {
+                                error!("Failed to allocate memory for Realm struct: {:?}", e);
+                                None
+                            }
+                        }
                     } else {
                         use wasmtime::Val;
                         let malloc_args = vec![Val::I32(200)];
                         let mut malloc_results = vec![Val::I32(0)];
-                        malloc_func
-                            .call(&mut self.store, &malloc_args, &mut malloc_results)
-                            .context("Failed to allocate memory for Realm struct (untyped)")?;
-                        match malloc_results[0] {
-                            Val::I32(ptr) => {
-                                debug!(
-                                    "Allocated Realm struct memory at pointer: {} (untyped)",
-                                    ptr
-                                );
-                                ptr as u32
+                        match malloc_func.call(&mut store, &malloc_args, &mut malloc_results) {
+                            Ok(()) => {
+                                match malloc_results[0] {
+                                    Val::I32(ptr) => {
+                                        debug!("Allocated Realm struct memory at pointer: {} (untyped)", ptr);
+                                        Some(ptr as u32)
+                                    }
+                                    _ => {
+                                        error!("__wbindgen_malloc returned unexpected type");
+                                        None
+                                    }
+                                }
                             }
-                            _ => anyhow::bail!("__wbindgen_malloc returned unexpected type"),
+                            Err(e) => {
+                                error!(
+                                    "Failed to allocate memory for Realm struct (untyped): {:?}",
+                                    e
+                                );
+                                None
+                            }
                         }
                     }
                 } else {
-                    anyhow::bail!(
+                    error!(
                         "__wbindgen_malloc not available - cannot allocate memory for Realm struct"
                     );
+                    None
                 };
 
-                // Call constructor with allocated pointer - it will initialize the struct in-place
-                use wasmtime::Val;
-                let args = vec![Val::I32(realm_ptr as i32)];
-                let mut results = Vec::new();
-                realm_new_func
-                    .call(&mut self.store, &args, &mut results)
-                    .map_err(|e| {
-                        error!(
-                            "realm_new constructor (Pattern 3) failed with pointer {}: {:?}",
-                            realm_ptr, e
-                        );
-                        anyhow::anyhow!("Failed to initialize Realm struct: {}", e)
-                    })?;
-                debug!(
-                    "realm_new (Pattern 3) successfully initialized Realm struct at pointer: {}",
-                    realm_ptr
-                );
-                realm_ptr
+                if let Some(realm_ptr) = realm_ptr {
+                    // Call constructor with allocated pointer
+                    use wasmtime::Val;
+                    let args = vec![Val::I32(realm_ptr as i32)];
+                    let mut results = Vec::new();
+                    match realm_new_func.call(&mut store, &args, &mut results) {
+                        Ok(()) => {
+                            debug!("realm_new (Pattern 3) successfully initialized Realm struct at pointer: {}", realm_ptr);
+                            Some(realm_ptr)
+                        }
+                        Err(e) => {
+                            error!(
+                                "realm_new constructor (Pattern 3) failed with pointer {}: {:?}",
+                                realm_ptr, e
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
             } else {
-                anyhow::bail!(
-                    "realm_new has unexpected signature: {} params, {} results. \
-                    Expected Pattern 1: () -> u32 (constructor returns instance)",
-                    param_count,
-                    result_count
+                error!(
+                    "realm_new has unexpected signature: {} params, {} results. Expected Pattern 1: () -> u32",
+                    param_count, result_count
                 );
+                None
             }
         } else {
-            anyhow::bail!("realm_new function not found in WASM exports");
+            error!("realm_new function not found in WASM exports");
+            None
         };
 
-        debug!(
-            "Realm instance created and initialized with this pointer: {}",
-            realm_this
-        );
+        if realm_this.is_none() {
+            warn!(
+                "Failed to create Realm instance for tenant {} - model loading may fail",
+                tenant_id
+            );
+        } else {
+            debug!(
+                "Realm instance created for tenant {} with pointer: {:?}",
+                tenant_id, realm_this
+            );
+        }
 
-        // Get loadModel function - wasm-bindgen exports it as "realm_loadModel"
-        // Use get_func to get the raw function, then inspect its type dynamically
-        let load_model_func = self
-            .instance
-            .get_func(&mut self.store, "realm_loadModel")
-            .context("Failed to get realm_loadModel function (not found in exports)")?;
-
-        // Inspect the function type
-        let func_ty = load_model_func.ty(&self.store);
-        let param_count = func_ty.params().len();
-        let result_count = func_ty.results().len();
-
-        debug!(
-            "realm_loadModel signature: {} params, {} results",
-            param_count, result_count
-        );
-
-        // Prepare arguments: (this_ptr, model_ptr, model_len)
-        use wasmtime::Val;
-        let args = vec![
-            Val::I32(realm_this as i32),
-            Val::I32(model_ptr as i32),
-            Val::I32(model_bytes.len() as i32),
-        ];
-
-        let mut results = vec![Val::I32(0); result_count];
-        load_model_func
-            .call(&mut self.store, &args, &mut results)
-            .context("loadModel function call failed")?;
-
-        Ok(model_ptr as u32)
+        Ok(Self {
+            store,
+            instance,
+            host_context,
+            realm_this,
+            model_config: None,
+            tenant_id,
+            lora_adapter_id: None,
+            draft_model_config: None,
+            model_id: None,
+            draft_model_id: None,
+        })
     }
 
+    // DELETED: load_model_into_wasm() function (257 lines)
+    // This function violated the HOST-side storage architecture by loading
+    // entire model files (637MB+) into WASM memory, causing OOM errors.
+    //
+    // Models are now stored directly in HOST via ModelStorage::store_model()
+    // and WASM gets only the model_id (4 bytes) via loadModelById().
+
     /// Load a model into this runtime
+    ///
+    /// Models are stored in HOST memory, not WASM memory.
+    /// This function stores the model in HOST storage first, then tells WASM about it.
     pub fn load_model(&mut self, config: ModelConfig) -> Result<()> {
         info!(
             "Loading model for tenant {}: {:?}",
@@ -507,20 +415,62 @@ impl TenantRuntime {
             self.tenant_id
         );
 
-        // Load model into WASM memory at offset 0 (main model)
-        self.load_model_into_wasm(&model_bytes, 0)?;
-
-        // Get model_id from model storage (stored by realm_store_model host function)
+        // Store model in HOST memory first (not WASM memory!)
+        // This is the correct architecture: models live in HOST, WASM only gets model_id
         use realm_runtime::model_storage::get_global_model_storage;
         let model_id = {
-            let storage = get_global_model_storage().lock();
-            let models = storage.list_models();
-            models.last().copied().unwrap_or(1)
+            let mut storage = get_global_model_storage().lock();
+            storage
+                .store_model(&model_bytes, None) // Auto-generate ID from hash
+                .context("Failed to store model in HOST storage")?
         };
-        self.model_id = Some(model_id);
+
         info!(
-            "Model ID {} assigned to tenant {}",
+            "Model stored in HOST storage with ID {} (tenant: {})",
             model_id, self.tenant_id
+        );
+
+        self.model_id = Some(model_id);
+
+        // CRITICAL FIX: Don't write entire model to WASM memory!
+        // The model is already in HOST storage. Use loadModelById() to initialize WASM Realm
+        // with config/tokenizer from HOST storage, without needing model bytes.
+
+        // Get realm_this pointer (should already be created in TenantRuntime::new())
+        let realm_this = self.realm_this.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Realm instance not initialized - realm_new failed during TenantRuntime creation"
+            )
+        })?;
+
+        // Call WASM loadModelById() to initialize Realm instance with config/tokenizer from HOST
+        let load_model_by_id_func = self
+            .instance
+            .get_func(&mut self.store, "realm_loadModelById")
+            .context("Failed to get realm_loadModelById function (not found in exports)")?;
+
+        // Inspect the function type
+        let func_ty = load_model_by_id_func.ty(&self.store);
+        let param_count = func_ty.params().len();
+        let result_count = func_ty.results().len();
+
+        debug!(
+            "realm_loadModelById signature: {} params, {} results",
+            param_count, result_count
+        );
+
+        // Prepare arguments: (this_ptr, model_id)
+        use wasmtime::Val;
+        let args = vec![Val::I32(realm_this as i32), Val::I32(model_id as i32)];
+
+        let mut results = vec![Val::I32(0); result_count];
+        load_model_by_id_func
+            .call(&mut self.store, &args, &mut results)
+            .context("loadModelById function call failed")?;
+
+        info!(
+            "Model ID {} initialized in WASM via loadModelById (model in HOST storage)",
+            model_id
         );
 
         // If LoRA adapter is configured, set it for the stored model
@@ -583,27 +533,25 @@ impl TenantRuntime {
         let draft_model_bytes = std::fs::read(&config.model_path)
             .with_context(|| format!("Failed to read draft model file: {:?}", config.model_path))?;
 
-        debug!(
-            "Read {} bytes from draft model file for tenant {}",
-            draft_model_bytes.len(),
+        info!(
+            "Read {} MB from draft model file for tenant {}",
+            draft_model_bytes.len() / 1024 / 1024,
             self.tenant_id
         );
 
-        // Load draft model into WASM memory at 10MB offset to avoid conflicts with main model
-        // TODO: Consider implementing dynamic memory allocation strategy for production use
-        const DRAFT_MODEL_OFFSET: usize = 10 * 1024 * 1024; // 10MB offset
-        self.load_model_into_wasm(&draft_model_bytes, DRAFT_MODEL_OFFSET)?;
-
-        // Get draft model_id from model storage (stored by realm_store_model host function)
+        // Store draft model directly in HOST storage (no WASM involvement!)
+        // This is the correct architecture: models live in HOST, WASM only gets model_id
         use realm_runtime::model_storage::get_global_model_storage;
         let draft_model_id = {
-            let storage = get_global_model_storage().lock();
-            let models = storage.list_models();
-            models.last().copied().unwrap_or(1)
+            let mut storage = get_global_model_storage().lock();
+            storage
+                .store_model(&draft_model_bytes, None)
+                .context("Failed to store draft model in HOST storage")?
         };
+
         self.draft_model_id = Some(draft_model_id);
         info!(
-            "Draft model ID {} loaded successfully for tenant: {}",
+            "Draft model stored in HOST with ID {} for tenant {}",
             draft_model_id, self.tenant_id
         );
         Ok(())

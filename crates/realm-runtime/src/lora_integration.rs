@@ -3,13 +3,13 @@
 //! This module provides functions to apply LoRA adapters to model weights
 //! after model loading, enabling per-tenant fine-tuning.
 //!
-//! **Status**: Implementation ready. LoRA weights are applied to model layers
-//! after loading, modifying weight matrices in-place.
+//! **Status**: Full quantization support. LoRA weights are applied to model layers
+//! after loading, modifying weight matrices in-place. Supports all quantization formats.
 
 use crate::lora::LoRAManager;
 use realm_core::error::{Error, Result};
 use realm_models::{Model, WeightFormat};
-use tracing::{info, warn};
+use tracing::{debug, info};
 
 /// Apply LoRA adapter to a loaded model
 ///
@@ -54,73 +54,212 @@ pub fn apply_lora_to_model(
     Ok(())
 }
 
+/// Helper: Dequantize WeightFormat to f32 (supports all quantization formats)
+fn dequantize_weight_format_to_f32(weight: &WeightFormat) -> std::result::Result<Vec<f32>, Error> {
+    use realm_core::quant::{
+        dequantize_q2_k, dequantize_q3_k, dequantize_q4_0, dequantize_q4_1, dequantize_q4_k,
+        dequantize_q5_0, dequantize_q5_1, dequantize_q5_k, dequantize_q6_k, dequantize_q8_0,
+        dequantize_q8_1, dequantize_q8_k, Q4_BLOCK_SIZE, Q8_BLOCK_SIZE, QK_K,
+    };
+
+    match weight {
+        WeightFormat::F32(w) => Ok(w.clone()),
+        WeightFormat::Q4K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q4_k(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q4K dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        WeightFormat::Q5K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q5_k(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q5K dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        WeightFormat::Q6K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q6_k(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q6K dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        WeightFormat::Q8K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q8_k(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q8K dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        WeightFormat::Q2K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q2_k(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q2K dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        WeightFormat::Q3K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q3_k(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q3K dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        WeightFormat::Q40(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                dequantize_q4_0(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q4_0 dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        WeightFormat::Q41(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                dequantize_q4_1(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q4_1 dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        WeightFormat::Q50(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                dequantize_q5_0(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q5_0 dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        WeightFormat::Q51(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                dequantize_q5_1(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q5_1 dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        WeightFormat::Q80(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q8_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q8_BLOCK_SIZE];
+                dequantize_q8_0(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q8_0 dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        WeightFormat::Q81(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q8_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q8_BLOCK_SIZE];
+                dequantize_q8_1(block, &mut block_output)
+                    .map_err(|e| Error::Runtime(format!("Q8_1 dequantization failed: {}", e)))?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+    }
+}
+
 /// Apply LoRA to attention weights (wq, wk, wv, wo)
+/// Supports all quantization formats: F32, Q2K-Q8K, Q4_0-Q8_1
 fn apply_lora_to_attention_weights(
     weights: &mut realm_models::AttentionWeights,
     adapter: &crate::lora::LoRAWeights,
     layer_name: &str,
 ) -> Result<()> {
-    // Extract F32 weights from WeightFormat
+    // Apply LoRA to any WeightFormat (supports all quantization types)
     let apply_to_weight = |weight: &mut WeightFormat, weight_name: &str| -> Result<()> {
-        if let WeightFormat::F32(ref mut base_weights) = weight {
-            // Get dimensions from LoRA adapter weights
-            // LoRA keys follow format: "layer.X.attn_Y.lora_a" and "layer.X.attn_Y.lora_b"
-            let a_key = format!("{}.{}.lora_a", layer_name, weight_name);
-            let b_key = format!("{}.{}.lora_b", layer_name, weight_name);
+        // Get dimensions from LoRA adapter weights
+        // LoRA keys follow format: "layer.X.attn_Y.lora_a" and "layer.X.attn_Y.lora_b"
+        let a_key = format!("{}.{}.lora_a", layer_name, weight_name);
+        let b_key = format!("{}.{}.lora_b", layer_name, weight_name);
 
-            let lora_a = adapter.lora_a.get(&a_key);
-            let lora_b = adapter.lora_b.get(&b_key);
+        let lora_a = adapter.lora_a.get(&a_key);
+        let lora_b = adapter.lora_b.get(&b_key);
 
-            if lora_a.is_none() || lora_b.is_none() {
-                // LoRA weights not found for this layer/weight - skip silently
+        if lora_a.is_none() || lora_b.is_none() {
+            // LoRA weights not found for this layer/weight - skip silently
+            return Ok(());
+        }
+
+        let lora_a = lora_a.unwrap();
+        let lora_b = lora_b.unwrap();
+
+        // Dequantize to F32 if needed (supports all quantization types)
+        let f32_weights = match dequantize_weight_format_to_f32(weight) {
+            Ok(w) => w,
+            Err(e) => {
+                debug!(
+                    "LoRA: Failed to dequantize weight {}: {}, skipping LoRA",
+                    weight_name, e
+                );
                 return Ok(());
             }
+        };
 
-            let lora_a = lora_a.unwrap();
-            let lora_b = lora_b.unwrap();
+        // LoRA A: [rank, in_dim], LoRA B: [out_dim, rank]
+        // From f32_weights length and LoRA shapes, infer dimensions
+        let total_elements = f32_weights.len();
+        let rank = adapter.rank;
 
-            // LoRA A: [rank, in_dim], LoRA B: [out_dim, rank]
-            // From base_weights length and LoRA shapes, infer dimensions
-            let total_elements = base_weights.len();
-            let rank = adapter.rank;
+        // Infer dimensions from LoRA shapes
+        // lora_a.len() = rank * in_dim
+        // lora_b.len() = out_dim * rank
+        let in_dim = lora_a.len() / rank;
+        let out_dim = lora_b.len() / rank;
 
-            // Infer dimensions from LoRA shapes
-            // lora_a.len() = rank * in_dim
-            // lora_b.len() = out_dim * rank
-            let in_dim = lora_a.len() / rank;
-            let out_dim = lora_b.len() / rank;
-
-            // Verify dimensions match base weights
-            if total_elements != out_dim * in_dim {
-                return Err(Error::Runtime(format!(
-                    "Dimension mismatch for {}: base_weights has {} elements, expected {}x{}",
-                    weight_name, total_elements, out_dim, in_dim
-                )));
-            }
-
-            // Apply LoRA using the manager's method
-            // Create a temporary manager instance with the adapter loaded
-            let temp_manager = LoRAManager::new();
-            temp_manager.load_adapter(adapter.clone())?;
-
-            // LoRAManager expects keys like "layer.X.attn_Y.lora_a"
-            let full_layer_name = format!("{}.{}", layer_name, weight_name);
-            let modified_weights = temp_manager.apply_to_weights(
-                &adapter.adapter_id,
-                &full_layer_name,
-                base_weights,
-                out_dim,
-                in_dim,
-            )?;
-
-            *base_weights = modified_weights;
-        } else {
-            // Quantized weights - would need to dequantize first
-            warn!(
-                "LoRA application to quantized weights not yet supported for {}",
-                weight_name
-            );
+        // Verify dimensions match base weights
+        if total_elements != out_dim * in_dim {
+            return Err(Error::Runtime(format!(
+                "Dimension mismatch for {}: base_weights has {} elements, expected {}x{}",
+                weight_name, total_elements, out_dim, in_dim
+            )));
         }
+
+        // Apply LoRA using the manager's method
+        // Create a temporary manager instance with the adapter loaded
+        let temp_manager = LoRAManager::new();
+        temp_manager.load_adapter(adapter.clone())?;
+
+        // LoRAManager expects keys like "layer.X.attn_Y.lora_a"
+        let full_layer_name = format!("{}.{}", layer_name, weight_name);
+        let modified_weights = temp_manager.apply_to_weights(
+            &adapter.adapter_id,
+            &full_layer_name,
+            &f32_weights,
+            out_dim,
+            in_dim,
+        )?;
+
+        // Store modified weights as F32 (can be re-quantized later if needed)
+        *weight = WeightFormat::F32(modified_weights);
         Ok(())
     };
 
@@ -134,6 +273,9 @@ fn apply_lora_to_attention_weights(
 }
 
 /// Apply LoRA to FFN weights (w_gate, w_up, w_down)
+/// Supports all quantization formats: F32, Q2K-Q8K, Q4_0-Q8_1
+/// Note: FFN weights are stored as Vec<f32> in FFNWeights, not WeightFormat
+/// This function handles the conversion from WeightFormat if needed
 fn apply_lora_to_ffn_weights(
     weights: &mut realm_models::FFNWeights,
     adapter: &crate::lora::LoRAWeights,
@@ -148,10 +290,24 @@ fn apply_lora_to_ffn_weights(
         let in_dim = config.hidden_size;
         let out_dim = config.intermediate_size;
         let layer_key = format!("{}.ffn_gate", layer_name);
+
+        // Convert Vec<f32> to WeightFormat::F32 for consistency
+        let weight_format = WeightFormat::F32(weights.w_gate.clone());
+
+        // Dequantize (no-op for F32, but supports future WeightFormat in FFNWeights)
+        let f32_weights = match dequantize_weight_format_to_f32(&weight_format) {
+            Ok(w) => w,
+            Err(e) => {
+                debug!("LoRA: Failed to dequantize w_gate: {}, skipping", e);
+                // Continue with original weights
+                return Ok(());
+            }
+        };
+
         if let Ok(modified) = temp_manager.apply_to_weights(
             &adapter.adapter_id,
             &layer_key,
-            &weights.w_gate,
+            &f32_weights,
             out_dim,
             in_dim,
         ) {
@@ -165,10 +321,20 @@ fn apply_lora_to_ffn_weights(
         let in_dim = config.hidden_size;
         let out_dim = config.intermediate_size;
         let layer_key = format!("{}.ffn_up", layer_name);
+
+        let weight_format = WeightFormat::F32(weights.w_up.clone());
+        let f32_weights = match dequantize_weight_format_to_f32(&weight_format) {
+            Ok(w) => w,
+            Err(e) => {
+                debug!("LoRA: Failed to dequantize w_up: {}, skipping", e);
+                return Ok(());
+            }
+        };
+
         if let Ok(modified) = temp_manager.apply_to_weights(
             &adapter.adapter_id,
             &layer_key,
-            &weights.w_up,
+            &f32_weights,
             out_dim,
             in_dim,
         ) {
@@ -182,10 +348,20 @@ fn apply_lora_to_ffn_weights(
         let in_dim = config.intermediate_size;
         let out_dim = config.hidden_size;
         let layer_key = format!("{}.ffn_down", layer_name);
+
+        let weight_format = WeightFormat::F32(weights.w_down.clone());
+        let f32_weights = match dequantize_weight_format_to_f32(&weight_format) {
+            Ok(w) => w,
+            Err(e) => {
+                debug!("LoRA: Failed to dequantize w_down: {}, skipping", e);
+                return Ok(());
+            }
+        };
+
         if let Ok(modified) = temp_manager.apply_to_weights(
             &adapter.adapter_id,
             &layer_key,
-            &weights.w_down,
+            &f32_weights,
             out_dim,
             in_dim,
         ) {

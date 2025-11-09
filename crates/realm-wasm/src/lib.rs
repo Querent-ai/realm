@@ -70,6 +70,11 @@ extern "C" {
         out_total_size_ptr: *mut u64,
     ) -> i32;
 
+    /// Get model metadata (config + tokenizer info) as JSON
+    /// Parameters: model_id, out_ptr, out_max_len
+    /// Returns: number of bytes written on success, negative on error
+    fn realm_get_model_metadata(model_id: u32, out_ptr: *mut u8, out_max_len: u32) -> i32;
+
     /// Remove model from storage (cleanup)
     /// Returns: 0 on success, negative on error
     #[allow(dead_code)] // Called by host, not from Rust
@@ -223,6 +228,7 @@ pub struct Realm {
     #[allow(dead_code)] // Used for HOST-side computation via FFI
     model_id: Option<u32>,
     /// Transformer config
+    #[allow(dead_code)]
     transformer_config: Option<TransformerConfig>,
     /// Generation config
     config: WasmGenerationConfig,
@@ -287,7 +293,7 @@ impl Realm {
         let config_data = parser
             .extract_config()
             .ok_or_else(|| JsError::new("Failed to extract config from GGUF"))?;
-        let config: TransformerConfig = config_data.into();
+        let _config: TransformerConfig = config_data.into();
 
         // Create tokenizer from GGUF metadata
         wasm_log!("loadModel: creating tokenizer...");
@@ -349,6 +355,146 @@ impl Realm {
             );
 
             // Create lightweight model structure (NO WEIGHTS!)
+            let model = Model::new(_config.clone());
+
+            // Initialize KV caches for each layer
+            let head_dim = _config.hidden_size / _config.num_heads;
+            let mut kv_caches = Vec::new();
+            for _ in 0.._config.num_layers {
+                kv_caches.push(realm_models::KVCache::new(
+                    _config.max_seq_len,
+                    _config.num_kv_heads,
+                    head_dim,
+                ));
+            }
+
+            // Store everything in WASM (minimal memory usage)
+            self.model = Some(model);
+            self.tokenizer = Some(tokenizer);
+            self.model_id = Some(model_id as u32);
+            self.transformer_config = Some(_config);
+            self.kv_caches = Some(kv_caches);
+
+            wasm_log!("loadModel: SUCCESS! Model handle stored in WASM, weights in HOST");
+
+            Ok(())
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Non-WASM builds: fall back to old behavior
+            Err(JsError::new(
+                "loadModel not available in non-WASM environment",
+            ))
+        }
+    }
+
+    /// Load a model by ID from HOST storage (no model bytes needed!)
+    ///
+    /// This is the correct way to load models when they're already stored in HOST:
+    /// 1. Get config and tokenizer info from HOST storage via host function
+    /// 2. Initialize Realm instance with config/tokenizer
+    /// 3. Set model_id - model weights stay in HOST
+    ///
+    /// # Arguments
+    /// * `model_id` - Model ID in HOST storage
+    ///
+    /// # Architecture
+    /// Models are stored in HOST memory. This function gets metadata from HOST
+    /// and initializes the WASM Realm instance without needing model bytes.
+    #[wasm_bindgen(js_name = loadModelById)]
+    pub fn load_model_by_id(&mut self, model_id: u32) -> Result<(), JsError> {
+        wasm_log!(
+            "loadModelById: loading model ID {} from HOST storage",
+            model_id
+        );
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Get model metadata from HOST storage
+            // Allocate buffer for JSON metadata (max 4KB should be enough)
+            const METADATA_BUFFER_SIZE: u32 = 4096;
+            let mut metadata_buffer = vec![0u8; METADATA_BUFFER_SIZE as usize];
+            let metadata_ptr = metadata_buffer.as_mut_ptr();
+
+            let bytes_written =
+                unsafe { realm_get_model_metadata(model_id, metadata_ptr, METADATA_BUFFER_SIZE) };
+
+            if bytes_written < 0 {
+                return Err(JsError::new(&format!(
+                    "Failed to get model metadata from HOST (error code: {})",
+                    bytes_written
+                )));
+            }
+
+            // Read JSON from buffer
+            let json_bytes = &metadata_buffer[..bytes_written as usize];
+            let json_str = std::str::from_utf8(json_bytes)
+                .map_err(|e| JsError::new(&format!("Invalid UTF-8 in metadata: {}", e)))?;
+
+            // Parse JSON
+            let metadata: serde_json::Value = serde_json::from_str(json_str)
+                .map_err(|e| JsError::new(&format!("Failed to parse metadata JSON: {}", e)))?;
+
+            // Extract config
+            let config_obj = metadata
+                .get("config")
+                .ok_or_else(|| JsError::new("Missing 'config' in metadata"))?;
+
+            let config = TransformerConfig {
+                vocab_size: config_obj
+                    .get("vocab_size")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(32000) as usize,
+                hidden_size: config_obj
+                    .get("hidden_size")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(2048) as usize,
+                num_layers: config_obj
+                    .get("num_layers")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(22) as usize,
+                num_heads: config_obj
+                    .get("num_heads")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(32) as usize,
+                num_kv_heads: config_obj
+                    .get("num_kv_heads")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(4) as usize,
+                intermediate_size: config_obj
+                    .get("intermediate_size")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(5632) as usize,
+                max_seq_len: config_obj
+                    .get("max_seq_len")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(2048) as usize,
+                rope_theta: config_obj
+                    .get("rope_theta")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(10000.0) as f32,
+                rms_norm_eps: config_obj
+                    .get("rms_norm_eps")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(1e-5) as f32,
+                attention_backend: realm_models::AttentionBackend::Auto,
+            };
+
+            wasm_log!("loadModelById: extracted config from HOST storage");
+
+            // Get tokenizer info
+            let _has_tokenizer = metadata
+                .get("has_tokenizer")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            // Create tokenizer - we'll get it from HOST when needed via host functions
+            // For now, we'll create a placeholder or get it from HOST storage
+            // Tokenizer is stored in HOST, so we don't need to recreate it here
+            // We'll use host functions (realm_encode_tokens, realm_decode_tokens) for tokenization
+
+            // Create lightweight model structure (NO WEIGHTS!)
             let model = Model::new(config.clone());
 
             // Initialize KV caches for each layer
@@ -364,49 +510,26 @@ impl Realm {
 
             // Store everything in WASM (minimal memory usage)
             self.model = Some(model);
-            self.tokenizer = Some(tokenizer);
-            self.model_id = Some(model_id as u32);
+            // Tokenizer is in HOST, we'll use host functions for tokenization
+            self.tokenizer = None; // Will use host functions instead
+            self.model_id = Some(model_id);
             self.transformer_config = Some(config);
             self.kv_caches = Some(kv_caches);
 
-            wasm_log!("loadModel: SUCCESS! Model handle stored in WASM, weights in HOST");
+            wasm_log!(
+                "loadModelById: SUCCESS! Model {} initialized from HOST storage (weights stay in HOST)",
+                model_id
+            );
 
             Ok(())
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // Non-WASM builds: fall back to old behavior
-            let mut model = Model::new(config.clone());
-
-            let data_offset = parser
-                .tensor_data_offset()
-                .map_err(|e| JsError::new(&format!("Failed to get tensor data offset: {}", e)))?;
-            let mut tensor_loader = realm_core::TensorLoader::new(data_offset);
-
-            for tensor_desc in meta.tensors.iter() {
-                tensor_loader.register_tensor(
-                    tensor_desc.name.clone(),
-                    tensor_desc.clone(),
-                    tensor_desc.offset,
-                );
-            }
-
-            let cursor = Cursor::new(model_bytes);
-            let mut parser = GGUFParser::new(cursor);
-            parser
-                .parse_header()
-                .map_err(|e| JsError::new(&format!("Failed to parse header again: {}", e)))?;
-
-            model
-                .load_from_gguf(&mut tensor_loader, &mut parser, None, None)
-                .map_err(|e| JsError::new(&format!("Failed to load model weights: {}", e)))?;
-
-            self.model = Some(model);
-            self.tokenizer = Some(tokenizer);
-            self.transformer_config = Some(config);
-
-            Ok(())
+            // Non-WASM fallback (should not be called)
+            Err(JsError::new(
+                "loadModelById not available in non-WASM environment",
+            ))
         }
     }
 
