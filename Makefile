@@ -167,7 +167,7 @@ e2e-server: ## Start server for e2e tests (runs in background)
 		fi; \
 		if [ -n "$$WASM_FILE" ] && [ -n "$$MODEL_FILE" ]; then \
 			echo "  Starting with WASM: $$WASM_FILE and model: $$MODEL_FILE"; \
-			./target/release/realm serve \
+			RUST_LOG=debug ./target/release/realm serve \
 				--wasm "$$WASM_FILE" \
 				--model "$$MODEL_FILE" \
 				--host 127.0.0.1 \
