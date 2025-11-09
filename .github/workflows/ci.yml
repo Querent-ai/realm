@@ -296,7 +296,7 @@ jobs:
   e2e:
     name: 🧪 E2E Tests
     runs-on: ubuntu-latest
-    needs: [wasm, build]
+    needs: [build]
     timeout-minutes: 20
     env:
       MODEL_NAME: tinyllama-1.1b.Q4_K_M.gguf
@@ -392,24 +392,17 @@ jobs:
           echo "✅ Model file verified: $MODEL_PATH"
           ls -lh "$MODEL_PATH"
 
-      - name: Download WASM artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: realm-wasm
-          path: crates/realm-wasm/pkg/
+      - name: Build WASM for server (with server feature)
+        run: |
+          echo "🌐 Building WASM with server feature for E2E tests..."
+          cd crates/realm-wasm && wasm-pack build --target web --no-default-features --features server --out-dir pkg-server && cd ../..
+          echo "✅ Server WASM build complete"
 
       - name: Build server
         run: |
           echo "🏗️ Building server..."
           cargo build --release --bin realm
           echo "✅ Server build complete"
-
-      - name: Build WASM (if not from artifact)
-        if: failure()
-        run: |
-          echo "🌐 Building WASM (fallback)..."
-          cd crates/realm-wasm && wasm-pack build --target web && cd ../..
-          echo "✅ WASM build complete"
 
       - name: Install e2e dependencies
         run: |
