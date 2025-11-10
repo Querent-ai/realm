@@ -29,7 +29,7 @@ build-metal: ## Build with Metal support (macOS only)
 	cargo build --release --features metal
 
 test: ## Run all tests
-	cargo test --workspace
+	cargo test --workspace --features memory64-host
 
 test-cuda: ## Run tests with CUDA
 	cargo test --workspace --features cuda

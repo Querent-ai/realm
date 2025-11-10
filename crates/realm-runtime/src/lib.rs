@@ -18,6 +18,9 @@ pub mod weight_format;
 #[cfg(feature = "memory64-host")]
 pub mod memory64_host;
 
+#[cfg(all(test, feature = "memory64-host"))]
+mod memory64_host_tests;
+
 // Host function context API
 #[cfg(feature = "memory64-host")]
 pub mod host_functions;

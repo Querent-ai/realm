@@ -95,6 +95,19 @@ impl TenantRuntime {
         // The proper solution would be to build WASM without wasm-bindgen for server use.
 
         // First, check for table imports and provide them
+        // CRITICAL: We must skip "env" module imports - they are real host functions!
+        let mut env_imports = std::collections::HashSet::new();
+        for import in wasm_module.imports() {
+            let (module, name) = (import.module(), import.name());
+            if module == "env" {
+                env_imports.insert(name.to_string());
+                debug!(
+                    "Found env::{} import - will NOT stub (real host function)",
+                    name
+                );
+            }
+        }
+
         for import in wasm_module.imports() {
             let module = import.module();
             let name = import.name();
@@ -164,6 +177,15 @@ impl TenantRuntime {
 
             // Handle function imports
             if let wasmtime::ExternType::Func(func_ty) = import.ty() {
+                // CRITICAL: Skip "env" module - these are real host functions already registered!
+                if module == "env" {
+                    debug!(
+                        "Skipping stub for env::{} - already registered as real host function",
+                        name
+                    );
+                    continue;
+                }
+
                 let param_count = func_ty.params().len();
                 let result_count = func_ty.results().len();
 
@@ -400,6 +422,12 @@ impl TenantRuntime {
     /// Models are stored in HOST memory, not WASM memory.
     /// This function stores the model in HOST storage first, then tells WASM about it.
     pub fn load_model(&mut self, config: ModelConfig) -> Result<()> {
+        error!(
+            "🔍 load_model ENTRY: tenant={}, model_path={:?}",
+            self.tenant_id, config.model_path
+        );
+        error!("🔍 realm_this before load: {:?}", self.realm_this);
+
         info!(
             "Loading model for tenant {}: {:?}",
             self.tenant_id, config.model_path
@@ -436,18 +464,36 @@ impl TenantRuntime {
         // The model is already in HOST storage. Use loadModelById() to initialize WASM Realm
         // with config/tokenizer from HOST storage, without needing model bytes.
 
+        error!(
+            "🔍 After storing model_id={}, checking realm_this...",
+            model_id
+        );
+        error!("🔍 realm_this value: {:?}", self.realm_this);
+
         // Get realm_this pointer (should already be created in TenantRuntime::new())
         let realm_this = self.realm_this.ok_or_else(|| {
+            error!("❌ realm_this is None! Realm instance not initialized");
             anyhow::anyhow!(
                 "Realm instance not initialized - realm_new failed during TenantRuntime creation"
             )
         })?;
 
+        error!("✅ Got realm_this={} for model_id={}", realm_this, model_id);
+
         // Call WASM loadModelById() to initialize Realm instance with config/tokenizer from HOST
-        let load_model_by_id_func = self
+        // wasm-bindgen exports methods as "realm_<method_name>" with "this" pointer as first arg
+        error!("🔍 Looking for realm_loadModelById function in WASM exports");
+        let load_model_by_id_func = if let Some(func) = self
             .instance
             .get_func(&mut self.store, "realm_loadModelById")
-            .context("Failed to get realm_loadModelById function (not found in exports)")?;
+        {
+            error!("✅ Found realm_loadModelById function");
+            func
+        } else {
+            error!("⚠️ realm_loadModelById not found, trying realm_load_model_by_id");
+            self.instance.get_func(&mut self.store, "realm_load_model_by_id")
+                .context("Failed to get loadModelById function (tried realm_loadModelById and realm_load_model_by_id)")?
+        };
 
         // Inspect the function type
         let func_ty = load_model_by_id_func.ty(&self.store);
@@ -463,10 +509,54 @@ impl TenantRuntime {
         use wasmtime::Val;
         let args = vec![Val::I32(realm_this as i32), Val::I32(model_id as i32)];
 
+        error!(
+            "🚀 Calling loadModelById: realm_this={}, model_id={}, signature={} params, {} results, args={:?}",
+            realm_this, model_id, param_count, result_count, args
+        );
+
         let mut results = vec![Val::I32(0); result_count];
-        load_model_by_id_func
-            .call(&mut self.store, &args, &mut results)
-            .context("loadModelById function call failed")?;
+        match load_model_by_id_func.call(&mut self.store, &args, &mut results) {
+            Ok(()) => {
+                debug!("loadModelById call succeeded, results: {:?}", results);
+                // wasm-bindgen methods that return Result<(), JsError> trap on error
+                // If we get here, the call succeeded (no trap occurred)
+            }
+            Err(e) => {
+                // wasm-bindgen traps on error - extract the error message if possible
+                let error_msg = format!("{}", e);
+                error!(
+                    "loadModelById function call trapped: {} (realm_this: {}, model_id: {})",
+                    error_msg, realm_this, model_id
+                );
+
+                // Check if this is a model lookup error by checking if model exists
+                use realm_runtime::model_storage::get_global_model_storage;
+                let model_exists = {
+                    let storage = get_global_model_storage().lock();
+                    storage.get_model(model_id).is_ok()
+                };
+
+                if !model_exists {
+                    let available_ids: Vec<u32> = {
+                        let storage = get_global_model_storage().lock();
+                        storage.list_models()
+                    };
+                    error!(
+                        "Model {} not found in storage. Available IDs: {:?}",
+                        model_id, available_ids
+                    );
+                    return Err(anyhow::anyhow!(
+                        "loadModelById failed: Model {} not found in storage (available: {:?}). Trap: {}",
+                        model_id, available_ids, error_msg
+                    ));
+                }
+
+                return Err(anyhow::anyhow!(
+                    "loadModelById function call trapped: {}",
+                    error_msg
+                ));
+            }
+        }
 
         info!(
             "Model ID {} initialized in WASM via loadModelById (model in HOST storage)",

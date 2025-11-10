@@ -1379,6 +1379,7 @@ impl Memory64Runtime {
         // Parameters: model_id, out_ptr, out_max_len
         // Returns: number of bytes written on success, negative on error
         // The JSON contains: config (TransformerConfig) and tokenizer metadata
+        debug!("Registering host function: env::realm_get_model_metadata");
         linker.func_wrap(
             "env",
             "realm_get_model_metadata",
@@ -1387,9 +1388,15 @@ impl Memory64Runtime {
                   out_ptr: u32,
                   out_max_len: u32|
                   -> i32 {
+                info!("🔍 realm_get_model_metadata CALLED: model_id={}, out_ptr={}, out_max_len={}", model_id, out_ptr, out_max_len);
+
                 // Get WASM memory
                 let wasm_memory = match caller.get_export("memory") {
-                    Some(Extern::Memory(mem)) => mem,
+                    Some(Extern::Memory(mem)) => {
+                        let mem_size = mem.data_size(&caller);
+                        debug!("realm_get_model_metadata: Got WASM memory, size={}", mem_size);
+                        mem
+                    }
                     _ => {
                         error!("realm_get_model_metadata: No WASM memory export");
                         return -1;
@@ -1416,18 +1423,32 @@ impl Memory64Runtime {
                 use crate::model_storage::get_global_model_storage;
                 let (config, has_tokenizer) = {
                     let storage = get_global_model_storage().lock();
+                    debug!("realm_get_model_metadata: Looking up model_id {} in storage", model_id);
                     let model = match storage.get_model(model_id) {
-                        Ok(m) => m,
+                        Ok(m) => {
+                            debug!("realm_get_model_metadata: Model {} found in storage", model_id);
+                            m
+                        }
                         Err(e) => {
                             error!(
                                 "realm_get_model_metadata: Model {} not found: {}",
                                 model_id, e
+                            );
+                            // List available model IDs for debugging
+                            let available_ids: Vec<u32> = storage.list_models();
+                            error!(
+                                "realm_get_model_metadata: Available model IDs: {:?}",
+                                available_ids
                             );
                             return -4;
                         }
                     };
                     let config = model.extract_config();
                     let has_tokenizer = model.tokenizer().is_some();
+                    debug!(
+                        "realm_get_model_metadata: Model {} has config: vocab_size={}, hidden_size={}, num_layers={}",
+                        model_id, config.vocab_size, config.hidden_size, config.num_layers
+                    );
                     (config, has_tokenizer)
                 };
 
@@ -1480,7 +1501,9 @@ impl Memory64Runtime {
 
                 json_bytes.len() as i32
             },
-        )?;
+        )
+        .context("Failed to register realm_get_model_metadata host function")?;
+        debug!("Successfully registered env::realm_get_model_metadata");
 
         // Host function: Remove model from storage (cleanup)
         // Parameters: model_id

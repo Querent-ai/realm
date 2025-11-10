@@ -114,6 +114,7 @@ extern "C" {
     /// Store draft model for speculative decoding
     /// Parameters: gguf_ptr, gguf_len, draft_model_id (WASM memory offsets)
     /// Returns: draft_model_id on success (> 0), negative on error
+    #[allow(dead_code)]
     fn realm_store_draft_model(gguf_ptr: *const u8, gguf_len: u32, draft_model_id: u32) -> i32;
 
     /// Forward through a complete transformer layer (HOST-SIDE COMPUTATION)
@@ -405,7 +406,7 @@ impl Realm {
     #[wasm_bindgen(js_name = loadModelById)]
     pub fn load_model_by_id(&mut self, model_id: u32) -> Result<(), JsError> {
         wasm_log!(
-            "loadModelById: loading model ID {} from HOST storage",
+            "🚀 loadModelById ENTRY: loading model ID {} from HOST storage",
             model_id
         );
 
@@ -417,15 +418,31 @@ impl Realm {
             let mut metadata_buffer = vec![0u8; METADATA_BUFFER_SIZE as usize];
             let metadata_ptr = metadata_buffer.as_mut_ptr();
 
+            wasm_log!("📞 loadModelById: About to call realm_get_model_metadata for model_id {}, buffer_ptr={:p}, buffer_size={}", model_id, metadata_ptr, METADATA_BUFFER_SIZE);
+
             let bytes_written =
                 unsafe { realm_get_model_metadata(model_id, metadata_ptr, METADATA_BUFFER_SIZE) };
 
+            wasm_log!(
+                "✅ loadModelById: realm_get_model_metadata returned {} bytes",
+                bytes_written
+            );
+
             if bytes_written < 0 {
+                wasm_log!(
+                    "loadModelById: realm_get_model_metadata failed with error code: {}",
+                    bytes_written
+                );
                 return Err(JsError::new(&format!(
                     "Failed to get model metadata from HOST (error code: {})",
                     bytes_written
                 )));
             }
+
+            wasm_log!(
+                "loadModelById: received {} bytes of metadata",
+                bytes_written
+            );
 
             // Read JSON from buffer
             let json_bytes = &metadata_buffer[..bytes_written as usize];
