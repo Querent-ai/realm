@@ -11,6 +11,8 @@
 use realm_core::{GGUFParser, Tokenizer};
 use realm_models::{GenerationConfig, Model, TransformerConfig};
 use std::io::Cursor;
+
+// Always import wasm_bindgen for the attribute macro, but conditionally use it
 use wasm_bindgen::prelude::*;
 
 // ========================================
@@ -173,10 +175,27 @@ extern "C" {
     ///   - token_len: Length of token string in bytes
     /// Returns: 0 on success, negative on error
     fn realm_stream_token(token_ptr: *const u8, token_len: u32) -> i32;
+
+    /// Generate text on HOST side (all heavy computation in HOST)
+    /// This is the production pattern: WASM orchestrates, HOST computes
+    /// Parameters:
+    ///   - model_id: Model ID in HOST storage
+    ///   - prompt_ptr: Pointer to prompt string in WASM memory
+    ///   - prompt_len: Length of prompt string in bytes
+    ///   - out_ptr: Pointer to output buffer in WASM memory
+    ///   - out_max_len: Maximum length of output buffer in bytes
+    /// Returns: number of bytes written on success, negative on error
+    fn realm_host_generate(
+        model_id: u32,
+        prompt_ptr: *const u8,
+        prompt_len: u32,
+        out_ptr: *mut u8,
+        out_max_len: u32,
+    ) -> i32;
 }
 
 /// Generation configuration for WASM API
-#[wasm_bindgen]
+#[cfg_attr(not(feature = "server"), wasm_bindgen)]
 #[derive(Clone)]
 pub struct WasmGenerationConfig {
     pub max_tokens: usize,
@@ -186,9 +205,9 @@ pub struct WasmGenerationConfig {
     pub repetition_penalty: f32,
 }
 
-#[wasm_bindgen]
+#[cfg_attr(not(feature = "server"), wasm_bindgen)]
 impl WasmGenerationConfig {
-    #[wasm_bindgen(constructor)]
+    #[cfg_attr(not(feature = "server"), wasm_bindgen(constructor))]
     pub fn new() -> Self {
         Self {
             max_tokens: 100,
@@ -219,7 +238,7 @@ impl From<WasmGenerationConfig> for GenerationConfig {
 }
 
 /// Realm WASM instance
-#[wasm_bindgen]
+#[cfg_attr(not(feature = "server"), wasm_bindgen)]
 pub struct Realm {
     /// Lightweight model structure (no weights in WASM!)
     model: Option<Model>,
@@ -238,13 +257,13 @@ pub struct Realm {
     kv_caches: Option<Vec<realm_models::KVCache>>,
 }
 
-#[wasm_bindgen]
+#[cfg_attr(not(feature = "server"), wasm_bindgen)]
 impl Realm {
     /// Create a new Realm instance
     ///
     /// Returns a fully-initialized Realm instance (Pattern 1: constructor returns instance)
     /// This ensures wasm-bindgen generates the correct signature: () -> u32
-    #[wasm_bindgen(constructor)]
+    #[cfg_attr(not(feature = "server"), wasm_bindgen(constructor))]
     pub fn new() -> Realm {
         // Set up better panic messages for WASM debugging (web mode only)
         #[cfg(all(target_arch = "wasm32", not(feature = "server")))]
@@ -274,7 +293,7 @@ impl Realm {
     ///
     /// Before: 637MB quantized → 2.5GB f32 in WASM → OOM
     /// After:  637MB stays in HOST, WASM has 4-byte handle → ~50MB total
-    #[wasm_bindgen(js_name = loadModel)]
+    #[cfg_attr(not(feature = "server"), wasm_bindgen(js_name = loadModel))]
     pub fn load_model(&mut self, model_bytes: &[u8]) -> Result<(), JsError> {
         wasm_log!("loadModel: received {} bytes", model_bytes.len());
 
@@ -403,7 +422,7 @@ impl Realm {
     /// # Architecture
     /// Models are stored in HOST memory. This function gets metadata from HOST
     /// and initializes the WASM Realm instance without needing model bytes.
-    #[wasm_bindgen(js_name = loadModelById)]
+    #[cfg_attr(not(feature = "server"), wasm_bindgen(js_name = loadModelById))]
     pub fn load_model_by_id(&mut self, model_id: u32) -> Result<(), JsError> {
         wasm_log!(
             "🚀 loadModelById ENTRY: loading model ID {} from HOST storage",
@@ -551,13 +570,13 @@ impl Realm {
     }
 
     /// Check if model is loaded
-    #[wasm_bindgen(js_name = isLoaded)]
+    #[cfg_attr(not(feature = "server"), wasm_bindgen(js_name = isLoaded))]
     pub fn is_loaded(&self) -> bool {
         self.model.is_some() && self.tokenizer.is_some()
     }
 
     /// Set generation configuration
-    #[wasm_bindgen(js_name = setConfig)]
+    #[cfg_attr(not(feature = "server"), wasm_bindgen(js_name = setConfig))]
     pub fn set_config(&mut self, config: WasmGenerationConfig) {
         self.config = config;
     }
@@ -989,7 +1008,7 @@ impl Realm {
     }
 
     /// Get model vocabulary size
-    #[wasm_bindgen(js_name = vocabSize)]
+    #[cfg_attr(not(feature = "server"), wasm_bindgen(js_name = vocabSize))]
     pub fn vocab_size(&self) -> Result<usize, JsError> {
         self.tokenizer
             .as_ref()
@@ -998,7 +1017,7 @@ impl Realm {
     }
 
     /// Get model configuration as JSON string
-    #[wasm_bindgen(js_name = getModelConfig)]
+    #[cfg_attr(not(feature = "server"), wasm_bindgen(js_name = getModelConfig))]
     pub fn get_model_config(&self) -> Result<String, JsError> {
         self.model
             .as_ref()
@@ -1096,5 +1115,118 @@ mod tests {
             let result = realm_mut.generate("test".to_string());
             assert!(result.is_err());
         }
+    }
+}
+
+// ========================================
+// Server-Side C-ABI Exports (for Wasmtime)
+// ========================================
+// These exports are for server-side use with Wasmtime.
+// wasm-bindgen exports are for JavaScript/web use only.
+
+// Global model ID for server builds (tracks currently loaded model)
+#[cfg(feature = "server")]
+static mut GLOBAL_MODEL_ID: u32 = 0;
+
+#[cfg(feature = "server")]
+#[no_mangle]
+pub extern "C" fn realm_new() -> u32 {
+    // Create a new Realm instance and return pointer
+    // For simplicity, we'll use Box::into_raw to get a stable pointer
+    let realm = Box::new(Realm::new());
+    Box::into_raw(realm) as u32
+}
+
+#[cfg(feature = "server")]
+#[no_mangle]
+pub extern "C" fn realm_load_model_by_id(realm_ptr: u32, model_id: u32) -> i32 {
+    // Reconstruct Realm from pointer
+    let realm = unsafe { &mut *(realm_ptr as *mut Realm) };
+
+    wasm_log!("📥 realm_load_model_by_id: Setting model_id={}", model_id);
+
+    // Store model_id globally so generate() can access it
+    unsafe {
+        GLOBAL_MODEL_ID = model_id;
+    }
+
+    // Call the load_model_by_id method
+    match realm.load_model_by_id(model_id) {
+        Ok(()) => {
+            wasm_log!(
+                "✅ realm_load_model_by_id: Model {} loaded successfully",
+                model_id
+            );
+            0 // Success
+        }
+        Err(e) => {
+            wasm_log!("realm_load_model_by_id ERROR: {:?}", e);
+            -1 // Error
+        }
+    }
+}
+
+#[cfg(feature = "server")]
+#[no_mangle]
+pub extern "C" fn generate(prompt_ptr: u32, prompt_len: u32) -> u32 {
+    // This is the PRODUCTION PATTERN for server-side WASM:
+    // - WASM provides isolation and lightweight orchestration
+    // - HOST does all heavy computation (model inference)
+    //
+    // Flow: realm-server -> WASM generate() -> HOST realm_host_generate() -> result
+
+    wasm_log!(
+        "🎯 generate() WASM entry: prompt_ptr={}, prompt_len={}",
+        prompt_ptr,
+        prompt_len
+    );
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Get model_id from global variable (set by realm_load_model_by_id)
+        let model_id = unsafe { GLOBAL_MODEL_ID };
+
+        if model_id == 0 {
+            wasm_log!("❌ generate: No model loaded (model_id = 0)");
+            return 0;
+        }
+
+        wasm_log!("📦 generate: Using model_id={}", model_id);
+
+        // Allocate output buffer (10KB should be enough for most responses)
+        const OUTPUT_BUFFER_SIZE: u32 = 10240;
+        let mut output_buffer = vec![0u8; OUTPUT_BUFFER_SIZE as usize];
+        let output_ptr = output_buffer.as_mut_ptr();
+
+        // Call HOST function to do actual generation
+        let bytes_written = unsafe {
+            realm_host_generate(
+                model_id,
+                prompt_ptr as *const u8,
+                prompt_len,
+                output_ptr,
+                OUTPUT_BUFFER_SIZE,
+            )
+        };
+
+        if bytes_written < 0 {
+            wasm_log!(
+                "❌ realm_host_generate failed with error code: {}",
+                bytes_written
+            );
+            return 0; // Return null pointer on error
+        }
+
+        wasm_log!("✅ generate: HOST returned {} bytes", bytes_written);
+
+        // Return pointer to output buffer
+        // Note: realm-server expects to read this from WASM memory
+        output_ptr as u32
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        wasm_log!("generate() called on non-WASM target");
+        0
     }
 }

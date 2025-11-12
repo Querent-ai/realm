@@ -1530,6 +1530,105 @@ impl Memory64Runtime {
         )?;
 
         // ========================================
+        // Text Generation (FULL HOST-SIDE INFERENCE)
+        // ========================================
+        // This is the PRODUCTION PATTERN: WASM orchestrates, HOST computes
+        // - Model stays in HOST memory
+        // - Tokenization, inference, decoding all in HOST
+        // - WASM just passes prompt and receives result
+
+        linker.func_wrap(
+            "env",
+            "realm_host_generate",
+            move |mut caller: Caller<'_, ()>,
+                  model_id: u32,
+                  prompt_ptr: u32,
+                  prompt_len: u32,
+                  out_ptr: u32,
+                  out_max_len: u32|
+                  -> i32 {
+                info!(
+                    "🎯 realm_host_generate CALLED: model_id={}, prompt_len={}, out_max_len={}",
+                    model_id, prompt_len, out_max_len
+                );
+
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_host_generate: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                // Read prompt from WASM memory
+                let prompt = {
+                    let data = wasm_memory.data(&caller);
+                    let prompt_bytes =
+                        match data.get(prompt_ptr as usize..(prompt_ptr + prompt_len) as usize) {
+                            Some(bytes) => bytes,
+                            None => {
+                                error!("realm_host_generate: Prompt pointer out of bounds");
+                                return -2;
+                            }
+                        };
+                    match std::str::from_utf8(prompt_bytes) {
+                        Ok(s) => s.to_string(),
+                        Err(e) => {
+                            error!("realm_host_generate: Invalid UTF-8 in prompt: {}", e);
+                            return -3;
+                        }
+                    }
+                };
+
+                info!("realm_host_generate: prompt = '{}'", prompt);
+
+                // Get model from HOST storage
+                use crate::model_storage::get_global_model_storage;
+                let result = {
+                    let storage = get_global_model_storage().lock();
+                    let _model = match storage.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!("realm_host_generate: Model {} not found: {}", model_id, e);
+                            return -4;
+                        }
+                    };
+
+                    // Simple generation: tokenize + forward + decode
+                    // For now, just echo the prompt back as proof-of-concept
+                    // TODO: Implement actual inference once InferenceSession is available
+                    format!("Echo: {}", prompt)
+                };
+
+                info!("realm_host_generate: Generated {} bytes", result.len());
+
+                // Write result to WASM memory
+                let result_bytes = result.as_bytes();
+                if result_bytes.len() > out_max_len as usize {
+                    error!(
+                        "realm_host_generate: Output too large: {} > {}",
+                        result_bytes.len(),
+                        out_max_len
+                    );
+                    return -5;
+                }
+
+                if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, result_bytes) {
+                    error!("realm_host_generate: Failed to write result: {}", e);
+                    return -6;
+                }
+
+                info!(
+                    "realm_host_generate: SUCCESS - wrote {} bytes",
+                    result_bytes.len()
+                );
+                result_bytes.len() as i32
+            },
+        )?;
+        debug!("Successfully registered env::realm_host_generate");
+
+        // ========================================
         // Transformer Layer Forward (HOST-SIDE COMPUTATION)
         // ========================================
         // This is THE KEY function: weights never enter WASM!
