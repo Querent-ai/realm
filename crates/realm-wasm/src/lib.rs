@@ -182,6 +182,7 @@ extern "C" {
     ///   - model_id: Model ID in HOST storage
     ///   - prompt_ptr: Pointer to prompt string in WASM memory
     ///   - prompt_len: Length of prompt string in bytes
+    ///   - options_ptr: Pointer to GenOptions in WASM memory (can be null for defaults)
     ///   - out_ptr: Pointer to output buffer in WASM memory
     ///   - out_max_len: Maximum length of output buffer in bytes
     /// Returns: number of bytes written on success, negative on error
@@ -189,6 +190,7 @@ extern "C" {
         model_id: u32,
         prompt_ptr: *const u8,
         prompt_len: u32,
+        options_ptr: u32, // WASM memory offset to GenOptions (0 = use defaults)
         out_ptr: *mut u8,
         out_max_len: u32,
     ) -> i32;
@@ -1128,6 +1130,28 @@ mod tests {
 #[cfg(feature = "server")]
 static mut GLOBAL_MODEL_ID: u32 = 0;
 
+// Global output buffer for server builds
+// This must be static so the pointer remains valid after generate() returns
+// The server reads from this buffer after the WASM function returns
+#[cfg(feature = "server")]
+static mut OUTPUT_BUFFER: [u8; 10240] = [0u8; 10240];
+
+// Generation options (matches realm_runtime::inference::GenOptions)
+// Defined here to avoid dependency on realm_runtime in WASM
+#[cfg(feature = "server")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct GenOptions {
+    pub max_tokens: u32,
+    pub temperature: f32,
+    pub top_p: f32,
+    pub top_k: u32,
+    pub repetition_penalty: f32,
+    pub seed: u32,
+    pub stop_token_count: u8,
+    pub stop_tokens_ptr: u32,
+}
+
 #[cfg(feature = "server")]
 #[no_mangle]
 pub extern "C" fn realm_new() -> u32 {
@@ -1193,17 +1217,38 @@ pub extern "C" fn generate(prompt_ptr: u32, prompt_len: u32) -> u32 {
 
         wasm_log!("📦 generate: Using model_id={}", model_id);
 
-        // Allocate output buffer (10KB should be enough for most responses)
+        // Create default generation options
+        // Note: For now, we use defaults. In the future, options can be passed
+        // from the caller via a separate function or parameter.
+        let options = GenOptions {
+            max_tokens: 512,
+            temperature: 0.7,
+            top_p: 0.9,
+            top_k: 40,
+            repetition_penalty: 1.1,
+            seed: 42,
+            stop_token_count: 0,
+            stop_tokens_ptr: 0,
+        };
+
+        // Use static output buffer so pointer remains valid after function returns
+        // The server reads from this buffer after generate() returns
         const OUTPUT_BUFFER_SIZE: u32 = 10240;
-        let mut output_buffer = vec![0u8; OUTPUT_BUFFER_SIZE as usize];
-        let output_ptr = output_buffer.as_mut_ptr();
+        let output_ptr = unsafe { OUTPUT_BUFFER.as_mut_ptr() };
+
+        // Pass options pointer to HOST
+        // GenOptions is #[repr(C)] so it's safe to pass as a pointer
+        // The options variable stays on the stack during the call, so it's safe
+        let options_ptr = &options as *const GenOptions as u32;
 
         // Call HOST function to do actual generation
+        // Note: options must stay alive during the call (it's on the stack, so it's safe)
         let bytes_written = unsafe {
             realm_host_generate(
                 model_id,
                 prompt_ptr as *const u8,
                 prompt_len,
+                options_ptr, // WASM memory offset to GenOptions struct
                 output_ptr,
                 OUTPUT_BUFFER_SIZE,
             )

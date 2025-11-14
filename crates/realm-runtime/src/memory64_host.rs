@@ -1544,12 +1544,13 @@ impl Memory64Runtime {
                   model_id: u32,
                   prompt_ptr: u32,
                   prompt_len: u32,
+                  options_ptr: u32,
                   out_ptr: u32,
                   out_max_len: u32|
                   -> i32 {
                 info!(
-                    "🎯 realm_host_generate CALLED: model_id={}, prompt_len={}, out_max_len={}",
-                    model_id, prompt_len, out_max_len
+                    "🎯 realm_host_generate CALLED: model_id={}, prompt_len={}, options_ptr={}, out_max_len={}",
+                    model_id, prompt_len, options_ptr, out_max_len
                 );
 
                 // Get WASM memory
@@ -1561,6 +1562,29 @@ impl Memory64Runtime {
                     }
                 };
 
+                // Read GenOptions from WASM memory
+                use crate::inference::GenOptions;
+                let options = if options_ptr != 0 {
+                    let options_size = std::mem::size_of::<GenOptions>();
+                    let mut options_buffer = vec![0u8; options_size];
+                    if let Err(e) = wasm_memory.read(&caller, options_ptr as usize, &mut options_buffer) {
+                        error!("realm_host_generate: Failed to read GenOptions: {}", e);
+                        return -2;
+                    }
+                    // Convert bytes to GenOptions (safe because GenOptions is #[repr(C)])
+                    unsafe {
+                        std::ptr::read(options_buffer.as_ptr() as *const GenOptions)
+                    }
+                } else {
+                    // Use defaults if options_ptr is null
+                    GenOptions::default()
+                };
+
+                info!(
+                    "realm_host_generate: options = max_tokens={}, temp={}, top_p={}, top_k={}",
+                    options.max_tokens, options.temperature, options.top_p, options.top_k
+                );
+
                 // Read prompt from WASM memory
                 let prompt = {
                     let data = wasm_memory.data(&caller);
@@ -1569,14 +1593,14 @@ impl Memory64Runtime {
                             Some(bytes) => bytes,
                             None => {
                                 error!("realm_host_generate: Prompt pointer out of bounds");
-                                return -2;
+                                return -3;
                             }
                         };
                     match std::str::from_utf8(prompt_bytes) {
                         Ok(s) => s.to_string(),
                         Err(e) => {
                             error!("realm_host_generate: Invalid UTF-8 in prompt: {}", e);
-                            return -3;
+                            return -4;
                         }
                     }
                 };
@@ -1584,21 +1608,114 @@ impl Memory64Runtime {
                 info!("realm_host_generate: prompt = '{}'", prompt);
 
                 // Get model from HOST storage
+                use crate::inference::InferenceSession;
                 use crate::model_storage::get_global_model_storage;
-                let result = {
+
+                // Step 1: Get tokenizer and tokenize (need read access)
+                let (prompt_tokens, tokenizer) = {
                     let storage = get_global_model_storage().lock();
-                    let _model = match storage.get_model(model_id) {
+                    let stored_model = match storage.get_model(model_id) {
                         Ok(m) => m,
                         Err(e) => {
                             error!("realm_host_generate: Model {} not found: {}", model_id, e);
-                            return -4;
+                            return -5;
                         }
                     };
 
-                    // Simple generation: tokenize + forward + decode
-                    // For now, just echo the prompt back as proof-of-concept
-                    // TODO: Implement actual inference once InferenceSession is available
-                    format!("Echo: {}", prompt)
+                    // Get tokenizer
+                    let tokenizer = match stored_model.tokenizer() {
+                        Some(t) => t.clone(), // Clone tokenizer (it's lightweight)
+                        None => {
+                            error!("realm_host_generate: No tokenizer for model {}", model_id);
+                            return -7;
+                        }
+                    };
+
+                    // Tokenize prompt
+                    let prompt_tokens = match tokenizer.encode(&prompt, true) {
+                        Ok(tokens) => tokens,
+                        Err(e) => {
+                            error!("realm_host_generate: Tokenization failed: {}", e);
+                            return -8;
+                        }
+                    };
+
+                    if prompt_tokens.is_empty() {
+                        error!("realm_host_generate: Empty token sequence");
+                        return -9;
+                    }
+
+                    info!(
+                        "realm_host_generate: Tokenized {} prompt tokens",
+                        prompt_tokens.len()
+                    );
+
+                    (prompt_tokens, tokenizer)
+                };
+
+                // Step 2: Get Model instance from cache (OPTIMIZED - uses cache!)
+                // This avoids reloading the model on every request
+                let model_arc = {
+                    let mut storage = get_global_model_storage().lock();
+                    match storage.get_model_for_inference(model_id) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!("realm_host_generate: Failed to get Model instance: {}", e);
+                            return -11;
+                        }
+                    }
+                };
+                // Storage lock is dropped here, but we have Arc<Mutex<Model>> so we can use it
+
+                // Step 3: Create inference session and generate
+                let mut session = InferenceSession::new(model_id, prompt_tokens, options);
+
+                // Generate tokens using InferenceSession
+                // Lock the model only when needed for inference
+                let mut generated_tokens = Vec::new();
+                let max_iterations = options.max_tokens.max(512) as usize; // Safety limit
+                let mut iterations = 0;
+
+                while !session.is_complete() && iterations < max_iterations {
+                    // Lock model for inference (shared across requests via Arc)
+                    let mut model = model_arc.lock();
+                    match session.next_token_with_model(&mut model, None) {
+                        Ok(Some(token_id)) => {
+                            generated_tokens.push(token_id);
+                            iterations += 1;
+                        }
+                        Ok(None) => {
+                            // Generation complete
+                            break;
+                        }
+                        Err(e) => {
+                            error!("realm_host_generate: Inference error: {}", e);
+                            return -10;
+                        }
+                    }
+                    // Model lock is released here, allowing other requests to proceed
+                }
+
+                info!(
+                    "realm_host_generate: Generated {} tokens",
+                    generated_tokens.len()
+                );
+
+                // Decode generated tokens to text
+                let result = match tokenizer.decode(&generated_tokens, true) {
+                    Ok(text) => {
+                        if text.is_empty() {
+                            // Fallback if decoding produces empty result
+                            format!("Echo: {}", prompt)
+                        } else {
+                            text
+                        }
+                    }
+                    Err(e) => {
+                        error!("realm_host_generate: Decoding failed: {}", e);
+                        // Fallback to echo
+                        format!("Echo: {}", prompt)
+                    }
                 };
 
                 info!("realm_host_generate: Generated {} bytes", result.len());

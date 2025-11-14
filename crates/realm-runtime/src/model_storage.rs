@@ -36,6 +36,7 @@ use realm_core::Tokenizer;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// Quantized tensor stored in host memory
@@ -88,6 +89,9 @@ pub struct StoredModel {
     pub lora_adapter_id: Option<String>,
     /// Tokenizer for this model (for tokenization host functions)
     pub tokenizer: Option<Tokenizer>,
+    /// Original GGUF bytes (for loading Model instances for inference)
+    /// This is optional - if None, Model loading will fail
+    pub gguf_bytes: Option<Vec<u8>>,
 }
 
 impl StoredModel {
@@ -100,7 +104,76 @@ impl StoredModel {
             total_size: 0,
             lora_adapter_id: None,
             tokenizer: None,
+            gguf_bytes: None,
         }
+    }
+
+    /// Set GGUF bytes (for Model loading)
+    pub fn set_gguf_bytes(&mut self, bytes: Vec<u8>) {
+        self.gguf_bytes = Some(bytes);
+    }
+
+    /// Get GGUF bytes
+    pub fn gguf_bytes(&self) -> Option<&[u8]> {
+        self.gguf_bytes.as_deref()
+    }
+
+    /// Load a realm_models::Model instance from stored GGUF bytes
+    ///
+    /// This creates a fully-loaded Model instance that can be used for inference.
+    /// Requires GGUF bytes to be stored (via set_gguf_bytes).
+    pub fn load_model_instance(&self) -> Result<realm_models::Model> {
+        use realm_core::formats::gguf::GGUFParser;
+        use realm_core::tensor_loader::TensorLoader;
+        use std::io::Cursor;
+
+        let gguf_bytes = self
+            .gguf_bytes
+            .as_ref()
+            .ok_or_else(|| anyhow!("No GGUF bytes stored for model {}", self.id))?;
+
+        // Parse GGUF header
+        let cursor = Cursor::new(gguf_bytes);
+        let mut parser = GGUFParser::new(cursor);
+        parser
+            .parse_header()
+            .context("Failed to parse GGUF header")?;
+
+        // Extract config
+        let config_data = parser
+            .extract_config()
+            .ok_or_else(|| anyhow!("Failed to extract config"))?;
+        let config: realm_models::TransformerConfig = config_data.into();
+
+        // Get tensor data offset
+        let data_offset = parser
+            .tensor_data_offset()
+            .context("Failed to get tensor data offset")?;
+
+        // Create tensor loader and register all tensors
+        let mut tensor_loader = TensorLoader::new(data_offset);
+        for tensor_desc in &self.metadata.tensors {
+            tensor_loader.register_tensor(
+                tensor_desc.name.clone(),
+                tensor_desc.clone(),
+                tensor_desc.offset,
+            );
+        }
+
+        // Re-parse for loading (parser needs to be reset)
+        let cursor = Cursor::new(gguf_bytes);
+        let mut parser = GGUFParser::new(cursor);
+        parser
+            .parse_header()
+            .context("Failed to re-parse GGUF header")?;
+
+        // Create and load model
+        let mut model = realm_models::Model::new(config);
+        model
+            .load_from_gguf(&mut tensor_loader, &mut parser, None, None)
+            .context("Failed to load model weights")?;
+
+        Ok(model)
     }
 
     /// Set tokenizer for this model
@@ -240,6 +313,10 @@ pub struct ModelStorage {
     next_id: u32,
     /// Model ID counter (for auto-generation)
     counter: u32,
+    /// Cached loaded Model instances (for inference)
+    /// This avoids reloading models on every inference request
+    /// Uses Arc<Mutex<>> to allow sharing across threads while dropping storage lock
+    model_cache: HashMap<u32, Arc<Mutex<realm_models::Model>>>,
 }
 
 impl Default for ModelStorage {
@@ -255,7 +332,54 @@ impl ModelStorage {
             models: HashMap::new(),
             next_id: 1,
             counter: 1,
+            model_cache: HashMap::new(),
         }
+    }
+
+    /// Get or load a Model instance for inference
+    ///
+    /// This will use the cached instance if available, otherwise load from GGUF bytes.
+    /// Returns Arc<Mutex<Model>> so it can be shared across threads and the storage lock
+    /// can be dropped before inference.
+    pub fn get_model_for_inference(
+        &mut self,
+        model_id: u32,
+    ) -> Result<Arc<Mutex<realm_models::Model>>> {
+        // Check cache first
+        if let Some(cached) = self.model_cache.get(&model_id) {
+            debug!("Using cached Model instance (model_id: {})", model_id);
+            return Ok(cached.clone());
+        }
+
+        // Load from stored model
+        let stored_model = self
+            .get_model(model_id)
+            .context("Model not found in storage")?;
+
+        let model = stored_model
+            .load_model_instance()
+            .context("Failed to load model instance from GGUF bytes")?;
+
+        info!(
+            "Loaded Model instance for inference (model_id: {}) - caching for future requests",
+            model_id
+        );
+        let model_arc = Arc::new(Mutex::new(model));
+        self.model_cache.insert(model_id, model_arc.clone());
+
+        Ok(model_arc)
+    }
+
+    /// Clear model cache (useful for memory management)
+    pub fn clear_model_cache(&mut self) {
+        let count = self.model_cache.len();
+        self.model_cache.clear();
+        info!("Cleared {} cached Model instances", count);
+    }
+
+    /// Remove a model from cache (called when model is removed)
+    pub fn remove_from_cache(&mut self, model_id: u32) {
+        self.model_cache.remove(&model_id);
     }
 
     /// Store a model from GGUF bytes
@@ -295,6 +419,14 @@ impl ModelStorage {
 
         // Create stored model
         let mut stored_model = StoredModel::new(model_id, meta.clone());
+
+        // Store GGUF bytes for Model loading (needed for inference)
+        stored_model.set_gguf_bytes(gguf_bytes.to_vec());
+        debug!(
+            "GGUF bytes stored for model {} ({} bytes)",
+            model_id,
+            gguf_bytes.len()
+        );
 
         // Create and store tokenizer from metadata
         match Tokenizer::from_gguf(&meta) {
@@ -372,6 +504,7 @@ impl ModelStorage {
         self.models
             .remove(&model_id)
             .ok_or_else(|| anyhow!("Model {} not found", model_id))?;
+        self.remove_from_cache(model_id);
         info!("Removed model {}", model_id);
         Ok(())
     }
