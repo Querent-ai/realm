@@ -478,88 +478,12 @@ impl TenantRuntime {
             )
         })?;
 
-        error!("✅ Got realm_this={} for model_id={}", realm_this, model_id);
+        info!("✅ Got realm_this={} for model_id={}", realm_this, model_id);
 
-        // Call WASM loadModelById() to initialize Realm instance with config/tokenizer from HOST
-        // wasm-bindgen exports methods as "realm_<method_name>" with "this" pointer as first arg
-        error!("🔍 Looking for realm_loadModelById function in WASM exports");
-        let load_model_by_id_func = if let Some(func) = self
-            .instance
-            .get_func(&mut self.store, "realm_loadModelById")
-        {
-            error!("✅ Found realm_loadModelById function");
-            func
-        } else {
-            error!("⚠️ realm_loadModelById not found, trying realm_load_model_by_id");
-            self.instance.get_func(&mut self.store, "realm_load_model_by_id")
-                .context("Failed to get loadModelById function (tried realm_loadModelById and realm_load_model_by_id)")?
-        };
-
-        // Inspect the function type
-        let func_ty = load_model_by_id_func.ty(&self.store);
-        let param_count = func_ty.params().len();
-        let result_count = func_ty.results().len();
-
-        debug!(
-            "realm_loadModelById signature: {} params, {} results",
-            param_count, result_count
-        );
-
-        // Prepare arguments: (this_ptr, model_id)
-        use wasmtime::Val;
-        let args = vec![Val::I32(realm_this as i32), Val::I32(model_id as i32)];
-
-        error!(
-            "🚀 Calling loadModelById: realm_this={}, model_id={}, signature={} params, {} results, args={:?}",
-            realm_this, model_id, param_count, result_count, args
-        );
-
-        let mut results = vec![Val::I32(0); result_count];
-        match load_model_by_id_func.call(&mut self.store, &args, &mut results) {
-            Ok(()) => {
-                debug!("loadModelById call succeeded, results: {:?}", results);
-                // wasm-bindgen methods that return Result<(), JsError> trap on error
-                // If we get here, the call succeeded (no trap occurred)
-            }
-            Err(e) => {
-                // wasm-bindgen traps on error - extract the error message if possible
-                let error_msg = format!("{}", e);
-                error!(
-                    "loadModelById function call trapped: {} (realm_this: {}, model_id: {})",
-                    error_msg, realm_this, model_id
-                );
-
-                // Check if this is a model lookup error by checking if model exists
-                use realm_runtime::model_storage::get_global_model_storage;
-                let model_exists = {
-                    let storage = get_global_model_storage().lock();
-                    storage.get_model(model_id).is_ok()
-                };
-
-                if !model_exists {
-                    let available_ids: Vec<u32> = {
-                        let storage = get_global_model_storage().lock();
-                        storage.list_models()
-                    };
-                    error!(
-                        "Model {} not found in storage. Available IDs: {:?}",
-                        model_id, available_ids
-                    );
-                    return Err(anyhow::anyhow!(
-                        "loadModelById failed: Model {} not found in storage (available: {:?}). Trap: {}",
-                        model_id, available_ids, error_msg
-                    ));
-                }
-
-                return Err(anyhow::anyhow!(
-                    "loadModelById function call trapped: {}",
-                    error_msg
-                ));
-            }
-        }
-
+        // SKIP calling load_model_by_id - we'll pass model_id directly to generate() instead
+        // This avoids the WASM export issue with wasm-bindgen stripping no_mangle functions
         info!(
-            "Model ID {} initialized in WASM via loadModelById (model in HOST storage)",
+            "Model ID {} stored in HOST storage. Will pass model_id directly to generate()",
             model_id
         );
 
@@ -655,12 +579,6 @@ impl TenantRuntime {
 
         debug!("Generating for tenant {}: '{}'", self.tenant_id, prompt);
 
-        // Get the generate function from WASM
-        let generate = self
-            .instance
-            .get_typed_func::<(u32, u32), u32>(&mut self.store, "generate")
-            .context("Failed to get generate function from WASM")?;
-
         // Allocate memory for prompt
         let memory = self
             .instance
@@ -674,17 +592,103 @@ impl TenantRuntime {
             .write(&mut self.store, prompt_ptr, prompt_bytes)
             .context("Failed to write prompt to WASM memory")?;
 
-        // Call generate(prompt_ptr, prompt_len) -> result_ptr
-        let result_ptr = generate
-            .call(
-                &mut self.store,
-                (prompt_ptr as u32, prompt_bytes.len() as u32),
+        // Get model_id (should be set by load_model)
+        let model_id = self
+            .model_id
+            .ok_or_else(|| anyhow!("No model_id set. Call load_model() first."))?;
+
+        // Get the generate function from WASM (now takes model_id as third parameter)
+        // Try "generate" first (C-ABI), fallback to "realm_generate" (wasm-bindgen)
+        let generate_func = if let Some(func) = self.instance.get_func(&mut self.store, "generate")
+        {
+            debug!("Found 'generate' function (C-ABI)");
+            func
+        } else if let Some(func) = self.instance.get_func(&mut self.store, "realm_generate") {
+            debug!("Found 'realm_generate' function (wasm-bindgen)");
+            func
+        } else {
+            return Err(anyhow!(
+                "Failed to find generate function (tried: 'generate', 'realm_generate')"
+            ));
+        };
+
+        let func_ty = generate_func.ty(&self.store);
+        let param_count = func_ty.params().len();
+
+        debug!("generate function signature: {} params", param_count);
+
+        // Create default GenOptions in WASM memory
+        use realm_runtime::GenOptions;
+        let default_options = GenOptions::default();
+
+        // Write GenOptions to WASM memory (after prompt, before output buffer)
+        let options_ptr = (prompt_ptr + prompt_bytes.len() + 1024) as u32; // Offset after prompt
+        let options_bytes = unsafe {
+            std::slice::from_raw_parts(
+                &default_options as *const GenOptions as *const u8,
+                std::mem::size_of::<GenOptions>(),
             )
-            .context("generate function call failed")?;
+        };
+        memory
+            .write(&mut self.store, options_ptr as usize, options_bytes)
+            .context("Failed to write GenOptions to WASM memory")?;
+
+        // Use typed call if 4 params (with options), otherwise fallback
+        let result_ptr = if param_count == 4 {
+            let generate = self
+                .instance
+                .get_typed_func::<(u32, u32, u32, u32), u32>(&mut self.store, "generate")
+                .context("Failed to get typed generate function")?;
+            generate
+                .call(
+                    &mut self.store,
+                    (
+                        prompt_ptr as u32,
+                        prompt_bytes.len() as u32,
+                        model_id,
+                        options_ptr,
+                    ),
+                )
+                .context("generate function call failed")?
+        } else if param_count == 3 {
+            // 3-param version (without options - use defaults)
+            let generate = self
+                .instance
+                .get_typed_func::<(u32, u32, u32), u32>(&mut self.store, "generate")
+                .context("Failed to get typed generate function")?;
+            generate
+                .call(
+                    &mut self.store,
+                    (prompt_ptr as u32, prompt_bytes.len() as u32, model_id),
+                )
+                .context("generate function call failed")?
+        } else {
+            // Fallback for 2-param version (old signature)
+            use wasmtime::Val;
+            let args = vec![
+                Val::I32(prompt_ptr as i32),
+                Val::I32(prompt_bytes.len() as i32),
+            ];
+            let mut results = vec![Val::I32(0); func_ty.results().len()];
+            generate_func
+                .call(&mut self.store, &args, &mut results)
+                .context("generate function call failed")?;
+            if let Some(Val::I32(ptr)) = results.first() {
+                *ptr as u32
+            } else {
+                return Err(anyhow!("generate returned unexpected result type"));
+            }
+        };
+
+        // Check if result_ptr is 0 (error case)
+        if result_ptr == 0 {
+            return Err(anyhow!(
+                "WASM generate() returned null pointer (error occurred)"
+            ));
+        }
 
         // Read result from memory
-        // The result should be a null-terminated string or we need to know the length
-        // For simplicity, we'll read up to 10KB and find the null terminator
+        // The result should be a null-terminated string
         let mut result_bytes = vec![0u8; 10240];
         memory
             .read(&self.store, result_ptr as usize, &mut result_bytes)
@@ -695,6 +699,12 @@ impl TenantRuntime {
             .iter()
             .position(|&b| b == 0)
             .unwrap_or(result_bytes.len());
+
+        // If result is empty or all zeros, it's an error
+        if result_len == 0 {
+            return Err(anyhow!("WASM generate() returned empty result"));
+        }
+
         let result_str = String::from_utf8_lossy(&result_bytes[..result_len]).to_string();
 
         debug!(

@@ -1720,30 +1720,142 @@ impl Memory64Runtime {
 
                 info!("realm_host_generate: Generated {} bytes", result.len());
 
-                // Write result to WASM memory
+                // Write result to WASM memory (null-terminated for server compatibility)
                 let result_bytes = result.as_bytes();
-                if result_bytes.len() > out_max_len as usize {
+                let result_len = result_bytes.len();
+
+                // Check if result fits (need space for null terminator)
+                if result_len + 1 > out_max_len as usize {
                     error!(
                         "realm_host_generate: Output too large: {} > {}",
-                        result_bytes.len(),
+                        result_len + 1,
                         out_max_len
                     );
                     return -5;
                 }
 
+                // Write result bytes
                 if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, result_bytes) {
                     error!("realm_host_generate: Failed to write result: {}", e);
                     return -6;
                 }
 
+                // Write null terminator
+                let null_terminator_ptr = (out_ptr as usize) + result_len;
+                if let Err(e) = wasm_memory.write(&mut caller, null_terminator_ptr, &[0u8]) {
+                    error!("realm_host_generate: Failed to write null terminator: {}", e);
+                    return -6;
+                }
+
                 info!(
-                    "realm_host_generate: SUCCESS - wrote {} bytes",
-                    result_bytes.len()
+                    "realm_host_generate: SUCCESS - wrote {} bytes (null-terminated)",
+                    result_len + 1
                 );
-                result_bytes.len() as i32
+                (result_len + 1) as i32
             },
         )?;
         debug!("Successfully registered env::realm_host_generate");
+
+        // ========================================
+        // realm_host_load_model_by_name
+        // ========================================
+        // Allows WASM to dynamically load models by name
+        // HOST handles file I/O and storage, returns model_id
+        debug!("Registering host function: env::realm_host_load_model_by_name");
+        linker.func_wrap(
+            "env",
+            "realm_host_load_model_by_name",
+            move |mut caller: Caller<'_, ()>, model_name_ptr: u32, model_name_len: u32| -> i32 {
+                info!(
+                    "🎯 realm_host_load_model_by_name CALLED: name_ptr={}, name_len={}",
+                    model_name_ptr, model_name_len
+                );
+
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_host_load_model_by_name: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                // Read model name from WASM memory
+                let model_name = {
+                    let data = wasm_memory.data(&caller);
+                    let name_bytes = match data
+                        .get(model_name_ptr as usize..(model_name_ptr + model_name_len) as usize)
+                    {
+                        Some(bytes) => bytes,
+                        None => {
+                            error!(
+                                "realm_host_load_model_by_name: Model name pointer out of bounds"
+                            );
+                            return -2;
+                        }
+                    };
+                    match std::str::from_utf8(name_bytes) {
+                        Ok(s) => s.to_string(),
+                        Err(e) => {
+                            error!(
+                                "realm_host_load_model_by_name: Invalid UTF-8 in model name: {}",
+                                e
+                            );
+                            return -3;
+                        }
+                    }
+                };
+
+                info!(
+                    "realm_host_load_model_by_name: Loading model '{}'",
+                    model_name
+                );
+
+                // HOST handles file I/O - construct model path
+                // TODO: Add model registry/name mapping for production
+                let model_path = format!("models/{}.gguf", model_name);
+
+                // Read model file
+                let model_bytes = match std::fs::read(&model_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        error!(
+                            "realm_host_load_model_by_name: Failed to read model file '{}': {}",
+                            model_path, e
+                        );
+                        return -4;
+                    }
+                };
+
+                info!(
+                    "realm_host_load_model_by_name: Read {} bytes from '{}'",
+                    model_bytes.len(),
+                    model_path
+                );
+
+                // Store in HOST storage
+                use crate::model_storage::get_global_model_storage;
+                let model_id = {
+                    let mut storage = get_global_model_storage().lock();
+                    match storage.store_model(&model_bytes, None) {
+                        Ok(id) => id,
+                        Err(e) => {
+                            error!(
+                                "realm_host_load_model_by_name: Failed to store model: {}",
+                                e
+                            );
+                            return -5;
+                        }
+                    }
+                };
+
+                info!(
+                    "realm_host_load_model_by_name: Model stored with ID {}",
+                    model_id
+                );
+                model_id as i32
+            },
+        )?;
+        debug!("Successfully registered env::realm_host_load_model_by_name");
 
         // ========================================
         // Transformer Layer Forward (HOST-SIDE COMPUTATION)

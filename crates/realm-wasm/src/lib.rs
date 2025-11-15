@@ -194,6 +194,10 @@ extern "C" {
         out_ptr: *mut u8,
         out_max_len: u32,
     ) -> i32;
+
+    /// Load a model by name from HOST storage
+    /// Returns model_id (>0) on success, negative on error
+    fn realm_host_load_model_by_name(model_name_ptr: *const u8, model_name_len: u32) -> i32;
 }
 
 /// Generation configuration for WASM API
@@ -1153,6 +1157,22 @@ struct GenOptions {
 }
 
 #[cfg(feature = "server")]
+impl Default for GenOptions {
+    fn default() -> Self {
+        Self {
+            max_tokens: 512,
+            temperature: 0.7,
+            top_p: 0.9,
+            top_k: 40,
+            repetition_penalty: 1.1,
+            seed: 0,
+            stop_token_count: 0,
+            stop_tokens_ptr: 0,
+        }
+    }
+}
+
+#[cfg(feature = "server")]
 #[no_mangle]
 pub extern "C" fn realm_new() -> u32 {
     // Create a new Realm instance and return pointer
@@ -1161,94 +1181,152 @@ pub extern "C" fn realm_new() -> u32 {
     Box::into_raw(realm) as u32
 }
 
+// Export as C-ABI using no_mangle (same pattern as realm_new and generate)
 #[cfg(feature = "server")]
 #[no_mangle]
-pub extern "C" fn realm_load_model_by_id(realm_ptr: u32, model_id: u32) -> i32 {
-    // Reconstruct Realm from pointer
-    let realm = unsafe { &mut *(realm_ptr as *mut Realm) };
-
-    wasm_log!("📥 realm_load_model_by_id: Setting model_id={}", model_id);
-
-    // Store model_id globally so generate() can access it
+pub extern "C" fn realm_load_model_by_id(_realm_ptr: u32, model_id: u32) -> i32 {
     unsafe {
         GLOBAL_MODEL_ID = model_id;
     }
+    0
+}
 
-    // Call the load_model_by_id method
-    match realm.load_model_by_id(model_id) {
-        Ok(()) => {
-            wasm_log!(
-                "✅ realm_load_model_by_id: Model {} loaded successfully",
-                model_id
-            );
-            0 // Success
+/// Load a model by name (WASM orchestration)
+/// This allows WASM to dynamically choose which model to use
+/// HOST handles file I/O and storage, returns model_id
+#[cfg(feature = "server")]
+#[no_mangle]
+pub extern "C" fn load_model_by_name(model_name_ptr: u32, model_name_len: u32) -> i32 {
+    wasm_log!(
+        "📦 load_model_by_name: Loading model (name_ptr={}, len={})",
+        model_name_ptr,
+        model_name_len
+    );
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Read model name from WASM memory
+        let model_name = unsafe {
+            let slice =
+                std::slice::from_raw_parts(model_name_ptr as *const u8, model_name_len as usize);
+            match std::str::from_utf8(slice) {
+                Ok(s) => s,
+                Err(e) => {
+                    wasm_log!("load_model_by_name: Invalid UTF-8: {}", e);
+                    return -1;
+                }
+            }
+        };
+
+        wasm_log!("load_model_by_name: Model name = '{}'", model_name);
+
+        // Call HOST to load model (HOST handles file I/O and storage)
+        let model_id =
+            unsafe { realm_host_load_model_by_name(model_name_ptr as *const u8, model_name_len) };
+
+        if model_id < 0 {
+            wasm_log!("load_model_by_name: HOST returned error code: {}", model_id);
+            return model_id;
         }
-        Err(e) => {
-            wasm_log!("realm_load_model_by_id ERROR: {:?}", e);
-            -1 // Error
+
+        wasm_log!("load_model_by_name: Model loaded with ID: {}", model_id);
+
+        // Store model_id globally for generate() to use
+        unsafe {
+            GLOBAL_MODEL_ID = model_id as u32;
         }
+
+        model_id
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        wasm_log!("load_model_by_name: Not on wasm32 target");
+        -1
     }
 }
 
 #[cfg(feature = "server")]
 #[no_mangle]
-pub extern "C" fn generate(prompt_ptr: u32, prompt_len: u32) -> u32 {
+pub extern "C" fn generate(
+    prompt_ptr: u32,
+    prompt_len: u32,
+    model_id: u32,
+    options_ptr: u32,
+) -> u32 {
     // This is the PRODUCTION PATTERN for server-side WASM:
     // - WASM provides isolation and lightweight orchestration
     // - HOST does all heavy computation (model inference)
     //
     // Flow: realm-server -> WASM generate() -> HOST realm_host_generate() -> result
+    //
+    // Parameters:
+    //   - prompt_ptr: Pointer to prompt string in WASM memory
+    //   - prompt_len: Length of prompt string in bytes
+    //   - model_id: Model ID (0 = use GLOBAL_MODEL_ID)
+    //   - options_ptr: Pointer to GenOptions in WASM memory (0 = use defaults)
 
     wasm_log!(
-        "🎯 generate() WASM entry: prompt_ptr={}, prompt_len={}",
+        "🎯 generate() WASM entry: prompt_ptr={}, prompt_len={}, model_id={}, options_ptr={}",
         prompt_ptr,
-        prompt_len
+        prompt_len,
+        model_id,
+        options_ptr
     );
 
     #[cfg(target_arch = "wasm32")]
     {
-        // Get model_id from global variable (set by realm_load_model_by_id)
-        let model_id = unsafe { GLOBAL_MODEL_ID };
-
-        if model_id == 0 {
-            wasm_log!("❌ generate: No model loaded (model_id = 0)");
-            return 0;
-        }
-
-        wasm_log!("📦 generate: Using model_id={}", model_id);
-
-        // Create default generation options
-        // Note: For now, we use defaults. In the future, options can be passed
-        // from the caller via a separate function or parameter.
-        let options = GenOptions {
-            max_tokens: 512,
-            temperature: 0.7,
-            top_p: 0.9,
-            top_k: 40,
-            repetition_penalty: 1.1,
-            seed: 42,
-            stop_token_count: 0,
-            stop_tokens_ptr: 0,
+        // Use model_id from parameter, fallback to global if 0
+        let actual_model_id = if model_id == 0 {
+            let global_id = unsafe { GLOBAL_MODEL_ID };
+            if global_id == 0 {
+                wasm_log!("❌ generate: No model loaded (model_id = 0 and GLOBAL_MODEL_ID = 0)");
+                return 0;
+            }
+            global_id
+        } else {
+            model_id
         };
+
+        wasm_log!("📦 generate: Using model_id={}", actual_model_id);
+
+        // Read GenOptions from WASM memory if provided, otherwise use defaults
+        let options = if options_ptr != 0 {
+            unsafe {
+                // GenOptions is #[repr(C)] so it's safe to read directly
+                let options_ref = &*(options_ptr as *const GenOptions);
+                *options_ref
+            }
+        } else {
+            wasm_log!("📦 generate: Using default GenOptions (options_ptr = 0)");
+            GenOptions::default()
+        };
+
+        wasm_log!(
+            "📦 generate: GenOptions = max_tokens={}, temp={}, top_p={}, top_k={}",
+            options.max_tokens,
+            options.temperature,
+            options.top_p,
+            options.top_k
+        );
 
         // Use static output buffer so pointer remains valid after function returns
         // The server reads from this buffer after generate() returns
         const OUTPUT_BUFFER_SIZE: u32 = 10240;
         let output_ptr = unsafe { OUTPUT_BUFFER.as_mut_ptr() };
 
-        // Pass options pointer to HOST
-        // GenOptions is #[repr(C)] so it's safe to pass as a pointer
-        // The options variable stays on the stack during the call, so it's safe
-        let options_ptr = &options as *const GenOptions as u32;
+        // Pass options pointer to HOST (convert to WASM memory offset)
+        // We need to create a copy on the stack since options_ptr might be invalid after return
+        let options_on_stack = options;
+        let options_ptr_for_host = &options_on_stack as *const GenOptions as u32;
 
         // Call HOST function to do actual generation
-        // Note: options must stay alive during the call (it's on the stack, so it's safe)
+        // Note: options_on_stack stays alive during the call (it's on the stack, so it's safe)
         let bytes_written = unsafe {
             realm_host_generate(
-                model_id,
+                actual_model_id,
                 prompt_ptr as *const u8,
                 prompt_len,
-                options_ptr, // WASM memory offset to GenOptions struct
+                options_ptr_for_host, // WASM memory offset to GenOptions struct
                 output_ptr,
                 OUTPUT_BUFFER_SIZE,
             )
