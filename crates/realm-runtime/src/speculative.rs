@@ -152,4 +152,51 @@ mod tests {
         let result = decoder.decode(&[1, 2, 3], 10);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_speculative_decoder_generate() {
+        // Create mock draft and target models
+        struct MockDraftModel;
+        struct MockTargetModel;
+
+        impl DraftModel for MockDraftModel {
+            fn generate_draft(&mut self, _prompt: &[u32], k: usize) -> Result<Vec<u32>> {
+                // Generate k draft tokens
+                Ok((0..k).map(|i| i as u32 + 100).collect())
+            }
+        }
+
+        impl TargetModel for MockTargetModel {
+            fn verify_draft(&mut self, _prompt: &[u32], draft_tokens: &[u32]) -> Result<Vec<u32>> {
+                // Accept all draft tokens (simplified)
+                Ok(draft_tokens.to_vec())
+            }
+        }
+
+        let config = SpeculativeConfig {
+            draft_k: 4,
+            max_draft_tokens: 8,
+        };
+
+        let mut decoder = SpeculativeDecoder::new(MockDraftModel, MockTargetModel, config);
+
+        let prompt = vec![1, 2, 3];
+        let result = decoder.generate(&prompt, 10);
+
+        assert!(result.is_ok());
+        let generated = result.unwrap();
+        // Should generate some tokens (exact count depends on implementation)
+        assert!(!generated.is_empty());
+    }
+
+    #[test]
+    fn test_speculative_config_custom() {
+        let config = SpeculativeConfig {
+            draft_k: 8,
+            max_draft_tokens: 16,
+        };
+
+        assert_eq!(config.draft_k, 8);
+        assert_eq!(config.max_draft_tokens, 16);
+    }
 }

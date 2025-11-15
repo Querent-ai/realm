@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 pub struct BatchedRequest {
     pub request_id: u64,
     pub prompt_tokens: Vec<u32>,
+    pub prompt_text: Option<String>, // Store original prompt text for reconstruction
     pub generated_tokens: Vec<u32>,
     pub max_tokens: usize,
     pub is_complete: bool,
@@ -22,6 +23,38 @@ impl BatchedRequest {
         Self {
             request_id,
             prompt_tokens,
+            prompt_text: None,
+            generated_tokens: Vec::new(),
+            max_tokens,
+            is_complete: false,
+        }
+    }
+
+    /// Create a new batched request with prompt text
+    ///
+    /// This creates a batched request with the original prompt text stored for proper
+    /// reconstruction during batch processing. The prompt text is used to reconstruct
+    /// the full sequence when processing batched requests, ensuring accurate tokenization
+    /// and generation.
+    ///
+    /// # Parameters
+    /// - `request_id`: Unique identifier for this request
+    /// - `prompt_tokens`: Tokenized prompt as a vector of token IDs
+    /// - `prompt_text`: Original prompt text (stored for reconstruction)
+    /// - `max_tokens`: Maximum number of tokens to generate
+    ///
+    /// # Returns
+    /// A new `BatchedRequest` instance with the prompt text stored in `prompt_text` field.
+    pub fn with_prompt_text(
+        request_id: u64,
+        prompt_tokens: Vec<u32>,
+        prompt_text: String,
+        max_tokens: usize,
+    ) -> Self {
+        Self {
+            request_id,
+            prompt_tokens,
+            prompt_text: Some(prompt_text),
             generated_tokens: Vec::new(),
             max_tokens,
             is_complete: false,
@@ -233,5 +266,80 @@ mod tests {
         // Request should be marked complete
         let batch = batcher.get_batch();
         assert_eq!(batch.len(), 0); // Completed request should not be in batch
+    }
+
+    #[test]
+    fn test_batched_request_with_prompt_text() {
+        let req = BatchedRequest::with_prompt_text(
+            1,
+            vec![1, 2, 3],
+            "What is the capital of France?".to_string(),
+            100,
+        );
+
+        assert_eq!(req.request_id, 1);
+        assert_eq!(req.prompt_tokens, vec![1, 2, 3]);
+        assert_eq!(
+            req.prompt_text,
+            Some("What is the capital of France?".to_string())
+        );
+        assert_eq!(req.max_tokens, 100);
+        assert!(!req.is_complete);
+    }
+
+    #[test]
+    fn test_batch_stats() {
+        let batcher = ContinuousBatcher::new(32, 2048);
+
+        let req1 = BatchedRequest::new(1, vec![1, 2, 3], 100);
+        let req2 = BatchedRequest::new(2, vec![4, 5, 6, 7], 100);
+        batcher.add_request(req1).unwrap();
+        batcher.add_request(req2).unwrap();
+
+        let stats = batcher.stats();
+        assert_eq!(stats.total_requests, 2);
+        assert_eq!(stats.active_requests, 2);
+        assert_eq!(stats.average_sequence_length, 3); // (3 + 4) / 2 = 3.5 -> 3 (integer division)
+    }
+
+    #[test]
+    fn test_batch_max_size() {
+        let batcher = ContinuousBatcher::new(2, 2048); // max_batch_size = 2
+
+        let req1 = BatchedRequest::new(1, vec![1], 100);
+        let req2 = BatchedRequest::new(2, vec![2], 100);
+        let req3 = BatchedRequest::new(3, vec![3], 100);
+
+        batcher.add_request(req1).unwrap();
+        batcher.add_request(req2).unwrap();
+
+        // Third request should fail (batch full)
+        assert!(batcher.add_request(req3).is_err());
+    }
+
+    #[test]
+    fn test_batch_max_seq_len() {
+        let batcher = ContinuousBatcher::new(32, 10); // max_seq_len = 10
+
+        let req = BatchedRequest::new(1, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 100);
+        batcher.add_request(req).unwrap();
+
+        // Request exceeds max_seq_len, should not appear in batch
+        let batch = batcher.get_batch();
+        assert_eq!(batch.len(), 0);
+    }
+
+    #[test]
+    fn test_remove_request() {
+        let batcher = ContinuousBatcher::new(32, 2048);
+
+        let req = BatchedRequest::new(1, vec![1, 2, 3], 100);
+        batcher.add_request(req).unwrap();
+
+        batcher.remove_request(1).unwrap();
+        assert_eq!(batcher.active_count(), 0);
+
+        // Removing non-existent request should fail
+        assert!(batcher.remove_request(999).is_err());
     }
 }

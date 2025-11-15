@@ -36,3 +36,6 @@ memmap2 = "0.9"
 rand = { workspace = true }
 lazy_static = "1.4"
 half = { workspace = true }
+
+[dev-dependencies]
+wat = "1.0"

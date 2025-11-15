@@ -1,0 +1,21 @@
+{
+  "name": "realm-e2e-tests",
+  "version": "1.0.0",
+  "description": "End-to-end tests for Realm WASM runtime with server integration",
+  "type": "module",
+  "scripts": {
+    "test": "node test.js",
+    "test:lora": "node test-lora.js",
+    "test:speculative": "node test-speculative.js",
+    "test:batching": "node test-batching.js",
+    "test:paris": "node test-paris.js",
+    "test:all": "npm run test:paris && npm run test:lora && npm run test:speculative && npm run test:batching"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0"
+  }
+}
+
