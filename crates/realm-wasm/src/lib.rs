@@ -1265,6 +1265,8 @@ pub extern "C" fn generate(
     //   - model_id: Model ID (0 = use GLOBAL_MODEL_ID)
     //   - options_ptr: Pointer to GenOptions in WASM memory (0 = use defaults)
 
+    eprintln!("[TRACE WASM] 🎯 generate() WASM entry: prompt_ptr={}, prompt_len={}, model_id={}, options_ptr={}",
+        prompt_ptr, prompt_len, model_id, options_ptr);
     wasm_log!(
         "🎯 generate() WASM entry: prompt_ptr={}, prompt_len={}, model_id={}, options_ptr={}",
         prompt_ptr,
@@ -1275,76 +1277,89 @@ pub extern "C" fn generate(
 
     #[cfg(target_arch = "wasm32")]
     {
-        // Use model_id from parameter, fallback to global if 0
-        let actual_model_id = if model_id == 0 {
-            let global_id = unsafe { GLOBAL_MODEL_ID };
-            if global_id == 0 {
-                wasm_log!("❌ generate: No model loaded (model_id = 0 and GLOBAL_MODEL_ID = 0)");
-                return 0;
-            }
-            global_id
-        } else {
-            model_id
-        };
+        // Wrap in catch_unwind to prevent panics from trapping
+        let result = std::panic::catch_unwind(|| {
+            // Use model_id from parameter, fallback to global if 0
+            let actual_model_id = if model_id == 0 {
+                let global_id = unsafe { GLOBAL_MODEL_ID };
+                if global_id == 0 {
+                    wasm_log!(
+                        "❌ generate: No model loaded (model_id = 0 and GLOBAL_MODEL_ID = 0)"
+                    );
+                    return 0u32;
+                }
+                global_id
+            } else {
+                model_id
+            };
 
-        wasm_log!("📦 generate: Using model_id={}", actual_model_id);
+            wasm_log!("📦 generate: Using model_id={}", actual_model_id);
 
-        // Read GenOptions from WASM memory if provided, otherwise use defaults
-        let options = if options_ptr != 0 {
-            unsafe {
-                // GenOptions is #[repr(C)] so it's safe to read directly
-                let options_ref = &*(options_ptr as *const GenOptions);
-                *options_ref
-            }
-        } else {
-            wasm_log!("📦 generate: Using default GenOptions (options_ptr = 0)");
-            GenOptions::default()
-        };
+            // Read GenOptions from WASM memory if provided, otherwise use defaults
+            let options = if options_ptr != 0 {
+                unsafe {
+                    // GenOptions is #[repr(C)] so it's safe to read directly
+                    let options_ref = &*(options_ptr as *const GenOptions);
+                    *options_ref
+                }
+            } else {
+                wasm_log!("📦 generate: Using default GenOptions (options_ptr = 0)");
+                GenOptions::default()
+            };
 
-        wasm_log!(
-            "📦 generate: GenOptions = max_tokens={}, temp={}, top_p={}, top_k={}",
-            options.max_tokens,
-            options.temperature,
-            options.top_p,
-            options.top_k
-        );
-
-        // Use static output buffer so pointer remains valid after function returns
-        // The server reads from this buffer after generate() returns
-        const OUTPUT_BUFFER_SIZE: u32 = 10240;
-        let output_ptr = unsafe { OUTPUT_BUFFER.as_mut_ptr() };
-
-        // Pass options pointer to HOST (convert to WASM memory offset)
-        // We need to create a copy on the stack since options_ptr might be invalid after return
-        let options_on_stack = options;
-        let options_ptr_for_host = &options_on_stack as *const GenOptions as u32;
-
-        // Call HOST function to do actual generation
-        // Note: options_on_stack stays alive during the call (it's on the stack, so it's safe)
-        let bytes_written = unsafe {
-            realm_host_generate(
-                actual_model_id,
-                prompt_ptr as *const u8,
-                prompt_len,
-                options_ptr_for_host, // WASM memory offset to GenOptions struct
-                output_ptr,
-                OUTPUT_BUFFER_SIZE,
-            )
-        };
-
-        if bytes_written < 0 {
             wasm_log!(
-                "❌ realm_host_generate failed with error code: {}",
-                bytes_written
+                "📦 generate: GenOptions = max_tokens={}, temp={}, top_p={}, top_k={}",
+                options.max_tokens,
+                options.temperature,
+                options.top_p,
+                options.top_k
             );
-            return 0; // Return null pointer on error
+
+            // Use static output buffer so pointer remains valid after function returns
+            // The server reads from this buffer after generate() returns
+            const OUTPUT_BUFFER_SIZE: u32 = 10240;
+            let output_ptr = unsafe { OUTPUT_BUFFER.as_mut_ptr() };
+
+            // Pass options pointer to HOST (convert to WASM memory offset)
+            // We need to create a copy on the stack since options_ptr might be invalid after return
+            let options_on_stack = options;
+            let options_ptr_for_host = &options_on_stack as *const GenOptions as u32;
+
+            // Call HOST function to do actual generation
+            // Note: options_on_stack stays alive during the call (it's on the stack, so it's safe)
+            let bytes_written = unsafe {
+                realm_host_generate(
+                    actual_model_id,
+                    prompt_ptr as *const u8,
+                    prompt_len,
+                    options_ptr_for_host, // WASM memory offset to GenOptions struct
+                    output_ptr,
+                    OUTPUT_BUFFER_SIZE,
+                )
+            };
+
+            if bytes_written < 0 {
+                wasm_log!(
+                    "❌ realm_host_generate failed with error code: {}",
+                    bytes_written
+                );
+                return 0u32; // Return null pointer on error
+            }
+
+            wasm_log!("✅ generate: HOST returned {} bytes", bytes_written);
+
+            // Return pointer to output buffer
+            // Note: realm-server expects to read this from WASM memory
+            output_ptr as u32
+        });
+
+        match result {
+            Ok(ptr) => ptr,
+            Err(_) => {
+                wasm_log!("❌ generate: Panic occurred in WASM function");
+                0
+            }
         }
-
-        wasm_log!("✅ generate: HOST returned {} bytes", bytes_written);
-
-        // Return pointer to output buffer
-        // Note: realm-server expects to read this from WASM memory
-        output_ptr as u32
     }
 
     #[cfg(not(target_arch = "wasm32"))]

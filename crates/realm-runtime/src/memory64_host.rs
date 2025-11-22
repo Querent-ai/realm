@@ -1548,6 +1548,8 @@ impl Memory64Runtime {
                   out_ptr: u32,
                   out_max_len: u32|
                   -> i32 {
+                eprintln!("[TRACE] realm_host_generate CALLED: model_id={}, prompt_len={}, options_ptr={}, out_max_len={}", 
+                    model_id, prompt_len, options_ptr, out_max_len);
                 info!(
                     "🎯 realm_host_generate CALLED: model_id={}, prompt_len={}, options_ptr={}, out_max_len={}",
                     model_id, prompt_len, options_ptr, out_max_len
@@ -1668,7 +1670,11 @@ impl Memory64Runtime {
                 // Storage lock is dropped here, but we have Arc<Mutex<Model>> so we can use it
 
                 // Step 3: Create inference session and generate
+                eprintln!("[TRACE] realm_host_generate: Creating InferenceSession...");
+                info!("realm_host_generate: Creating InferenceSession...");
                 let mut session = InferenceSession::new(model_id, prompt_tokens, options);
+                eprintln!("[TRACE] realm_host_generate: InferenceSession created");
+                info!("realm_host_generate: InferenceSession created");
 
                 // Generate tokens using InferenceSession
                 // Lock the model only when needed for inference
@@ -1676,32 +1682,64 @@ impl Memory64Runtime {
                 let max_iterations = options.max_tokens.max(512) as usize; // Safety limit
                 let mut iterations = 0;
 
+                eprintln!("[TRACE] realm_host_generate: Starting generation loop (max_iterations={})", max_iterations);
+                info!("realm_host_generate: Starting generation loop (max_iterations={})", max_iterations);
                 while !session.is_complete() && iterations < max_iterations {
+                    eprintln!("[TRACE] realm_host_generate: Loop iteration {}, session.is_complete()={}", iterations, session.is_complete());
                     // Lock model for inference (shared across requests via Arc)
-                    let mut model = model_arc.lock();
+                    eprintln!("[TRACE] realm_host_generate: Attempting to lock model...");
+                    let mut model = match model_arc.try_lock() {
+                        Some(m) => {
+                            eprintln!("[TRACE] realm_host_generate: Model lock acquired (try_lock)");
+                            m
+                        },
+                        None => {
+                            eprintln!("[TRACE] realm_host_generate: Model lock busy, waiting (blocking)...");
+                            warn!("realm_host_generate: Model lock busy, waiting...");
+                            model_arc.lock() // Block if needed
+                        }
+                    };
+
+                    eprintln!("[TRACE] realm_host_generate: Calling next_token_with_model...");
                     match session.next_token_with_model(&mut model, None) {
                         Ok(Some(token_id)) => {
                             generated_tokens.push(token_id);
                             iterations += 1;
+                            if iterations % 5 == 0 || iterations <= 5 {
+                                eprintln!("[TRACE] realm_host_generate: Generated {} tokens (token_id={})", iterations, token_id);
+                            }
+                            if iterations % 10 == 0 {
+                                debug!("realm_host_generate: Generated {} tokens so far", iterations);
+                            }
                         }
                         Ok(None) => {
                             // Generation complete
+                            eprintln!("[TRACE] realm_host_generate: Generation complete (session.is_complete())");
+                            info!("realm_host_generate: Generation complete (session.is_complete())");
                             break;
                         }
                         Err(e) => {
-                            error!("realm_host_generate: Inference error: {}", e);
+                            eprintln!("[TRACE] realm_host_generate: Inference error at iteration {}: {}", iterations, e);
+                            error!("realm_host_generate: Inference error at iteration {}: {}", iterations, e);
                             return -10;
                         }
                     }
                     // Model lock is released here, allowing other requests to proceed
                 }
 
+                if iterations >= max_iterations {
+                    warn!("realm_host_generate: Hit max_iterations limit ({})", max_iterations);
+                }
+
+                eprintln!("[TRACE] realm_host_generate: Generated {} tokens total", generated_tokens.len());
                 info!(
                     "realm_host_generate: Generated {} tokens",
                     generated_tokens.len()
                 );
 
                 // Decode generated tokens to text
+                eprintln!("[TRACE] realm_host_generate: Decoding {} tokens to text...", generated_tokens.len());
+                eprintln!("[TRACE] realm_host_generate: Starting decode of {} tokens", generated_tokens.len());
                 let result = match tokenizer.decode(&generated_tokens, true) {
                     Ok(text) => {
                         if text.is_empty() {
@@ -1721,11 +1759,13 @@ impl Memory64Runtime {
                 info!("realm_host_generate: Generated {} bytes", result.len());
 
                 // Write result to WASM memory (null-terminated for server compatibility)
+                eprintln!("[TRACE] realm_host_generate: Writing result to WASM memory (out_ptr={}, out_max_len={})", out_ptr, out_max_len);
                 let result_bytes = result.as_bytes();
                 let result_len = result_bytes.len();
 
                 // Check if result fits (need space for null terminator)
                 if result_len + 1 > out_max_len as usize {
+                    eprintln!("[TRACE] realm_host_generate: Output too large: {} > {}", result_len + 1, out_max_len);
                     error!(
                         "realm_host_generate: Output too large: {} > {}",
                         result_len + 1,
@@ -1735,18 +1775,23 @@ impl Memory64Runtime {
                 }
 
                 // Write result bytes
+                eprintln!("[TRACE] realm_host_generate: Writing {} bytes to WASM memory at offset {}", result_len, out_ptr);
                 if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, result_bytes) {
+                    eprintln!("[TRACE] realm_host_generate: Failed to write result: {}", e);
                     error!("realm_host_generate: Failed to write result: {}", e);
                     return -6;
                 }
 
                 // Write null terminator
                 let null_terminator_ptr = (out_ptr as usize) + result_len;
+                eprintln!("[TRACE] realm_host_generate: Writing null terminator at offset {}", null_terminator_ptr);
                 if let Err(e) = wasm_memory.write(&mut caller, null_terminator_ptr, &[0u8]) {
+                    eprintln!("[TRACE] realm_host_generate: Failed to write null terminator: {}", e);
                     error!("realm_host_generate: Failed to write null terminator: {}", e);
                     return -6;
                 }
 
+                eprintln!("[TRACE] realm_host_generate: SUCCESS - wrote {} bytes (null-terminated), returning {}", result_len + 1, (result_len + 1) as i32);
                 info!(
                     "realm_host_generate: SUCCESS - wrote {} bytes (null-terminated)",
                     result_len + 1

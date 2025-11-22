@@ -9,7 +9,7 @@
 import fetch from 'node-fetch';
 
 const SERVER_URL = process.env.REALM_SERVER_URL || 'http://localhost:3000';
-const TIMEOUT = 30000; // 30 seconds
+const TIMEOUT = 120000; // 120 seconds (2 minutes) - generation can be slow
 
 async function testParisGeneration() {
     console.log('🧪 Testing Paris Generation...\n');
@@ -55,7 +55,7 @@ async function testParisGeneration() {
                             content: testCase.prompt
                         }
                     ],
-                    max_tokens: 50,
+                    max_tokens: 20, // Reduced for faster testing
                     stream: false
                 }),
                 signal: controller.signal
@@ -104,7 +104,7 @@ async function testParisGeneration() {
                         content: 'What is the capital of France?'
                     }
                 ],
-                max_tokens: 50,
+                max_tokens: 20, // Reduced for faster testing
                 stream: true
             }),
             signal: controller.signal

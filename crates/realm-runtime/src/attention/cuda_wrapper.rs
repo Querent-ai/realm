@@ -3,7 +3,7 @@
 //! This module provides a safe Rust interface to Flash Attention using Candle's CUDA operations.
 //! The raw CUDA kernel in `flash_attention.cu` can be linked later for even better performance.
 
-use candle_core::{Device, Result as CandleResult, Tensor};
+use candle_core::{Device, Tensor};
 use candle_nn::ops;
 use realm_core::error::{Error as WasmChordError, Result};
 
@@ -26,6 +26,7 @@ impl FlashAttentionCuda {
         Ok(Self { device })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn forward(
         &self,
         q: &[f32],
@@ -109,23 +110,27 @@ impl FlashAttentionCuda {
             // Use where operation: scores = where(mask > 0, scores, -inf)
             let mask_bool = mask_expanded
                 .gt(
-                    &Tensor::zeros(&mask_expanded.shape(), mask_expanded.dtype(), &self.device)
+                    &Tensor::zeros(mask_expanded.shape(), mask_expanded.dtype(), &self.device)
                         .map_err(|e| {
                             WasmChordError::Runtime(format!("Failed to create zeros: {}", e))
                         })?,
                 )
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to compare mask: {}", e)))?;
 
+            let scores_tensor = scores
+                .map_err(|e| WasmChordError::Runtime(format!("Failed to compute scores: {}", e)))?;
+
             let neg_inf = Tensor::new(&[f32::NEG_INFINITY], &self.device)
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to create -inf: {}", e)))?
-                .broadcast_as(scores.shape())
+                .broadcast_as(scores_tensor.shape())
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to broadcast -inf: {}", e)))?;
 
-            scores
+            scores_tensor
                 .where_cond(&mask_bool, &neg_inf)
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to apply mask: {}", e)))?
         } else {
             scores
+                .map_err(|e| WasmChordError::Runtime(format!("Failed to compute scores: {}", e)))?
         };
 
         // Apply softmax: softmax(scores)
@@ -164,6 +169,7 @@ impl FlashAttentionCuda {
 // FFI declarations for CUDA kernel
 #[cfg(feature = "cuda")]
 extern "C" {
+    #[allow(dead_code)]
     fn flash_attention_forward_cuda(
         q: *const f32,
         k: *const f32,

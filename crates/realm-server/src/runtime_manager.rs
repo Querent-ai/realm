@@ -633,51 +633,72 @@ impl TenantRuntime {
             .write(&mut self.store, options_ptr as usize, options_bytes)
             .context("Failed to write GenOptions to WASM memory")?;
 
-        // Use typed call if 4 params (with options), otherwise fallback
-        let result_ptr = if param_count == 4 {
-            let generate = self
-                .instance
-                .get_typed_func::<(u32, u32, u32, u32), u32>(&mut self.store, "generate")
-                .context("Failed to get typed generate function")?;
-            generate
-                .call(
-                    &mut self.store,
-                    (
-                        prompt_ptr as u32,
-                        prompt_bytes.len() as u32,
-                        model_id,
-                        options_ptr,
-                    ),
-                )
-                .context("generate function call failed")?
-        } else if param_count == 3 {
-            // 3-param version (without options - use defaults)
-            let generate = self
-                .instance
-                .get_typed_func::<(u32, u32, u32), u32>(&mut self.store, "generate")
-                .context("Failed to get typed generate function")?;
-            generate
-                .call(
-                    &mut self.store,
-                    (prompt_ptr as u32, prompt_bytes.len() as u32, model_id),
-                )
-                .context("generate function call failed")?
-        } else {
-            // Fallback for 2-param version (old signature)
-            use wasmtime::Val;
-            let args = vec![
-                Val::I32(prompt_ptr as i32),
-                Val::I32(prompt_bytes.len() as i32),
-            ];
-            let mut results = vec![Val::I32(0); func_ty.results().len()];
-            generate_func
-                .call(&mut self.store, &args, &mut results)
-                .context("generate function call failed")?;
-            if let Some(Val::I32(ptr)) = results.first() {
-                *ptr as u32
-            } else {
-                return Err(anyhow!("generate returned unexpected result type"));
+        // Use untyped call (more reliable than typed call for C-ABI functions)
+        // The typed call fails because WASM function signature might not match exactly
+        use wasmtime::Val;
+        let mut args = Vec::new();
+
+        // Build args based on param count
+        if param_count >= 1 {
+            args.push(Val::I32(prompt_ptr as i32));
+        }
+        if param_count >= 2 {
+            args.push(Val::I32(prompt_bytes.len() as i32));
+        }
+        if param_count >= 3 {
+            args.push(Val::I32(model_id as i32));
+        }
+        if param_count >= 4 {
+            args.push(Val::I32(options_ptr as i32));
+        }
+
+        eprintln!("[TRACE] Calling generate with {} args: prompt_ptr={}, prompt_len={}, model_id={}, options_ptr={}", 
+               args.len(), prompt_ptr, prompt_bytes.len(), model_id, options_ptr);
+        eprintln!(
+            "[TRACE] Function signature: {} params, {} results",
+            param_count,
+            func_ty.results().len()
+        );
+        debug!("Calling generate with {} args: prompt_ptr={}, prompt_len={}, model_id={}, options_ptr={}", 
+               args.len(), prompt_ptr, prompt_bytes.len(), model_id, options_ptr);
+        debug!(
+            "Function signature: {} params, {} results",
+            param_count,
+            func_ty.results().len()
+        );
+
+        let mut results = vec![Val::I32(0); func_ty.results().len().max(1)];
+        eprintln!("[TRACE] About to call generate_func.call()");
+        match generate_func.call(&mut self.store, &args, &mut results) {
+            Ok(()) => {
+                eprintln!(
+                    "[TRACE] generate function call succeeded, result: {:?}",
+                    results
+                );
+                debug!("generate function call succeeded, result: {:?}", results);
             }
+            Err(e) => {
+                eprintln!("[TRACE] generate function call FAILED: {}", e);
+                eprintln!("[TRACE] Args passed: {:?}", args);
+                error!("generate function call failed with error: {}", e);
+                error!("Args passed: {:?}", args);
+                error!(
+                    "Function type: params={:?}, results={:?}",
+                    func_ty.params().collect::<Vec<_>>(),
+                    func_ty.results().collect::<Vec<_>>()
+                );
+                return Err(anyhow!("generate function call failed: {}", e));
+            }
+        }
+
+        // Extract result
+        let result_ptr = if let Some(Val::I32(ptr)) = results.first() {
+            *ptr as u32
+        } else {
+            return Err(anyhow!(
+                "generate returned unexpected result type: {:?}",
+                results
+            ));
         };
 
         // Check if result_ptr is 0 (error case)
