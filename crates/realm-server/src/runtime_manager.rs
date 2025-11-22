@@ -855,8 +855,12 @@ impl RuntimeManager {
 
     /// Check if tenant ID is already in use
     pub fn is_tenant_id_taken(&self, tenant_id: impl AsRef<str>) -> bool {
-        let runtimes = self.runtimes.lock().unwrap();
-        runtimes.contains_key(tenant_id.as_ref())
+        // Mutex lock failure is rare and indicates a serious issue
+        // For this read-only check, we return false on lock failure
+        self.runtimes
+            .lock()
+            .map(|runtimes| runtimes.contains_key(tenant_id.as_ref()))
+            .unwrap_or(false)
     }
 
     /// Get or create a runtime for a tenant with validation
@@ -1192,7 +1196,9 @@ impl RuntimeManager {
     pub fn generate(&self, tenant_id: impl AsRef<str>, prompt: String) -> Result<String> {
         let tenant_id = tenant_id.as_ref();
         let runtimes = self.runtimes.clone();
-        let mut runtimes_guard = runtimes.lock().unwrap();
+        let mut runtimes_guard = runtimes
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire runtime lock: {}", e))?;
 
         let runtime = runtimes_guard
             .get_mut(tenant_id)
@@ -1204,13 +1210,20 @@ impl RuntimeManager {
             drop(runtimes_guard);
             use crate::speculative_integration::generate_with_speculative_decoding;
             let runtime_arc = {
-                let mut runtimes = runtimes.lock().unwrap();
-                Arc::new(Mutex::new(runtimes.remove(tenant_id).unwrap()))
+                let mut runtimes = runtimes
+                    .lock()
+                    .map_err(|e| anyhow!("Failed to acquire runtime lock: {}", e))?;
+                let runtime = runtimes.remove(tenant_id).ok_or_else(|| {
+                    anyhow!("Runtime removed while processing for tenant: {}", tenant_id)
+                })?;
+                Arc::new(Mutex::new(runtime))
             };
             let result = generate_with_speculative_decoding(runtime_arc.clone(), prompt, 100)?;
             // Put runtime back
             {
-                let mut runtimes = runtimes.lock().unwrap();
+                let mut runtimes = runtimes
+                    .lock()
+                    .map_err(|e| anyhow!("Failed to acquire runtime lock: {}", e))?;
                 let runtime =
                     Arc::try_unwrap(runtime_arc).map_err(|_| anyhow!("Failed to unwrap Arc"))?;
                 let runtime = runtime
@@ -1242,7 +1255,14 @@ impl RuntimeManager {
 
         // Spawn blocking task to generate
         tokio::task::spawn_blocking(move || {
-            let mut runtimes = runtimes.lock().unwrap();
+            let mut runtimes = match runtimes.lock() {
+                Ok(guard) => guard,
+                Err(e) => {
+                    let _ =
+                        tx.blocking_send(format!("Error: Failed to acquire runtime lock: {}", e));
+                    return;
+                }
+            };
             let runtime = match runtimes.get_mut(&tenant_id) {
                 Some(rt) => rt,
                 None => {
@@ -1312,13 +1332,23 @@ impl RuntimeManager {
     }
 
     /// Get number of active runtimes
-    pub fn active_runtime_count(&self) -> usize {
-        self.runtimes.lock().unwrap().len()
+    pub fn active_runtime_count(&self) -> Result<usize> {
+        Ok(self
+            .runtimes
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire runtime lock: {}", e))?
+            .len())
     }
 
     /// List all tenant IDs
-    pub fn list_tenants(&self) -> Vec<String> {
-        self.runtimes.lock().unwrap().keys().cloned().collect()
+    pub fn list_tenants(&self) -> Result<Vec<String>> {
+        Ok(self
+            .runtimes
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire runtime lock: {}", e))?
+            .keys()
+            .cloned()
+            .collect())
     }
 }
 
@@ -1377,9 +1407,10 @@ mod tests {
         });
 
         // Send tokens via blocking channel
-        blocking_tx.send("token1".to_string()).unwrap();
-        blocking_tx.send("token2".to_string()).unwrap();
-        blocking_tx.send("token3".to_string()).unwrap();
+        // In tests, channel send failures are expected to be handled
+        let _ = blocking_tx.send("token1".to_string());
+        let _ = blocking_tx.send("token2".to_string());
+        let _ = blocking_tx.send("token3".to_string());
 
         // Drop the blocking sender to signal completion
         drop(blocking_tx);
@@ -1388,15 +1419,15 @@ mod tests {
         let token1 = tokio::time::timeout(std::time::Duration::from_secs(1), async_rx.recv())
             .await
             .expect("Timeout waiting for token1")
-            .unwrap();
+            .expect("Channel closed unexpectedly");
         let token2 = tokio::time::timeout(std::time::Duration::from_secs(1), async_rx.recv())
             .await
             .expect("Timeout waiting for token2")
-            .unwrap();
+            .expect("Channel closed unexpectedly");
         let token3 = tokio::time::timeout(std::time::Duration::from_secs(1), async_rx.recv())
             .await
             .expect("Timeout waiting for token3")
-            .unwrap();
+            .expect("Channel closed unexpectedly");
 
         assert_eq!(token1, "token1");
         assert_eq!(token2, "token2");
@@ -1404,5 +1435,89 @@ mod tests {
 
         // Wait for forwarding task to complete (should finish after sender is dropped)
         let _ = tokio::time::timeout(std::time::Duration::from_secs(1), forwarding_handle).await;
+    }
+
+    #[test]
+    fn test_tenant_id_validation() {
+        // Valid tenant IDs
+        assert!(RuntimeManager::validate_tenant_id("tenant-123").is_ok());
+        assert!(RuntimeManager::validate_tenant_id("user_abc").is_ok());
+        assert!(RuntimeManager::validate_tenant_id("test123").is_ok());
+
+        // Invalid tenant IDs
+        assert!(RuntimeManager::validate_tenant_id("ab").is_err()); // Too short
+        assert!(RuntimeManager::validate_tenant_id("").is_err()); // Empty
+        assert!(RuntimeManager::validate_tenant_id(&"a".repeat(65)).is_err()); // Too long
+    }
+
+    #[test]
+    fn test_model_config_with_draft() {
+        let config = ModelConfig {
+            model_path: PathBuf::from("/path/to/model.gguf"),
+            model_id: "target-model".to_string(),
+            draft_model_path: Some(PathBuf::from("/path/to/draft.gguf")),
+            draft_model_id: Some("draft-model".to_string()),
+        };
+
+        assert_eq!(config.model_id, "target-model");
+        assert!(config.draft_model_path.is_some());
+        assert_eq!(config.draft_model_id, Some("draft-model".to_string()));
+    }
+
+    #[test]
+    fn test_runtime_manager_creation() {
+        // This test requires a WASM file, so we'll skip if not available
+        let wasm_path = PathBuf::from("./target/wasm32-unknown-unknown/release/realm_wasm.wasm");
+        if wasm_path.exists() {
+            let rm = RuntimeManager::new(wasm_path);
+            assert!(rm.is_ok(), "RuntimeManager should be created successfully");
+        } else {
+            eprintln!("⚠️  WASM file not found, skipping RuntimeManager creation test");
+        }
+    }
+
+    #[test]
+    fn test_is_tenant_id_taken() {
+        let wasm_path = PathBuf::from("./target/wasm32-unknown-unknown/release/realm_wasm.wasm");
+        if wasm_path.exists() {
+            if let Ok(rm) = RuntimeManager::new(wasm_path) {
+                // Initially no tenants
+                assert!(!rm.is_tenant_id_taken("test-tenant"));
+            }
+        } else {
+            eprintln!("⚠️  WASM file not found, skipping tenant ID test");
+        }
+    }
+
+    #[test]
+    fn test_active_runtime_count() {
+        let wasm_path = PathBuf::from("./target/wasm32-unknown-unknown/release/realm_wasm.wasm");
+        if wasm_path.exists() {
+            if let Ok(rm) = RuntimeManager::new(wasm_path) {
+                let count = rm.active_runtime_count();
+                assert!(count.is_ok(), "active_runtime_count should succeed");
+                assert_eq!(count.unwrap(), 0, "Initially should have 0 runtimes");
+            }
+        } else {
+            eprintln!("⚠️  WASM file not found, skipping runtime count test");
+        }
+    }
+
+    #[test]
+    fn test_list_tenants() {
+        let wasm_path = PathBuf::from("./target/wasm32-unknown-unknown/release/realm_wasm.wasm");
+        if wasm_path.exists() {
+            if let Ok(rm) = RuntimeManager::new(wasm_path) {
+                let tenants = rm.list_tenants();
+                assert!(tenants.is_ok(), "list_tenants should succeed");
+                assert_eq!(
+                    tenants.unwrap().len(),
+                    0,
+                    "Initially should have no tenants"
+                );
+            }
+        } else {
+            eprintln!("⚠️  WASM file not found, skipping list tenants test");
+        }
     }
 }

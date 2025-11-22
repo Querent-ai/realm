@@ -378,11 +378,19 @@ impl ModelOrchestrator {
 
             // Extract prompt from input
             let prompt = if step_input.is_string() {
-                step_input.as_str().unwrap().to_string()
+                step_input
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Step input is not a valid string"))?
+                    .to_string()
             } else if let Some(prompt) = step_input.get("prompt") {
-                prompt.as_str().unwrap().to_string()
+                prompt
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Prompt field is not a valid string"))?
+                    .to_string()
             } else if let Some(text) = step_input.get("text") {
-                text.as_str().unwrap().to_string()
+                text.as_str()
+                    .ok_or_else(|| anyhow!("Text field is not a valid string"))?
+                    .to_string()
             } else {
                 return Err(anyhow!("Could not extract prompt from step input"));
             };
@@ -403,8 +411,10 @@ impl ModelOrchestrator {
             context.set_step_output(&step.output_field, step_output.clone());
 
             // If this is the last step, set as final output
-            if step.output_field == pipeline.steps.last().unwrap().output_field {
-                context.output = Some(step_output);
+            if let Some(last_step) = pipeline.steps.last() {
+                if step.output_field == last_step.output_field {
+                    context.output = Some(step_output);
+                }
             }
         }
 
