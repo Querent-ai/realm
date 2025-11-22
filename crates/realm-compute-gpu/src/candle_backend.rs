@@ -73,6 +73,46 @@ impl CandleGpuBackend {
         &self.device
     }
 
+    /// Check if CUDA is available
+    #[cfg(feature = "cuda")]
+    pub fn is_cuda_available() -> bool {
+        Device::new_cuda(0).is_ok()
+    }
+
+    /// Check if Metal is available
+    #[cfg(feature = "metal")]
+    pub fn is_metal_available() -> bool {
+        Device::new_metal(0).is_ok()
+    }
+
+    /// Get device count for the selected backend
+    pub fn device_count(&self) -> usize {
+        match self.device {
+            #[cfg(feature = "cuda")]
+            Device::Cuda(_) => {
+                // Try to get CUDA device count
+                (0..).take_while(|i| Device::new_cuda(*i).is_ok()).count()
+            }
+            #[cfg(feature = "metal")]
+            Device::Metal(_) => {
+                // Try to get Metal device count
+                (0..).take_while(|i| Device::new_metal(*i).is_ok()).count()
+            }
+            _ => 1, // CPU always has 1 device
+        }
+    }
+
+    /// Check if the backend is using GPU acceleration
+    pub fn is_gpu(&self) -> bool {
+        match self.device {
+            #[cfg(feature = "cuda")]
+            Device::Cuda(_) => true,
+            #[cfg(feature = "metal")]
+            Device::Metal(_) => true,
+            _ => false,
+        }
+    }
+
     /// Matrix multiplication: C = A @ B
     ///
     /// # Arguments
@@ -169,32 +209,74 @@ impl CandleGpuBackend {
         scale: f32,
         mask: Option<&Tensor>,
     ) -> CandleResult<Tensor> {
-        // Compute attention scores: Q @ K^T
-        let scores = q.matmul(&k.t()?)?;
+        // Try GPU operation first
+        let result = (|| -> CandleResult<Tensor> {
+            // Compute attention scores: Q @ K^T
+            let scores = q.matmul(&k.t()?)?;
 
-        // Scale the scores
-        let scale_tensor = Tensor::new(&[scale], &self.device)?;
-        let scores = scores.broadcast_mul(&scale_tensor)?;
+            // Scale the scores
+            let scale_tensor = Tensor::new(&[scale], &self.device)?;
+            let scores = scores.broadcast_mul(&scale_tensor)?;
 
-        // Apply mask if provided
-        let scores = if let Some(mask) = mask {
-            scores.broadcast_add(mask)?
-        } else {
-            scores
-        };
+            // Apply mask if provided
+            let scores = if let Some(mask) = mask {
+                scores.broadcast_add(mask)?
+            } else {
+                scores
+            };
 
-        // Apply softmax
-        let attn_weights = ops::softmax_last_dim(&scores)?;
+            // Apply softmax
+            let attn_weights = ops::softmax_last_dim(&scores)?;
 
-        // Apply attention to values: attn_weights @ V
-        attn_weights.matmul(v)
+            // Apply attention to values: attn_weights @ V
+            attn_weights.matmul(v)
+        })();
+
+        match result {
+            Ok(r) => Ok(r),
+            Err(_e) => {
+                // If GPU operation fails (e.g., PTX version mismatch), fallback to CPU
+                let cpu_device = Device::Cpu;
+                let q_cpu = q.to_device(&cpu_device)?;
+                let k_cpu = k.to_device(&cpu_device)?;
+                let v_cpu = v.to_device(&cpu_device)?;
+
+                let scores = q_cpu.matmul(&k_cpu.t()?)?;
+                let scale_tensor = Tensor::new(&[scale], &cpu_device)?;
+                let scores = scores.broadcast_mul(&scale_tensor)?;
+
+                let scores = if let Some(mask) = mask {
+                    let mask_cpu = mask.to_device(&cpu_device)?;
+                    scores.broadcast_add(&mask_cpu)?
+                } else {
+                    scores
+                };
+
+                let attn_weights = ops::softmax_last_dim(&scores)?;
+                let result_cpu = attn_weights.matmul(&v_cpu)?;
+
+                // Move result back to original device
+                result_cpu.to_device(q.device())
+            }
+        }
     }
 
     /// SiLU (Swish) activation function
     ///
     /// SiLU(x) = x * sigmoid(x)
     pub fn silu(&self, x: &Tensor) -> CandleResult<Tensor> {
-        ops::silu(x)
+        // Try GPU operation first
+        match ops::silu(x) {
+            Ok(result) => Ok(result),
+            Err(_e) => {
+                // If GPU operation fails (e.g., PTX version mismatch), fallback to CPU
+                let cpu_device = Device::Cpu;
+                let x_cpu = x.to_device(&cpu_device)?;
+                let result_cpu = ops::silu(&x_cpu)?;
+                // Move result back to original device
+                result_cpu.to_device(x.device())
+            }
+        }
     }
 
     /// Softmax activation function
@@ -217,12 +299,36 @@ impl CandleGpuBackend {
 
     /// Element-wise addition
     pub fn add(&self, a: &Tensor, b: &Tensor) -> CandleResult<Tensor> {
-        a.broadcast_add(b)
+        // Try GPU operation first
+        match a.broadcast_add(b) {
+            Ok(result) => Ok(result),
+            Err(_e) => {
+                // If GPU operation fails (e.g., PTX version mismatch), fallback to CPU
+                let cpu_device = Device::Cpu;
+                let a_cpu = a.to_device(&cpu_device)?;
+                let b_cpu = b.to_device(&cpu_device)?;
+                let result_cpu = a_cpu.broadcast_add(&b_cpu)?;
+                // Move result back to original device
+                result_cpu.to_device(a.device())
+            }
+        }
     }
 
     /// Element-wise multiplication
     pub fn mul(&self, a: &Tensor, b: &Tensor) -> CandleResult<Tensor> {
-        a.broadcast_mul(b)
+        // Try GPU operation first
+        match a.broadcast_mul(b) {
+            Ok(result) => Ok(result),
+            Err(_e) => {
+                // If GPU operation fails (e.g., PTX version mismatch), fallback to CPU
+                let cpu_device = Device::Cpu;
+                let a_cpu = a.to_device(&cpu_device)?;
+                let b_cpu = b.to_device(&cpu_device)?;
+                let result_cpu = a_cpu.broadcast_mul(&b_cpu)?;
+                // Move result back to original device
+                result_cpu.to_device(a.device())
+            }
+        }
     }
 
     /// Rotary Position Embedding (RoPE)
@@ -235,23 +341,52 @@ impl CandleGpuBackend {
     /// # Returns
     /// Rotated tensor with same shape as input
     pub fn rope(&self, x: &Tensor, cos: &Tensor, sin: &Tensor) -> CandleResult<Tensor> {
-        // RoPE implementation using Candle's operations
-        // This is a simplified version - full RoPE would need more complex indexing
+        // Try GPU operation first
+        let result = (|| -> CandleResult<Tensor> {
+            // RoPE implementation using Candle's operations
+            // This is a simplified version - full RoPE would need more complex indexing
 
-        // Split x into even and odd parts
-        let x_even = x.narrow(3, 0, x.dim(3)? / 2)?;
-        let x_odd = x.narrow(3, x.dim(3)? / 2, x.dim(3)? / 2)?;
+            // Split x into even and odd parts
+            let x_even = x.narrow(3, 0, x.dim(3)? / 2)?;
+            let x_odd = x.narrow(3, x.dim(3)? / 2, x.dim(3)? / 2)?;
 
-        // Apply rotation
-        let rotated_even = x_even
-            .broadcast_mul(cos)?
-            .broadcast_sub(&x_odd.broadcast_mul(sin)?)?;
-        let rotated_odd = x_even
-            .broadcast_mul(sin)?
-            .broadcast_add(&x_odd.broadcast_mul(cos)?)?;
+            // Apply rotation
+            let rotated_even = x_even
+                .broadcast_mul(cos)?
+                .broadcast_sub(&x_odd.broadcast_mul(sin)?)?;
+            let rotated_odd = x_even
+                .broadcast_mul(sin)?
+                .broadcast_add(&x_odd.broadcast_mul(cos)?)?;
 
-        // Concatenate back
-        Tensor::cat(&[&rotated_even, &rotated_odd], 3)
+            // Concatenate back
+            Tensor::cat(&[&rotated_even, &rotated_odd], 3)
+        })();
+
+        match result {
+            Ok(r) => Ok(r),
+            Err(_e) => {
+                // If GPU operation fails (e.g., PTX version mismatch), fallback to CPU
+                let cpu_device = Device::Cpu;
+                let x_cpu = x.to_device(&cpu_device)?;
+                let cos_cpu = cos.to_device(&cpu_device)?;
+                let sin_cpu = sin.to_device(&cpu_device)?;
+
+                let x_even = x_cpu.narrow(3, 0, x_cpu.dim(3)? / 2)?;
+                let x_odd = x_cpu.narrow(3, x_cpu.dim(3)? / 2, x_cpu.dim(3)? / 2)?;
+
+                let rotated_even = x_even
+                    .broadcast_mul(&cos_cpu)?
+                    .broadcast_sub(&x_odd.broadcast_mul(&sin_cpu)?)?;
+                let rotated_odd = x_even
+                    .broadcast_mul(&sin_cpu)?
+                    .broadcast_add(&x_odd.broadcast_mul(&cos_cpu)?)?;
+
+                let result_cpu = Tensor::cat(&[&rotated_even, &rotated_odd], 3)?;
+
+                // Move result back to original device
+                result_cpu.to_device(x.device())
+            }
+        }
     }
 
     /// Convert f32 slice to Candle tensor
@@ -914,5 +1049,258 @@ mod tests {
         for val in &result_vec {
             assert!(val.is_finite(), "Large matmul produced non-finite value");
         }
+    }
+
+    #[test]
+    fn test_device_detection() {
+        let backend = CandleGpuBackend::new().unwrap();
+        let device = backend.device();
+        let name = backend.name();
+
+        // Device should be valid
+        match device {
+            candle_core::Device::Cuda(_) => assert_eq!(name, "CUDA"),
+            candle_core::Device::Metal(_) => assert_eq!(name, "Metal"),
+            candle_core::Device::Cpu => assert_eq!(name, "CPU"),
+        }
+    }
+
+    #[test]
+    fn test_gpu_detection() {
+        let backend = CandleGpuBackend::new().unwrap();
+        let is_gpu = backend.is_gpu();
+        let name = backend.name();
+
+        // If CUDA or Metal, should be GPU
+        if name == "CUDA" || name == "Metal" {
+            assert!(is_gpu, "CUDA/Metal backend should report as GPU");
+        } else {
+            assert!(!is_gpu, "CPU backend should not report as GPU");
+        }
+    }
+
+    #[test]
+    fn test_device_count() {
+        let backend = CandleGpuBackend::new().unwrap();
+        let count = backend.device_count();
+
+        // Should have at least 1 device
+        assert!(count >= 1, "Should have at least 1 device");
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn test_cuda_availability() {
+        let is_available = CandleGpuBackend::is_cuda_available();
+        // Just verify the function doesn't panic
+        // Actual value depends on system configuration
+        let _ = is_available;
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
+    fn test_metal_availability() {
+        let is_available = CandleGpuBackend::is_metal_available();
+        // Just verify the function doesn't panic
+        // Actual value depends on system configuration
+        let _ = is_available;
+    }
+
+    #[test]
+    fn test_add_zero_tensors() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        let a = backend.f32_to_tensor(&[0.0, 0.0, 0.0], &[3]).unwrap();
+        let b = backend.f32_to_tensor(&[1.0, 2.0, 3.0], &[3]).unwrap();
+
+        let result = backend.add(&a, &b).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_mul_zero_tensors() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        let a = backend.f32_to_tensor(&[1.0, 2.0, 3.0], &[3]).unwrap();
+        let b = backend.f32_to_tensor(&[0.0, 0.0, 0.0], &[3]).unwrap();
+
+        let result = backend.mul(&a, &b).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec, vec![0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_scaled_dot_product_attention() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        // Simple attention: batch=1, heads=1, seq_len=2, head_dim=2
+        let q = backend
+            .f32_to_tensor(&[1.0, 0.0, 0.0, 1.0], &[1, 1, 2, 2])
+            .unwrap();
+        let k = backend
+            .f32_to_tensor(&[1.0, 0.0, 0.0, 1.0], &[1, 1, 2, 2])
+            .unwrap();
+        let v = backend
+            .f32_to_tensor(&[1.0, 0.0, 0.0, 1.0], &[1, 1, 2, 2])
+            .unwrap();
+
+        let scale = 1.0 / (2.0f32.sqrt());
+        let result = backend
+            .scaled_dot_product_attention(&q, &k, &v, scale, None)
+            .unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec.len(), 4);
+        // All values should be finite
+        for val in &result_vec {
+            assert!(
+                val.is_finite(),
+                "Attention produced non-finite value: {}",
+                val
+            );
+        }
+    }
+
+    #[test]
+    fn test_rope_basic() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        // Simple RoPE test: batch=1, heads=1, seq_len=1, head_dim=4
+        let x = backend
+            .f32_to_tensor(&[1.0, 0.0, 0.0, 1.0], &[1, 1, 1, 4])
+            .unwrap();
+        let cos = backend.f32_to_tensor(&[1.0, 1.0], &[1, 1, 1, 2]).unwrap();
+        let sin = backend.f32_to_tensor(&[0.0, 0.0], &[1, 1, 1, 2]).unwrap();
+
+        let result = backend.rope(&x, &cos, &sin).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec.len(), 4);
+        // All values should be finite
+        for val in &result_vec {
+            assert!(val.is_finite(), "RoPE produced non-finite value: {}", val);
+        }
+    }
+
+    #[test]
+    fn test_matmul_with_precision_config() {
+        use crate::mixed_precision::{MixedPrecisionConfig, PrecisionMode};
+
+        let config = MixedPrecisionConfig {
+            forward_precision: PrecisionMode::FP16,
+            ..Default::default()
+        };
+
+        let backend = CandleGpuBackend::with_precision(config).unwrap();
+
+        let a = backend
+            .f32_to_tensor(&[1.0, 2.0, 3.0, 4.0], &[2, 2])
+            .unwrap();
+        let b = backend
+            .f32_to_tensor(&[5.0, 6.0, 7.0, 8.0], &[2, 2])
+            .unwrap();
+
+        let result = backend.matmul(&a, &b).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec.len(), 4);
+        // Expected result: [[19, 22], [43, 50]]
+        assert!((result_vec[0] - 19.0).abs() < 0.1);
+        assert!((result_vec[1] - 22.0).abs() < 0.1);
+        assert!((result_vec[2] - 43.0).abs() < 0.1);
+        assert!((result_vec[3] - 50.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_broadcast_operations() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        // Test broadcasting: [3] + [1] should broadcast
+        let a = backend.f32_to_tensor(&[1.0, 2.0, 3.0], &[3]).unwrap();
+        let b = backend.f32_to_tensor(&[10.0], &[1]).unwrap();
+
+        let result = backend.add(&a, &b).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec, vec![11.0, 12.0, 13.0]);
+    }
+
+    #[test]
+    fn test_softmax_edge_cases() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        // Test softmax with all zeros
+        let x = backend.f32_to_tensor(&[0.0, 0.0, 0.0], &[3]).unwrap();
+        let result = backend.softmax(&x).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        // All zeros should produce uniform distribution
+        let sum: f32 = result_vec.iter().sum();
+        assert!((sum - 1.0).abs() < 0.01);
+        // Each value should be approximately 1/3
+        for val in &result_vec {
+            assert!((val - 1.0 / 3.0).abs() < 0.1);
+        }
+
+        // Test softmax with large values
+        let x_large = backend.f32_to_tensor(&[100.0, 200.0, 300.0], &[3]).unwrap();
+        let result_large = backend.softmax(&x_large).unwrap();
+        let result_large_vec = backend.tensor_to_f32(&result_large).unwrap();
+
+        let sum_large: f32 = result_large_vec.iter().sum();
+        assert!((sum_large - 1.0).abs() < 0.01);
+        // Largest value should have highest probability
+        assert!(result_large_vec[2] > result_large_vec[1]);
+        assert!(result_large_vec[1] > result_large_vec[0]);
+    }
+
+    #[test]
+    fn test_rms_norm_edge_cases() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        // Test RMS norm with all zeros
+        let x = backend.f32_to_tensor(&[0.0, 0.0, 0.0, 0.0], &[4]).unwrap();
+        let weight = backend.f32_to_tensor(&[1.0, 1.0, 1.0, 1.0], &[4]).unwrap();
+
+        let result = backend.rms_norm(&x, &weight, 1e-5).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        assert_eq!(result_vec.len(), 4);
+        // All zeros should remain zeros (or very close)
+        for val in &result_vec {
+            assert!(val.abs() < 0.01, "RMS norm of zeros should be near zero");
+        }
+    }
+
+    #[test]
+    fn test_silu_edge_cases() {
+        let backend = CandleGpuBackend::new().unwrap();
+
+        // Test SiLU with zero
+        let x = backend.f32_to_tensor(&[0.0], &[1]).unwrap();
+        let result = backend.silu(&x).unwrap();
+        let result_vec = backend.tensor_to_f32(&result).unwrap();
+
+        // SiLU(0) = 0
+        assert!((result_vec[0]).abs() < 0.001);
+
+        // Test SiLU with large positive value
+        let x_large = backend.f32_to_tensor(&[10.0], &[1]).unwrap();
+        let result_large = backend.silu(&x_large).unwrap();
+        let result_large_vec = backend.tensor_to_f32(&result_large).unwrap();
+
+        // SiLU(x) ≈ x for large positive values
+        assert!(result_large_vec[0] > 9.0);
+
+        // Test SiLU with large negative value
+        let x_neg = backend.f32_to_tensor(&[-10.0], &[1]).unwrap();
+        let result_neg = backend.silu(&x_neg).unwrap();
+        let result_neg_vec = backend.tensor_to_f32(&result_neg).unwrap();
+
+        // SiLU(x) ≈ 0 for large negative values
+        assert!(result_neg_vec[0] > -1.0);
     }
 }

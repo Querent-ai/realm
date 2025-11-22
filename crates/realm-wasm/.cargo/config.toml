@@ -3,5 +3,6 @@ target = "wasm32-unknown-unknown"
 
 [target.wasm32-unknown-unknown]
 rustflags = [
-    "-C", "target-feature=+bulk-memory,+mutable-globals,+sign-ext"
+    "-C", "target-feature=+bulk-memory,+mutable-globals,+sign-ext",
+    "--cfg", "getrandom_backend=\"wasm_js\""
 ]
