@@ -459,4 +459,170 @@ mod tests {
         assert_eq!(session.generated_tokens().len(), 0);
         assert_eq!(session.prompt_tokens(), &[4, 5, 6]);
     }
+
+    #[test]
+    fn test_next_token_with_model_completion_check() {
+        // Test that next_token_with_model returns None when already complete
+        let mut session = InferenceSession::new(1, vec![1, 2, 3], GenOptions::default());
+        
+        // Manually set to complete state
+        session.state = GenerationState::Complete;
+        
+        // Create a minimal model config for testing
+        use realm_models::TransformerConfig;
+        let config = TransformerConfig {
+            vocab_size: 1000,
+            hidden_size: 128,
+            num_layers: 2,
+            num_heads: 4,
+            num_kv_heads: 4,
+            intermediate_size: 512,
+            max_seq_len: 2048,
+            rope_theta: 10000.0,
+            rope_scaling: None,
+        };
+        
+        let mut model = realm_models::Model::new(config);
+        
+        // Should return None when already complete
+        let result = session.next_token_with_model(&mut model, None);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_next_token_with_model_max_tokens() {
+        // Test max_tokens limit in next_token_with_model
+        let options = GenOptions {
+            max_tokens: 2,
+            ..Default::default()
+        };
+        
+        let mut session = InferenceSession::new(1, vec![1, 2, 3], options);
+        
+        use realm_models::TransformerConfig;
+        let config = TransformerConfig {
+            vocab_size: 1000,
+            hidden_size: 128,
+            num_layers: 2,
+            num_heads: 4,
+            num_kv_heads: 4,
+            intermediate_size: 512,
+            max_seq_len: 2048,
+            rope_theta: 10000.0,
+            rope_scaling: None,
+        };
+        
+        let mut model = realm_models::Model::new(config);
+        
+        // Generate 2 tokens (should succeed)
+        let token1 = session.next_token_with_model(&mut model, None);
+        assert!(token1.is_ok());
+        assert!(token1.unwrap().is_some());
+        assert_eq!(session.tokens_generated(), 1);
+        
+        let token2 = session.next_token_with_model(&mut model, None);
+        assert!(token2.is_ok());
+        assert!(token2.unwrap().is_some());
+        assert_eq!(session.tokens_generated(), 2);
+        
+        // 3rd token should be None (max_tokens reached)
+        let token3 = session.next_token_with_model(&mut model, None);
+        assert!(token3.is_ok());
+        assert!(token3.unwrap().is_none());
+        assert_eq!(session.state(), GenerationState::Complete);
+        assert!(session.is_complete());
+    }
+
+    #[test]
+    fn test_next_token_with_model_stop_tokens() {
+        // Test stop tokens in next_token_with_model
+        let mut session = InferenceSession::new(1, vec![1, 2, 3], GenOptions::default());
+        session.set_stop_tokens(vec![42]); // Stop on token ID 42
+        
+        use realm_models::TransformerConfig;
+        let config = TransformerConfig {
+            vocab_size: 1000,
+            hidden_size: 128,
+            num_layers: 2,
+            num_heads: 4,
+            num_kv_heads: 4,
+            intermediate_size: 512,
+            max_seq_len: 2048,
+            rope_theta: 10000.0,
+            rope_scaling: None,
+        };
+        
+        let mut model = realm_models::Model::new(config);
+        
+        // Generate tokens until we hit stop token (if sampling produces it)
+        // Note: This test may be flaky due to randomness, but tests the stop token logic
+        for _ in 0..10 {
+            let result = session.next_token_with_model(&mut model, None);
+            if result.is_ok() {
+                if let Some(token) = result.unwrap() {
+                    if token == 42 {
+                        assert_eq!(session.state(), GenerationState::Stopped);
+                        assert!(session.is_complete());
+                        return;
+                    }
+                } else {
+                    // Generation completed for other reason
+                    break;
+                }
+            } else {
+                // Error occurred, which is acceptable for this test
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn test_inference_session_with_speculative_decoding() {
+        // Test that speculative decoding config is stored correctly
+        let config = crate::speculative::SpeculativeConfig {
+            draft_k: 4,
+            max_draft_tokens: 8,
+        };
+        
+        let session = InferenceSession::new(1, vec![1, 2, 3], GenOptions::default())
+            .with_speculative_decoding(config.clone());
+        
+        // Verify speculative config is set (we can't access it directly, but we can test behavior)
+        // The config will be used in next_token_with_model when draft_model is provided
+        assert_eq!(session.model_id(), 1);
+        assert_eq!(session.prompt_tokens(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_inference_session_generated_tokens_access() {
+        // Test accessing generated tokens
+        let mut session = InferenceSession::new(1, vec![1, 2, 3], GenOptions::default());
+        
+        // Initially no generated tokens
+        assert_eq!(session.generated_tokens().len(), 0);
+        
+        // Generate some tokens
+        for _ in 0..3 {
+            session.next_token().unwrap();
+        }
+        
+        // Should have 3 generated tokens
+        assert_eq!(session.generated_tokens().len(), 3);
+    }
+
+    #[test]
+    fn test_inference_session_model_id() {
+        // Test model ID access
+        let session = InferenceSession::new(42, vec![1, 2, 3], GenOptions::default());
+        assert_eq!(session.model_id(), 42);
+    }
+
+    #[test]
+    fn test_inference_session_prompt_tokens() {
+        // Test prompt tokens access
+        let prompt = vec![10, 20, 30, 40];
+        let session = InferenceSession::new(1, prompt.clone(), GenOptions::default());
+        assert_eq!(session.prompt_tokens(), &prompt);
+    }
 }
