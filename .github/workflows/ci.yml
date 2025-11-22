@@ -40,19 +40,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-clippy-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-target-clippy-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Run clippy (libraries only)
         run: cargo clippy --workspace --lib -- -D warnings
@@ -66,7 +66,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         rust: [stable, 1.75.0]
     steps:
       - uses: actions/checkout@v4
@@ -80,19 +80,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-test-${{ matrix.rust }}-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-target-test-${{ matrix.rust }}-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Run library tests
         run: cargo test --workspace --lib --all-targets
@@ -135,19 +135,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-build-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-target-build-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Build workspace
         run: cargo build --release --workspace
@@ -178,19 +178,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-wasm-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-target-wasm-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Build WASM
         working-directory: crates/realm-wasm
@@ -216,13 +216,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-examples-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-target-examples-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Download WASM artifact
         uses: actions/download-artifact@v4
@@ -265,7 +265,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-integration-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-target-integration-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Download WASM artifact
         uses: actions/download-artifact@v4
@@ -322,19 +322,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-e2e-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-target-e2e-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Cache model file
         id: model-cache
@@ -437,7 +437,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-bench-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-target-bench-${{ hashFiles(format('{0}/**/Cargo.toml', github.workspace)) }}
 
       - name: Build benchmarks
         run: cargo bench --workspace --no-run
