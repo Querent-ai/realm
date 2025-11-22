@@ -119,8 +119,7 @@ impl FlashAttentionMetal {
                 )
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to compare mask: {}", e)))?;
 
-            let scores_tensor = scores_base
-                .map_err(|e| WasmChordError::Runtime(format!("Failed to compute scores: {}", e)))?;
+            let scores_tensor = scores_base;
 
             let neg_inf = Tensor::new(&[f32::NEG_INFINITY], &self.device)
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to create -inf: {}", e)))?
@@ -132,7 +131,6 @@ impl FlashAttentionMetal {
                 .map_err(|e| WasmChordError::Runtime(format!("Failed to apply mask: {}", e)))?
         } else {
             scores_base
-                .map_err(|e| WasmChordError::Runtime(format!("Failed to compute scores: {}", e)))?
         };
 
         // Apply softmax: softmax(scores)
