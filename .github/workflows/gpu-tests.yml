@@ -4,21 +4,21 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - 'crates/realm-compute-gpu/**'
-      - 'crates/realm-runtime/src/attention/**'
-      - 'examples/test-webgpu/**'
-      - 'examples/test-gpu-features/**'
-      - 'examples/paris/**'
-      - '.github/workflows/gpu-tests.yml'
+      - "crates/realm-compute-gpu/**"
+      - "crates/realm-runtime/src/attention/**"
+      - "examples/test-webgpu/**"
+      - "examples/test-gpu-features/**"
+      - "examples/paris/**"
+      - ".github/workflows/gpu-tests.yml"
   pull_request:
     branches: [main, develop]
     paths:
-      - 'crates/realm-compute-gpu/**'
-      - 'crates/realm-runtime/src/attention/**'
-      - 'examples/test-webgpu/**'
-      - 'examples/test-gpu-features/**'
-      - 'examples/paris/**'
-      - '.github/workflows/gpu-tests.yml'
+      - "crates/realm-compute-gpu/**"
+      - "crates/realm-runtime/src/attention/**"
+      - "examples/test-webgpu/**"
+      - "examples/test-gpu-features/**"
+      - "examples/paris/**"
+      - ".github/workflows/gpu-tests.yml"
   workflow_dispatch:
 
 jobs:
@@ -41,7 +41,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -79,7 +79,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -147,7 +147,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -155,10 +155,10 @@ jobs:
         run: |
           # Test fused kernels
           cargo test --package realm-compute-gpu --lib -- fused_kernels
-          
+
           # Test mixed precision
           cargo test --package realm-compute-gpu --lib -- mixed_precision
-          
+
           # Test candle backend (may not have GPU, but should compile)
           cargo test --package realm-compute-gpu --lib -- candle_backend || echo "Candle backend tests may require GPU"
 
@@ -187,7 +187,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -219,7 +219,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -275,7 +275,7 @@ jobs:
   cuda-tests:
     name: CUDA GPU Tests (Self-hosted)
     runs-on: self-hosted
-    if: false  # Disabled by default - enable when self-hosted GPU runner is available
+    if: false # Disabled by default - enable when self-hosted GPU runner is available
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -302,7 +302,7 @@ jobs:
   paris-cuda:
     name: Paris Generation with CUDA (Self-hosted)
     runs-on: self-hosted
-    if: false  # Disabled by default - enable when self-hosted GPU runner is available
+    if: false # Disabled by default - enable when self-hosted GPU runner is available
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -356,4 +356,3 @@ jobs:
           name: paris-cuda-logs
           path: paris-cuda-output.log
           if-no-files-found: ignore
-

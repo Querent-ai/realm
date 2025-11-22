@@ -2,9 +2,9 @@ name: 🚀 CI
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [main, dev]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev]
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,23 +40,23 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-clippy-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-clippy-${{ hashFiles('Cargo.lock') }}
 
       - name: Run clippy (libraries only)
         run: cargo clippy --workspace --lib -- -D warnings
-      
+
       - name: Run clippy (working bins)
         run: cargo clippy --bin paris-generation --bin multi-tenant -- -D warnings
         continue-on-error: true
@@ -80,19 +80,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-test-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-test-${{ matrix.rust }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Run library tests
         run: cargo test --workspace --lib --all-targets
@@ -135,19 +135,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-build-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-build-${{ hashFiles('Cargo.lock') }}
 
       - name: Build workspace
         run: cargo build --release --workspace
@@ -178,19 +178,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-wasm-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-wasm-${{ hashFiles('Cargo.lock') }}
 
       - name: Build WASM
         working-directory: crates/realm-wasm
@@ -216,13 +216,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-examples-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-examples-${{ hashFiles('Cargo.lock') }}
 
       - name: Download WASM artifact
         uses: actions/download-artifact@v4
@@ -265,7 +265,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-integration-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-integration-${{ hashFiles('Cargo.lock') }}
 
       - name: Download WASM artifact
         uses: actions/download-artifact@v4
@@ -316,25 +316,25 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-e2e-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-e2e-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache model file
         id: model-cache
@@ -354,28 +354,28 @@ jobs:
           echo "📥 Downloading model from HuggingFace..."
           echo "   URL: ${{ env.MODEL_URL }}"
           echo "   Destination: $MODEL_PATH"
-          
+
           # Download with the chat version name, then rename to match expected name
           TEMP_PATH="models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
           curl -L --progress-bar -o "$TEMP_PATH" "${{ env.MODEL_URL }}" || {
             echo "⚠️  curl failed, trying wget..."
             wget --no-verbose --show-progress -O "$TEMP_PATH" "${{ env.MODEL_URL }}"
           }
-          
+
           # Rename to match expected filename
           if [ -f "$TEMP_PATH" ]; then
             mv "$TEMP_PATH" "$MODEL_PATH"
           fi
-          
+
           if [ ! -f "$MODEL_PATH" ]; then
             echo "❌ Model file not created after download!"
             exit 1
           fi
-          
+
           FILE_SIZE=$(stat -c%s "$MODEL_PATH" 2>/dev/null || stat -f%z "$MODEL_PATH")
           FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
           echo "✅ Model downloaded: ${FILE_SIZE_MB}MB"
-          
+
           if [ $FILE_SIZE -lt 500000000 ]; then
             echo "❌ Model file seems too small: $FILE_SIZE bytes (expected > 500MB)"
             exit 1
@@ -437,7 +437,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-bench-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-bench-${{ hashFiles('Cargo.lock') }}
 
       - name: Build benchmarks
         run: cargo bench --workspace --no-run
@@ -480,12 +480,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Validate TypeScript SDKs
         run: |
           echo "Validating TypeScript SDKs..."
-          
+
           # Validate nodejs-ws SDK
           if [ -d "sdks/nodejs-ws" ]; then
             echo "Validating nodejs-ws SDK..."
@@ -495,7 +495,7 @@ jobs:
             echo "✅ nodejs-ws SDK validated"
             cd ../..
           fi
-          
+
           # Validate js SDK
           if [ -d "sdks/js" ]; then
             echo "Validating js SDK..."
@@ -505,14 +505,14 @@ jobs:
             echo "✅ js SDK validated"
             cd ../..
           fi
-          
+
           echo "✅ All TypeScript SDKs validated"
         continue-on-error: true
 
       - name: Validate Python SDKs
         run: |
           echo "Validating Python SDKs..."
-          
+
           # Check Python syntax
           if [ -d "sdks/python-ws" ]; then
             echo "Checking Python syntax..."
@@ -527,7 +527,7 @@ jobs:
               echo "✅ Python SDK tests completed"
             fi
           fi
-          
+
           echo "✅ All Python SDKs validated"
         continue-on-error: true
 
