@@ -899,7 +899,12 @@ mod tests {
                     tokens.push(token);
                 }
                 assert!(!tokens.is_empty());
-                assert!(tokens.last().unwrap().is_final);
+                assert!(
+                    tokens
+                        .last()
+                        .expect("Should have at least one token")
+                        .is_final
+                );
             }
             _ => panic!("Expected streaming result"),
         }

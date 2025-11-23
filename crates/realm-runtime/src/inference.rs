@@ -565,20 +565,22 @@ mod tests {
         // Note: This test may be flaky due to randomness, but tests the stop token logic
         for _ in 0..10 {
             let result = session.next_token_with_model(&mut model, None);
-            if result.is_ok() {
-                if let Ok(token) = result {
-                    if token == Some(42) {
+            match result {
+                Ok(Some(token)) => {
+                    if token == 42 {
                         assert_eq!(session.state(), GenerationState::Stopped);
                         assert!(session.is_complete());
                         return;
                     }
-                } else {
+                }
+                Ok(None) => {
                     // Generation completed for other reason
                     break;
                 }
-            } else {
-                // Error occurred, which is acceptable for this test
-                break;
+                Err(_) => {
+                    // Error occurred, which is acceptable for this test
+                    break;
+                }
             }
         }
     }

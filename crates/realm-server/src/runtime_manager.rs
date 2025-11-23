@@ -871,7 +871,10 @@ impl RuntimeManager {
         // Validate tenant ID format
         Self::validate_tenant_id(&tenant_id)?;
 
-        let mut runtimes = self.runtimes.lock().unwrap();
+        let mut runtimes = self
+            .runtimes
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire runtimes lock: {}", e))?;
 
         // Use entry() API for atomic check-and-insert (prevents race conditions)
         match runtimes.entry(tenant_id.clone()) {
@@ -890,7 +893,9 @@ impl RuntimeManager {
                     runtime.load_model(model_config.clone())?;
 
                     // Apply LoRA adapter if configured for this tenant
-                    let tenant_lora = self.tenant_lora_adapters.lock().unwrap();
+                    let tenant_lora = self.tenant_lora_adapters.lock().map_err(|e| {
+                        anyhow!("Failed to acquire tenant_lora_adapters lock: {}", e)
+                    })?;
                     if let Some(ref adapter_id) = tenant_lora.get(&tenant_id) {
                         info!(
                             "Applying LoRA adapter '{}' to model for tenant {}",
@@ -953,7 +958,10 @@ impl RuntimeManager {
         // Resolve model name/URL to path
         let model_path = Self::resolve_model(model)?;
 
-        let mut runtimes = self.runtimes.lock().unwrap();
+        let mut runtimes = self
+            .runtimes
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire runtimes lock: {}", e))?;
 
         // Use entry() API for atomic check-and-insert (prevents race conditions)
         match runtimes.entry(tenant_id.clone()) {
@@ -1020,7 +1028,10 @@ impl RuntimeManager {
                 }
 
                 // Set LoRA adapter if configured for this tenant
-                let tenant_adapters = self.tenant_lora_adapters.lock().unwrap();
+                let tenant_adapters = self
+                    .tenant_lora_adapters
+                    .lock()
+                    .map_err(|e| anyhow!("Failed to acquire tenant_lora_adapters lock: {}", e))?;
                 if let Some(adapter_id) = tenant_adapters.get(&tenant_id) {
                     runtime.lora_adapter_id = Some(adapter_id.clone());
                     info!(
@@ -1057,12 +1068,18 @@ impl RuntimeManager {
         }
 
         // Store mapping
-        let mut adapters = self.tenant_lora_adapters.lock().unwrap();
+        let mut adapters = self
+            .tenant_lora_adapters
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire tenant_lora_adapters lock: {}", e))?;
         adapters.insert(tenant_id.clone(), adapter_id.clone());
         drop(adapters);
 
         // Update runtime if it exists
-        let mut runtimes = self.runtimes.lock().unwrap();
+        let mut runtimes = self
+            .runtimes
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire runtimes lock: {}", e))?;
         if let Some(runtime) = runtimes.get_mut(&tenant_id) {
             runtime.lora_adapter_id = Some(adapter_id.clone());
             info!(
@@ -1112,8 +1129,10 @@ impl RuntimeManager {
 
     /// Get LoRA adapter ID for a tenant (if configured)
     pub fn get_tenant_lora_adapter(&self, tenant_id: impl AsRef<str>) -> Option<String> {
-        let adapters = self.tenant_lora_adapters.lock().unwrap();
-        adapters.get(tenant_id.as_ref()).cloned()
+        self.tenant_lora_adapters
+            .lock()
+            .ok()
+            .and_then(|adapters| adapters.get(tenant_id.as_ref()).cloned())
     }
 
     /// Resolve model name or URL to file path
@@ -1167,7 +1186,9 @@ impl RuntimeManager {
             let env_path = PathBuf::from(env_dir);
             if env_path.exists() {
                 dirs.push(env_path);
-                info!("Using REALM_MODEL_DIR: {:?}", dirs.last().unwrap());
+                if let Some(last_dir) = dirs.last() {
+                    info!("Using REALM_MODEL_DIR: {:?}", last_dir);
+                }
             } else {
                 warn!(
                     "REALM_MODEL_DIR environment variable set but path does not exist: {:?}",
@@ -1321,7 +1342,10 @@ impl RuntimeManager {
     /// Remove a tenant runtime (cleanup)
     pub fn remove_runtime(&self, tenant_id: impl AsRef<str>) -> Result<()> {
         let tenant_id = tenant_id.as_ref();
-        let mut runtimes = self.runtimes.lock().unwrap();
+        let mut runtimes = self
+            .runtimes
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire runtimes lock: {}", e))?;
 
         runtimes
             .remove(tenant_id)

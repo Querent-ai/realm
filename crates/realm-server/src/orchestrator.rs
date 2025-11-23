@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 /// Model type/capability
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -238,18 +238,27 @@ impl ModelOrchestrator {
         }
 
         // Store model spec
-        let mut models = self.models.lock().unwrap();
+        let mut models = self
+            .models
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire models lock: {}", e))?;
         models.insert(model_id.clone(), spec.clone());
 
         // Index by type
-        let mut models_by_type = self.models_by_type.lock().unwrap();
+        let mut models_by_type = self
+            .models_by_type
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire models_by_type lock: {}", e))?;
         models_by_type
             .entry(model_type.clone())
             .or_default()
             .push(model_id.clone());
 
         // Set as default if first model of this type
-        let mut default_models = self.default_models.lock().unwrap();
+        let mut default_models = self
+            .default_models
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire default_models lock: {}", e))?;
         use std::collections::hash_map::Entry;
         if let Entry::Vacant(e) = default_models.entry(model_type) {
             e.insert(model_id.clone());
@@ -264,7 +273,10 @@ impl ModelOrchestrator {
         let name = pipeline.name.clone();
 
         // Validate pipeline: check all model IDs exist
-        let models = self.models.lock().unwrap();
+        let models = self
+            .models
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire models lock: {}", e))?;
         for step in &pipeline.steps {
             if !models.contains_key(&step.model_id) {
                 return Err(anyhow!(
@@ -275,7 +287,10 @@ impl ModelOrchestrator {
             }
         }
 
-        let mut pipelines = self.pipelines.lock().unwrap();
+        let mut pipelines = self
+            .pipelines
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire pipelines lock: {}", e))?;
         pipelines.insert(name.clone(), pipeline);
 
         info!("Registered pipeline: {}", name);
@@ -284,20 +299,33 @@ impl ModelOrchestrator {
 
     /// Get a model by ID
     pub fn get_model(&self, model_id: &str) -> Option<ModelSpec> {
-        let models = self.models.lock().unwrap();
-        models.get(model_id).cloned()
+        self.models
+            .lock()
+            .ok()
+            .and_then(|models| models.get(model_id).cloned())
     }
 
     /// Get models by type
     pub fn get_models_by_type(&self, model_type: &ModelType) -> Vec<ModelSpec> {
-        let models = self.models.lock().unwrap();
-        let models_by_type = self.models_by_type.lock().unwrap();
-
-        models_by_type
+        let models_guard = match self.models.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                error!("Failed to acquire models lock: {}", e);
+                return Vec::new();
+            }
+        };
+        let models_by_type_guard = match self.models_by_type.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                error!("Failed to acquire models_by_type lock: {}", e);
+                return Vec::new();
+            }
+        };
+        models_by_type_guard
             .get(model_type)
             .map(|ids| {
                 ids.iter()
-                    .filter_map(|id| models.get(id).cloned())
+                    .filter_map(|id| models_guard.get(id).cloned())
                     .collect()
             })
             .unwrap_or_default()
@@ -305,19 +333,27 @@ impl ModelOrchestrator {
 
     /// Get default model for a type
     pub fn get_default_model(&self, model_type: &ModelType) -> Option<String> {
-        let default_models = self.default_models.lock().unwrap();
-        default_models.get(model_type).cloned()
+        self.default_models
+            .lock()
+            .ok()
+            .and_then(|default_models| default_models.get(model_type).cloned())
     }
 
     /// Set default model for a type
     pub fn set_default_model(&self, model_type: ModelType, model_id: String) -> Result<()> {
         // Validate model exists
-        let models = self.models.lock().unwrap();
+        let models = self
+            .models
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire models lock: {}", e))?;
         if !models.contains_key(&model_id) {
             return Err(anyhow!("Model not found: {}", model_id));
         }
 
-        let mut default_models = self.default_models.lock().unwrap();
+        let mut default_models = self
+            .default_models
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire default_models lock: {}", e))?;
         default_models.insert(model_type, model_id.clone());
 
         info!("Set {} as default model", model_id);
@@ -350,7 +386,10 @@ impl ModelOrchestrator {
         );
 
         // Get pipeline
-        let pipelines = self.pipelines.lock().unwrap();
+        let pipelines = self
+            .pipelines
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire pipelines lock: {}", e))?;
         let pipeline = pipelines
             .get(pipeline_name)
             .ok_or_else(|| anyhow!("Pipeline not found: {}", pipeline_name))?
@@ -448,20 +487,28 @@ impl ModelOrchestrator {
 
     /// List all registered models
     pub fn list_models(&self) -> Vec<ModelSpec> {
-        let models = self.models.lock().unwrap();
-        models.values().cloned().collect()
+        self.models
+            .lock()
+            .ok()
+            .map(|models| models.values().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// List all registered pipelines
     pub fn list_pipelines(&self) -> Vec<String> {
-        let pipelines = self.pipelines.lock().unwrap();
-        pipelines.keys().cloned().collect()
+        self.pipelines
+            .lock()
+            .ok()
+            .map(|pipelines| pipelines.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Get pipeline definition
     pub fn get_pipeline(&self, name: &str) -> Option<Pipeline> {
-        let pipelines = self.pipelines.lock().unwrap();
-        pipelines.get(name).cloned()
+        self.pipelines
+            .lock()
+            .ok()
+            .and_then(|pipelines| pipelines.get(name).cloned())
     }
 }
 

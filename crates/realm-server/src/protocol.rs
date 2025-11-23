@@ -273,7 +273,7 @@ mod tests {
             }),
         );
 
-        let json = serde_json::to_string(&call).unwrap();
+        let json = serde_json::to_string(&call).expect("FunctionCall should serialize to JSON");
         assert!(json.contains("generate"));
         assert!(json.contains("Test"));
     }

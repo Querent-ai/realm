@@ -3,7 +3,7 @@
 //! This module provides integration between the speculative decoding framework
 //! and the actual generation path in RuntimeManager.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use realm_runtime::speculative::{DraftModel, SpeculativeConfig, SpeculativeDecoder, TargetModel};
 use std::sync::{Arc, Mutex};
 
@@ -39,7 +39,9 @@ impl DraftModel for DraftModelWrapper {
             .map_err(|e| realm_core::error::Error::Runtime(format!("Decode failed: {}", e)))?;
 
         // Generate using draft model
-        let mut runtime = self.runtime.lock().unwrap();
+        let mut runtime = self.runtime.lock().map_err(|e| {
+            realm_core::error::Error::Runtime(format!("Failed to acquire runtime lock: {}", e))
+        })?;
         let generated_text = runtime.generate(prompt_text).map_err(|e| {
             realm_core::error::Error::Runtime(format!("Draft generation failed: {}", e))
         })?;
@@ -94,7 +96,9 @@ impl TargetModel for TargetModelWrapper {
             .map_err(|e| realm_core::error::Error::Runtime(format!("Decode failed: {}", e)))?;
 
         // Generate using target model to verify
-        let mut runtime = self.runtime.lock().unwrap();
+        let mut runtime = self.runtime.lock().map_err(|e| {
+            realm_core::error::Error::Runtime(format!("Failed to acquire runtime lock: {}", e))
+        })?;
         let target_generated = runtime.generate(full_text).map_err(|e| {
             realm_core::error::Error::Runtime(format!("Target verification failed: {}", e))
         })?;
@@ -130,11 +134,15 @@ pub fn generate_with_speculative_decoding(
 ) -> Result<String> {
     // Check if draft model is configured and get model IDs
     let (target_model_id, draft_model_id) = {
-        let runtime_guard = runtime.lock().unwrap();
+        let runtime_guard = runtime
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire runtime lock: {}", e))?;
         if runtime_guard.draft_model_config().is_none() {
             drop(runtime_guard);
             // No draft model, use standard generation
-            let mut runtime = runtime.lock().unwrap();
+            let mut runtime = runtime
+                .lock()
+                .map_err(|e| anyhow!("Failed to acquire runtime lock: {}", e))?;
             return runtime.generate(prompt);
         }
         let target_id = runtime_guard.model_id();
