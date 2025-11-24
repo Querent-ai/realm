@@ -12,15 +12,12 @@ members = [
     "cli",
     "examples/simple-realm-test",
     "examples/multi-tenant",
-    # "examples/end-to-end-inference",  # TODO: Fix HostContext imports
     "examples/paris-generation",
     "examples/paris/native",
     "examples/memory64-demo",
     "examples/metrics-demo",
     "examples/wasm-host-runner",
     "examples/websocket-server",
-    "examples/test-webgpu",
-    "examples/test-gpu-features",
 ]
 
 resolver = "2"

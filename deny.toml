@@ -9,6 +9,7 @@ targets = [
     { triple = "x86_64-pc-windows-msvc" },
     { triple = "wasm32-unknown-unknown" },
 ]
+
 all-features = false
 no-default-features = false
 
@@ -38,7 +39,6 @@ allow = [
     "Unicode-DFS-2016",
     "Zlib",
     "Unicode-3.0",
-    "Unicode",
     "Unicode-DFS-2016",
 ]
 confidence-threshold = 0.8
