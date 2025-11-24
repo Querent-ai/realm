@@ -40,7 +40,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
@@ -80,7 +80,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-test-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
@@ -135,7 +135,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-build-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
@@ -178,7 +178,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-wasm-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
@@ -216,7 +216,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-examples-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
@@ -322,7 +322,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-e2e-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
