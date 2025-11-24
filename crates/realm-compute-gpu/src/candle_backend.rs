@@ -1547,6 +1547,209 @@ mod tests {
     }
 
     #[test]
+    fn test_fused_dequant_matmul_q2k() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ2_K, QK_K};
+
+        let n = 256;
+        let k = 256;
+        let batch_size = 1;
+
+        let block = BlockQ2_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [0u8; QK_K / 16], // 16 scales
+            qs: [0u8; QK_K / 4],      // 64 bytes
+            qh: [0u8; QK_K / 8],      // 32 bytes
+        };
+        let num_blocks = n * (k / QK_K);
+        let blocks = vec![block; num_blocks];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend.fused_dequant_matmul_q2k(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q3k() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ3_K, QK_K};
+
+        let n = 256;
+        let k = 256;
+        let batch_size = 1;
+
+        let block = BlockQ3_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [0u8; QK_K / 8], // 32 scales
+            qs: [0u8; QK_K / 2],     // 128 bytes
+            qh: [0u8; QK_K / 8],     // 32 bytes
+        };
+        let num_blocks = n * (k / QK_K);
+        let blocks = vec![block; num_blocks];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend.fused_dequant_matmul_q3k(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q40() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ4_0, Q4_BLOCK_SIZE};
+
+        let n = 32;
+        let k = 32;
+        let batch_size = 1;
+
+        let block = BlockQ4_0 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            quants: [0x10u8; Q4_BLOCK_SIZE / 2],
+        };
+        let num_blocks = n * (k / Q4_BLOCK_SIZE);
+        let blocks = vec![block; num_blocks];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend.fused_dequant_matmul_q40(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q41() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ4_1, Q4_BLOCK_SIZE};
+
+        let n = 32;
+        let k = 32;
+        let batch_size = 1;
+
+        let block = BlockQ4_1 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            delta: half::f16::from_f32(0.0).to_bits(),
+            quants: [0x10u8; Q4_BLOCK_SIZE / 2],
+        };
+        let num_blocks = n * (k / Q4_BLOCK_SIZE);
+        let blocks = vec![block; num_blocks];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend.fused_dequant_matmul_q41(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q50() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ5_0, Q4_BLOCK_SIZE};
+
+        let n = 32;
+        let k = 32;
+        let batch_size = 1;
+
+        let block = BlockQ5_0 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            qh: [0u8; Q4_BLOCK_SIZE / 8],
+            ql: [0x10u8; Q4_BLOCK_SIZE / 2],
+        };
+        let num_blocks = n * (k / Q4_BLOCK_SIZE);
+        let blocks = vec![block; num_blocks];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend.fused_dequant_matmul_q50(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q51() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ5_1, Q4_BLOCK_SIZE};
+
+        let n = 32;
+        let k = 32;
+        let batch_size = 1;
+
+        let block = BlockQ5_1 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            delta: half::f16::from_f32(0.0).to_bits(),
+            qh: [0u8; Q4_BLOCK_SIZE / 8],
+            ql: [0x10u8; Q4_BLOCK_SIZE / 2],
+        };
+        let num_blocks = n * (k / Q4_BLOCK_SIZE);
+        let blocks = vec![block; num_blocks];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend.fused_dequant_matmul_q51(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q80() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ8_0, Q8_BLOCK_SIZE};
+
+        let n = 32;
+        let k = 32;
+        let batch_size = 1;
+
+        let block = BlockQ8_0 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            quants: [0i8; Q8_BLOCK_SIZE],
+        };
+        let num_blocks = n * (k / Q8_BLOCK_SIZE);
+        let blocks = vec![block; num_blocks];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend.fused_dequant_matmul_q80(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
+    fn test_fused_dequant_matmul_q81() {
+        let backend = CandleGpuBackend::new().unwrap();
+        use realm_core::quant::{BlockQ8_1, Q8_BLOCK_SIZE};
+
+        let n = 32;
+        let k = 32;
+        let batch_size = 1;
+
+        let block = BlockQ8_1 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            delta: half::f16::from_f32(0.0).to_bits(),
+            quants: [0i8; Q8_BLOCK_SIZE],
+        };
+        let num_blocks = n * (k / Q8_BLOCK_SIZE);
+        let blocks = vec![block; num_blocks];
+
+        let input = vec![1.0f32; batch_size * k];
+
+        let result = backend.fused_dequant_matmul_q81(&blocks, &input, batch_size, n, k);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.len(), batch_size * n);
+    }
+
+    #[test]
     fn test_backend_name() {
         let backend = CandleGpuBackend::new().unwrap();
         let name = backend.name();

@@ -532,5 +532,156 @@ async fn test_all_formats_sequence() {
         .fused_dequant_matmul_q8k(&q8k_blocks, &input, batch_size, n, k)
         .unwrap();
 
-    println!("✅ All formats executed successfully in sequence");
+    println!("✅ All formats (Q4_K-Q8_K) executed successfully in sequence");
+}
+
+/// Test new quantization formats (Q2_K, Q3_K, Q4_0-Q8_1)
+#[tokio::test]
+async fn test_new_quantization_formats() {
+    if !GpuBackend::is_available() {
+        eprintln!("GPU not available, skipping test");
+        return;
+    }
+
+    let backend = match GpuBackend::new().await {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("⚠️  WebGPU backend creation failed: {} (skipping)", e);
+            return;
+        }
+    };
+    let n = 4;
+    let k = 256; // Use QK_K for K-quant formats, Q4_BLOCK_SIZE/Q8_BLOCK_SIZE for others
+    let batch_size = 2;
+    let input = vec![1.0f32; batch_size * k];
+
+    use realm_core::quant::{
+        BlockQ2_K, BlockQ3_K, BlockQ4_0, BlockQ4_1, BlockQ5_0, BlockQ5_1, BlockQ8_0, BlockQ8_1,
+        Q4_BLOCK_SIZE, Q8_BLOCK_SIZE, QK_K,
+    };
+
+    // Test Q2_K
+    let num_blocks_q2k = n * (k / QK_K);
+    let q2k_blocks: Vec<BlockQ2_K> = (0..num_blocks_q2k)
+        .map(|_| BlockQ2_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [1u8; QK_K / 16], // 16 scales
+            qs: [0x10u8; QK_K / 4],   // 64 bytes
+            qh: [0u8; QK_K / 8],      // 32 bytes
+        })
+        .collect();
+    let result = backend.fused_dequant_matmul_q2k(&q2k_blocks, &input, batch_size, n, k);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().len(), batch_size * n);
+    println!("✅ Q2_K: {} elements", batch_size * n);
+
+    // Test Q3_K
+    let num_blocks_q3k = n * (k / QK_K);
+    let q3k_blocks: Vec<BlockQ3_K> = (0..num_blocks_q3k)
+        .map(|_| BlockQ3_K {
+            d: half::f16::from_f32(1.0).to_bits(),
+            dmin: half::f16::from_f32(0.0).to_bits(),
+            scales: [1u8; QK_K / 8], // 32 scales
+            qs: [0x10u8; QK_K / 2],  // 128 bytes
+            qh: [0u8; QK_K / 8],     // 32 bytes
+        })
+        .collect();
+    let result = backend.fused_dequant_matmul_q3k(&q3k_blocks, &input, batch_size, n, k);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().len(), batch_size * n);
+    println!("✅ Q3_K: {} elements", batch_size * n);
+
+    // Test Q4_0 (uses Q4_BLOCK_SIZE = 32)
+    let k_q40 = 32;
+    let n_q40 = 4;
+    let num_blocks_q40 = n_q40 * (k_q40 / Q4_BLOCK_SIZE);
+    let q40_blocks: Vec<BlockQ4_0> = (0..num_blocks_q40)
+        .map(|_| BlockQ4_0 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            quants: [0x10u8; Q4_BLOCK_SIZE / 2],
+        })
+        .collect();
+    let input_q40 = vec![1.0f32; batch_size * k_q40];
+    let result =
+        backend.fused_dequant_matmul_q40(&q40_blocks, &input_q40, batch_size, n_q40, k_q40);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().len(), batch_size * n_q40);
+    println!("✅ Q4_0: {} elements", batch_size * n_q40);
+
+    // Test Q4_1
+    let q41_blocks: Vec<BlockQ4_1> = (0..num_blocks_q40)
+        .map(|_| BlockQ4_1 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            delta: half::f16::from_f32(0.0).to_bits(),
+            quants: [0x10u8; Q4_BLOCK_SIZE / 2],
+        })
+        .collect();
+    let result =
+        backend.fused_dequant_matmul_q41(&q41_blocks, &input_q40, batch_size, n_q40, k_q40);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().len(), batch_size * n_q40);
+    println!("✅ Q4_1: {} elements", batch_size * n_q40);
+
+    // Test Q5_0
+    let q50_blocks: Vec<BlockQ5_0> = (0..num_blocks_q40)
+        .map(|_| BlockQ5_0 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            qh: [0u8; Q4_BLOCK_SIZE / 8],
+            ql: [0x10u8; Q4_BLOCK_SIZE / 2],
+        })
+        .collect();
+    let result =
+        backend.fused_dequant_matmul_q50(&q50_blocks, &input_q40, batch_size, n_q40, k_q40);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().len(), batch_size * n_q40);
+    println!("✅ Q5_0: {} elements", batch_size * n_q40);
+
+    // Test Q5_1
+    let q51_blocks: Vec<BlockQ5_1> = (0..num_blocks_q40)
+        .map(|_| BlockQ5_1 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            delta: half::f16::from_f32(0.0).to_bits(),
+            qh: [0u8; Q4_BLOCK_SIZE / 8],
+            ql: [0x10u8; Q4_BLOCK_SIZE / 2],
+        })
+        .collect();
+    let result =
+        backend.fused_dequant_matmul_q51(&q51_blocks, &input_q40, batch_size, n_q40, k_q40);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().len(), batch_size * n_q40);
+    println!("✅ Q5_1: {} elements", batch_size * n_q40);
+
+    // Test Q8_0 (uses Q8_BLOCK_SIZE = 32)
+    let k_q80 = 32;
+    let n_q80 = 4;
+    let num_blocks_q80 = n_q80 * (k_q80 / Q8_BLOCK_SIZE);
+    let q80_blocks: Vec<BlockQ8_0> = (0..num_blocks_q80)
+        .map(|_| BlockQ8_0 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            quants: [10i8; Q8_BLOCK_SIZE],
+        })
+        .collect();
+    let input_q80 = vec![1.0f32; batch_size * k_q80];
+    let result =
+        backend.fused_dequant_matmul_q80(&q80_blocks, &input_q80, batch_size, n_q80, k_q80);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().len(), batch_size * n_q80);
+    println!("✅ Q8_0: {} elements", batch_size * n_q80);
+
+    // Test Q8_1
+    let q81_blocks: Vec<BlockQ8_1> = (0..num_blocks_q80)
+        .map(|_| BlockQ8_1 {
+            scale: half::f16::from_f32(1.0).to_bits(),
+            delta: half::f16::from_f32(0.0).to_bits(),
+            quants: [10i8; Q8_BLOCK_SIZE],
+        })
+        .collect();
+    let result =
+        backend.fused_dequant_matmul_q81(&q81_blocks, &input_q80, batch_size, n_q80, k_q80);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().len(), batch_size * n_q80);
+    println!("✅ Q8_1: {} elements", batch_size * n_q80);
+
+    println!("✅ All new quantization formats (Q2_K-Q8_1) executed successfully");
 }
