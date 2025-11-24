@@ -551,12 +551,14 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          # Exclude compute crates due to pulp dependency compilation issues
-          cargo tarpaulin --workspace --out Xml --timeout 300 \
-            --exclude-files 'crates/realm-compute-cpu/src/*' \
-            --exclude realm-compute-cpu \
-            --exclude realm-compute-gpu \
-            || echo "⚠️  Coverage collection failed (known pulp dependency issue)"
+          # Only run coverage on core packages (exclude compute crates due to pulp compilation issues)
+          cargo tarpaulin --out Xml --timeout 300 \
+            -p realm-core \
+            -p realm-runtime \
+            -p realm-metrics \
+            -p realm-server \
+            --avoid-cfg-tarpaulin \
+            || echo "⚠️  Coverage collection failed"
         continue-on-error: true
 
       - name: Upload coverage to Codecov
