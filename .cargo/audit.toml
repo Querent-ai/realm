@@ -1,0 +1,12 @@
+[advisories]
+# Ignore unmaintained crates (warnings, not vulnerabilities)
+ignore = [
+    "RUSTSEC-2025-0119",  # number_prefix unmaintained (used by indicatif)
+    "RUSTSEC-2024-0436",  # paste unmaintained (used by metal/candle)
+]
+
+[database]
+# Check against RustSec advisory database
+path = "~/.cargo/advisory-db"
+url = "https://github.com/RustSec/advisory-db"
+fetch = true
