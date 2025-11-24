@@ -1,3 +1,6 @@
+# Configuration for cargo-audit
+# https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
+
 [advisories]
 # Ignore unmaintained crates (warnings, not vulnerabilities)
 ignore = [
@@ -10,3 +13,4 @@ ignore = [
 path = "~/.cargo/advisory-db"
 url = "https://github.com/RustSec/advisory-db"
 fetch = true
+stale = false  # Don't error if database is outdated

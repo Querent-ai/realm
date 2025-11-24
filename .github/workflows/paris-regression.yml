@@ -15,6 +15,11 @@ on:
       - ".github/workflows/paris-regression.yml"
   workflow_dispatch: # Allow manual trigger
 
+# Cancel previous runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1

@@ -21,6 +21,11 @@ on:
       - ".github/workflows/gpu-tests.yml"
   workflow_dispatch:
 
+# Cancel previous runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   webgpu-tests:
     name: WebGPU Tests
