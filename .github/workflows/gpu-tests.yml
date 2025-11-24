@@ -187,9 +187,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-gpu-tests-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-gpu-tests-
 
       - name: Build with Metal
         run: cargo build --package realm-compute-gpu --features metal
@@ -219,9 +219,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-gpu-tests-paris-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-gpu-tests-paris-
 
       - name: Cache model
         uses: actions/cache@v4
