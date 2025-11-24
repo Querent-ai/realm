@@ -18,8 +18,9 @@ feature-depth = 1
 # Advisory checks
 [advisories]
 ignore = [
-    # Add specific advisories to ignore here if needed
-    # Example: { id = "RUSTSEC-2020-0071", reason = "Waiting for upstream fix" }
+    # Unmaintained crates (warnings, not vulnerabilities)
+    { id = "RUSTSEC-2025-0119", reason = "number_prefix unmaintained (used by indicatif)" },
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained (used by metal/candle)" },
 ]
 
 # License checks
