@@ -20,6 +20,7 @@ members = [
     "examples/websocket-server",
     "examples/test-gpu-features",
     "examples/test-webgpu",
+    "examples/lora-demo",
 ]
 
 resolver = "2"

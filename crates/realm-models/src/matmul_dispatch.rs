@@ -144,6 +144,15 @@ pub fn dispatch_matmul(
             Ok(output)
         }
         WeightFormat::Q2K(blocks) => {
+            // Try GPU first, fallback to CPU
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            if let Some(gpu) = gpu_backend {
+                if let Ok(result) = gpu.fused_dequant_matmul_q2k(blocks, input, batch_size, n, k) {
+                    return Ok(result);
+                }
+            }
+
+            // Try CPU backend, fallback to direct implementation
             if let Some(cpu) = cpu_backend {
                 return cpu.fused_dequant_matmul_q2k(blocks, input, batch_size, n, k);
             }
@@ -152,6 +161,15 @@ pub fn dispatch_matmul(
             Ok(output)
         }
         WeightFormat::Q3K(blocks) => {
+            // Try GPU first, fallback to CPU
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            if let Some(gpu) = gpu_backend {
+                if let Ok(result) = gpu.fused_dequant_matmul_q3k(blocks, input, batch_size, n, k) {
+                    return Ok(result);
+                }
+            }
+
+            // Try CPU backend, fallback to direct implementation
             if let Some(cpu) = cpu_backend {
                 return cpu.fused_dequant_matmul_q3k(blocks, input, batch_size, n, k);
             }
@@ -160,6 +178,15 @@ pub fn dispatch_matmul(
             Ok(output)
         }
         WeightFormat::Q40(blocks) => {
+            // Try GPU first, fallback to CPU
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            if let Some(gpu) = gpu_backend {
+                if let Ok(result) = gpu.fused_dequant_matmul_q40(blocks, input, batch_size, n, k) {
+                    return Ok(result);
+                }
+            }
+
+            // Try CPU backend, fallback to direct implementation
             if let Some(cpu) = cpu_backend {
                 return cpu.fused_dequant_matmul_q40(blocks, input, batch_size, n, k);
             }
@@ -168,6 +195,15 @@ pub fn dispatch_matmul(
             Ok(output)
         }
         WeightFormat::Q41(blocks) => {
+            // Try GPU first, fallback to CPU
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            if let Some(gpu) = gpu_backend {
+                if let Ok(result) = gpu.fused_dequant_matmul_q41(blocks, input, batch_size, n, k) {
+                    return Ok(result);
+                }
+            }
+
+            // Try CPU backend, fallback to direct implementation
             if let Some(cpu) = cpu_backend {
                 return cpu.fused_dequant_matmul_q41(blocks, input, batch_size, n, k);
             }
@@ -176,6 +212,15 @@ pub fn dispatch_matmul(
             Ok(output)
         }
         WeightFormat::Q50(blocks) => {
+            // Try GPU first, fallback to CPU
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            if let Some(gpu) = gpu_backend {
+                if let Ok(result) = gpu.fused_dequant_matmul_q50(blocks, input, batch_size, n, k) {
+                    return Ok(result);
+                }
+            }
+
+            // Try CPU backend, fallback to direct implementation
             if let Some(cpu) = cpu_backend {
                 return cpu.fused_dequant_matmul_q50(blocks, input, batch_size, n, k);
             }
@@ -184,6 +229,15 @@ pub fn dispatch_matmul(
             Ok(output)
         }
         WeightFormat::Q51(blocks) => {
+            // Try GPU first, fallback to CPU
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            if let Some(gpu) = gpu_backend {
+                if let Ok(result) = gpu.fused_dequant_matmul_q51(blocks, input, batch_size, n, k) {
+                    return Ok(result);
+                }
+            }
+
+            // Try CPU backend, fallback to direct implementation
             if let Some(cpu) = cpu_backend {
                 return cpu.fused_dequant_matmul_q51(blocks, input, batch_size, n, k);
             }
@@ -192,6 +246,15 @@ pub fn dispatch_matmul(
             Ok(output)
         }
         WeightFormat::Q80(blocks) => {
+            // Try GPU first, fallback to CPU
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            if let Some(gpu) = gpu_backend {
+                if let Ok(result) = gpu.fused_dequant_matmul_q80(blocks, input, batch_size, n, k) {
+                    return Ok(result);
+                }
+            }
+
+            // Try CPU backend, fallback to direct implementation
             if let Some(cpu) = cpu_backend {
                 return cpu.fused_dequant_matmul_q80(blocks, input, batch_size, n, k);
             }
@@ -200,6 +263,15 @@ pub fn dispatch_matmul(
             Ok(output)
         }
         WeightFormat::Q81(blocks) => {
+            // Try GPU first, fallback to CPU
+            #[cfg(any(feature = "webgpu", feature = "cuda", feature = "metal"))]
+            if let Some(gpu) = gpu_backend {
+                if let Ok(result) = gpu.fused_dequant_matmul_q81(blocks, input, batch_size, n, k) {
+                    return Ok(result);
+                }
+            }
+
+            // Try CPU backend, fallback to direct implementation
             if let Some(cpu) = cpu_backend {
                 return cpu.fused_dequant_matmul_q81(blocks, input, batch_size, n, k);
             }

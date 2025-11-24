@@ -241,6 +241,8 @@ jobs:
           echo "Building examples..."
           cargo build --release --bin paris-generation || echo "⚠️  paris-generation build skipped"
           cargo build --release --bin multi-tenant || echo "⚠️  multi-tenant build skipped"
+          # Build lora-demo (will skip actual generation in CI, only tests configuration)
+          cargo build --bin lora-demo || echo "⚠️  lora-demo build skipped (may require WASM)"
           echo "✅ Example builds completed"
         continue-on-error: true
 

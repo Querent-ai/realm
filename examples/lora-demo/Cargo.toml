@@ -1,0 +1,16 @@
+[package]
+name = "lora-demo"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "lora-demo"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+realm-server = { path = "../../crates/realm-server" }
+realm-runtime = { path = "../../crates/realm-runtime" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
