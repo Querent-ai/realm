@@ -125,8 +125,13 @@ async fn health_check() -> impl IntoResponse {
 /// Metrics endpoint (Prometheus format)
 async fn metrics_endpoint(State(state): State<ServerState>) -> impl IntoResponse {
     let metrics_text = if let Some(ref metrics) = state.metrics {
-        let collector = metrics.lock().unwrap();
-        collector.export_prometheus()
+        match metrics.lock() {
+            Ok(collector) => collector.export_prometheus(),
+            Err(e) => {
+                error!("Failed to acquire metrics lock: {}", e);
+                format!("# Metrics error: {}\n", e)
+            }
+        }
     } else {
         "# Metrics not enabled\n".to_string()
     };
@@ -212,7 +217,11 @@ async fn chat_completions(
     // Record metrics if available
     let start_time = std::time::Instant::now();
     if let Some(ref metrics) = state.metrics {
-        metrics.lock().unwrap().start_request();
+        if let Ok(collector) = metrics.lock() {
+            collector.start_request();
+        } else {
+            error!("Failed to acquire metrics lock for request start");
+        }
     }
 
     // Generate response
@@ -245,25 +254,29 @@ async fn chat_completions(
 
         // Record latency metrics
         if let Some(ref metrics) = state.metrics {
-            let duration = start_time.elapsed();
-            let tokens_per_sec = if duration.as_secs_f64() > 0.0 {
-                completion_tokens as f64 / duration.as_secs_f64()
+            if let Ok(collector) = metrics.lock() {
+                let duration = start_time.elapsed();
+                let tokens_per_sec = if duration.as_secs_f64() > 0.0 {
+                    completion_tokens as f64 / duration.as_secs_f64()
+                } else {
+                    0.0
+                };
+                let per_token_latency = if completion_tokens > 0 {
+                    duration / completion_tokens as u32
+                } else {
+                    duration
+                };
+                collector.record_latency(LatencyMetrics {
+                    ttft: duration, // For non-streaming, TTFT = total time
+                    tokens_per_sec,
+                    total_tokens: completion_tokens as u64,
+                    total_time: duration,
+                    per_token_latency,
+                });
+                collector.finish_request();
             } else {
-                0.0
-            };
-            let per_token_latency = if completion_tokens > 0 {
-                duration / completion_tokens as u32
-            } else {
-                duration
-            };
-            metrics.lock().unwrap().record_latency(LatencyMetrics {
-                ttft: duration, // For non-streaming, TTFT = total time
-                tokens_per_sec,
-                total_tokens: completion_tokens as u64,
-                total_time: duration,
-                per_token_latency,
-            });
-            metrics.lock().unwrap().finish_request();
+                error!("Failed to acquire metrics lock for latency recording");
+            }
         }
 
         let completion = ChatCompletionResponse {
@@ -364,7 +377,11 @@ async fn generate_stream(
                     if chunk.starts_with("Error:") {
                         // Record error in metrics if available
                         if let Some(ref m) = metrics {
-                            m.lock().unwrap().finish_request();
+                            if let Ok(collector) = m.lock() {
+                                collector.finish_request();
+                            } else {
+                                error!("Failed to acquire metrics lock for error recording");
+                            }
                         }
 
                         // Send error event and terminate stream
@@ -410,30 +427,37 @@ async fn generate_stream(
                         });
 
                         if let Some(ref m) = metrics {
-                            let duration = start_time.elapsed();
-                            let tokens_per_sec = if duration.as_secs_f64() > 0.0 {
-                                completion_tokens as f64 / duration.as_secs_f64()
+                            if let Ok(collector) = m.lock() {
+                                let duration = start_time.elapsed();
+                                let tokens_per_sec = if duration.as_secs_f64() > 0.0 {
+                                    completion_tokens as f64 / duration.as_secs_f64()
+                                } else {
+                                    0.0
+                                };
+                                let per_token_latency = if completion_tokens > 0 {
+                                    duration / completion_tokens as u32
+                                } else {
+                                    duration
+                                };
+                                collector.record_latency(LatencyMetrics {
+                                    ttft: duration,
+                                    tokens_per_sec,
+                                    total_tokens: completion_tokens as u64,
+                                    total_time: duration,
+                                    per_token_latency,
+                                });
+                                collector.finish_request();
                             } else {
-                                0.0
-                            };
-                            let per_token_latency = if completion_tokens > 0 {
-                                duration / completion_tokens as u32
-                            } else {
-                                duration
-                            };
-                            m.lock().unwrap().record_latency(LatencyMetrics {
-                                ttft: duration,
-                                tokens_per_sec,
-                                total_tokens: completion_tokens as u64,
-                                total_time: duration,
-                                per_token_latency,
-                            });
-                            m.lock().unwrap().finish_request();
+                                error!("Failed to acquire metrics lock for latency recording");
+                            }
                         }
 
                         return Some((
-                            Ok(Event::default()
-                                .data(serde_json::to_string(&final_data).unwrap_or_default())),
+                            Ok(Event::default().data(
+                                serde_json::to_string(&final_data).unwrap_or_else(|e| {
+                                    format!(r#"{{"error": "serialization failed: {}"}}"#, e)
+                                }),
+                            )),
                             (
                                 rx,
                                 completion_id,
@@ -463,7 +487,11 @@ async fn generate_stream(
                     });
 
                     Some((
-                        Ok(Event::default().data(serde_json::to_string(&data).unwrap_or_default())),
+                        Ok(
+                            Event::default().data(serde_json::to_string(&data).unwrap_or_else(
+                                |e| format!(r#"{{"error": "serialization failed: {}"}}"#, e),
+                            )),
+                        ),
                         (
                             rx,
                             completion_id,
@@ -499,25 +527,29 @@ async fn generate_stream(
                     });
 
                     if let Some(ref m) = metrics {
-                        let duration = start_time.elapsed();
-                        let tokens_per_sec = if duration.as_secs_f64() > 0.0 {
-                            completion_tokens as f64 / duration.as_secs_f64()
+                        if let Ok(collector) = m.lock() {
+                            let duration = start_time.elapsed();
+                            let tokens_per_sec = if duration.as_secs_f64() > 0.0 {
+                                completion_tokens as f64 / duration.as_secs_f64()
+                            } else {
+                                0.0
+                            };
+                            let per_token_latency = if completion_tokens > 0 {
+                                duration / completion_tokens as u32
+                            } else {
+                                duration
+                            };
+                            collector.record_latency(LatencyMetrics {
+                                ttft: duration,
+                                tokens_per_sec,
+                                total_tokens: completion_tokens as u64,
+                                total_time: duration,
+                                per_token_latency,
+                            });
+                            collector.finish_request();
                         } else {
-                            0.0
-                        };
-                        let per_token_latency = if completion_tokens > 0 {
-                            duration / completion_tokens as u32
-                        } else {
-                            duration
-                        };
-                        m.lock().unwrap().record_latency(LatencyMetrics {
-                            ttft: duration,
-                            tokens_per_sec,
-                            total_tokens: completion_tokens as u64,
-                            total_time: duration,
-                            per_token_latency,
-                        });
-                        m.lock().unwrap().finish_request();
+                            error!("Failed to acquire metrics lock for latency recording");
+                        }
                     }
 
                     Some((

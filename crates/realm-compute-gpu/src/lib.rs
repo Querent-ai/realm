@@ -3,7 +3,10 @@
 //! Provides GPU-accelerated compute kernels using WebGPU/wgpu and Candle.
 
 use realm_core::error::{Error, Result};
-use realm_core::quant::{BlockQ4_K, BlockQ5_K, BlockQ6_K, BlockQ8_K};
+use realm_core::quant::{
+    BlockQ2_K, BlockQ3_K, BlockQ4_0, BlockQ4_1, BlockQ4_K, BlockQ5_0, BlockQ5_1, BlockQ5_K,
+    BlockQ6_K, BlockQ8_0, BlockQ8_1, BlockQ8_K,
+};
 use wgpu::util::DeviceExt;
 
 // Export Candle GPU backend (available with cuda/metal features)
@@ -1088,6 +1091,400 @@ impl GpuBackendTrait for GpuBackend {
     ) -> Result<Vec<f32>> {
         // Use GPU-native implementation
         self.fused_dequant_matmul_q8k_gpu(blocks, input, batch_size, n, k)
+    }
+
+    fn fused_dequant_matmul_q2k(
+        &self,
+        blocks: &[BlockQ2_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        // For WebGPU, use CPU dequantization + GPU matmul (similar to Candle approach)
+        use realm_core::quant::{dequantize_q2_k, QK_K};
+
+        // Validate inputs
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q2_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        // Dequantize on CPU
+        let mut dequantized_weights = vec![0.0f32; n * k];
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+                let dequant_offset = out_idx * k + k_block * QK_K;
+                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
+                dequantize_q2_k(block, dequant_slice)?;
+            }
+        }
+
+        // Perform matmul on GPU
+        self.matmul(
+            input,
+            &dequantized_weights,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
+    }
+
+    fn fused_dequant_matmul_q3k(
+        &self,
+        blocks: &[BlockQ3_K],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        use realm_core::quant::{dequantize_q3_k, QK_K};
+
+        if !k.is_multiple_of(QK_K) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, QK_K
+            )));
+        }
+
+        let num_blocks_per_row = k / QK_K;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q3_K blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        let mut dequantized_weights = vec![0.0f32; n * k];
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+                let dequant_offset = out_idx * k + k_block * QK_K;
+                let dequant_slice = &mut dequantized_weights[dequant_offset..dequant_offset + QK_K];
+                dequantize_q3_k(block, dequant_slice)?;
+            }
+        }
+
+        self.matmul(
+            input,
+            &dequantized_weights,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
+    }
+
+    fn fused_dequant_matmul_q40(
+        &self,
+        blocks: &[BlockQ4_0],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        use realm_core::quant::{dequantize_q4_0, Q4_BLOCK_SIZE};
+
+        if !k.is_multiple_of(Q4_BLOCK_SIZE) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, Q4_BLOCK_SIZE
+            )));
+        }
+
+        let num_blocks_per_row = k / Q4_BLOCK_SIZE;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q4_0 blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        let mut dequantized_weights = vec![0.0f32; n * k];
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+                let dequant_offset = out_idx * k + k_block * Q4_BLOCK_SIZE;
+                let dequant_slice =
+                    &mut dequantized_weights[dequant_offset..dequant_offset + Q4_BLOCK_SIZE];
+                dequantize_q4_0(block, dequant_slice)?;
+            }
+        }
+
+        self.matmul(
+            input,
+            &dequantized_weights,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
+    }
+
+    fn fused_dequant_matmul_q41(
+        &self,
+        blocks: &[BlockQ4_1],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        use realm_core::quant::{dequantize_q4_1, Q4_BLOCK_SIZE};
+
+        if !k.is_multiple_of(Q4_BLOCK_SIZE) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, Q4_BLOCK_SIZE
+            )));
+        }
+
+        let num_blocks_per_row = k / Q4_BLOCK_SIZE;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q4_1 blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        let mut dequantized_weights = vec![0.0f32; n * k];
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+                let dequant_offset = out_idx * k + k_block * Q4_BLOCK_SIZE;
+                let dequant_slice =
+                    &mut dequantized_weights[dequant_offset..dequant_offset + Q4_BLOCK_SIZE];
+                dequantize_q4_1(block, dequant_slice)?;
+            }
+        }
+
+        self.matmul(
+            input,
+            &dequantized_weights,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
+    }
+
+    fn fused_dequant_matmul_q50(
+        &self,
+        blocks: &[BlockQ5_0],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        use realm_core::quant::{dequantize_q5_0, Q4_BLOCK_SIZE};
+
+        if !k.is_multiple_of(Q4_BLOCK_SIZE) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, Q4_BLOCK_SIZE
+            )));
+        }
+
+        let num_blocks_per_row = k / Q4_BLOCK_SIZE;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q5_0 blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        let mut dequantized_weights = vec![0.0f32; n * k];
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+                let dequant_offset = out_idx * k + k_block * Q4_BLOCK_SIZE;
+                let dequant_slice =
+                    &mut dequantized_weights[dequant_offset..dequant_offset + Q4_BLOCK_SIZE];
+                dequantize_q5_0(block, dequant_slice)?;
+            }
+        }
+
+        self.matmul(
+            input,
+            &dequantized_weights,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
+    }
+
+    fn fused_dequant_matmul_q51(
+        &self,
+        blocks: &[BlockQ5_1],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        use realm_core::quant::{dequantize_q5_1, Q4_BLOCK_SIZE};
+
+        if !k.is_multiple_of(Q4_BLOCK_SIZE) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, Q4_BLOCK_SIZE
+            )));
+        }
+
+        let num_blocks_per_row = k / Q4_BLOCK_SIZE;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q5_1 blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        let mut dequantized_weights = vec![0.0f32; n * k];
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+                let dequant_offset = out_idx * k + k_block * Q4_BLOCK_SIZE;
+                let dequant_slice =
+                    &mut dequantized_weights[dequant_offset..dequant_offset + Q4_BLOCK_SIZE];
+                dequantize_q5_1(block, dequant_slice)?;
+            }
+        }
+
+        self.matmul(
+            input,
+            &dequantized_weights,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
+    }
+
+    fn fused_dequant_matmul_q80(
+        &self,
+        blocks: &[BlockQ8_0],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        use realm_core::quant::{dequantize_q8_0, Q8_BLOCK_SIZE};
+
+        if !k.is_multiple_of(Q8_BLOCK_SIZE) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, Q8_BLOCK_SIZE
+            )));
+        }
+
+        let num_blocks_per_row = k / Q8_BLOCK_SIZE;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q8_0 blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        let mut dequantized_weights = vec![0.0f32; n * k];
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+                let dequant_offset = out_idx * k + k_block * Q8_BLOCK_SIZE;
+                let dequant_slice =
+                    &mut dequantized_weights[dequant_offset..dequant_offset + Q8_BLOCK_SIZE];
+                dequantize_q8_0(block, dequant_slice)?;
+            }
+        }
+
+        self.matmul(
+            input,
+            &dequantized_weights,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
+    }
+
+    fn fused_dequant_matmul_q81(
+        &self,
+        blocks: &[BlockQ8_1],
+        input: &[f32],
+        batch_size: usize,
+        n: usize,
+        k: usize,
+    ) -> Result<Vec<f32>> {
+        use realm_core::quant::{dequantize_q8_1, Q8_BLOCK_SIZE};
+
+        if !k.is_multiple_of(Q8_BLOCK_SIZE) {
+            return Err(Error::InvalidShape(format!(
+                "K dimension {} must be multiple of {}",
+                k, Q8_BLOCK_SIZE
+            )));
+        }
+
+        let num_blocks_per_row = k / Q8_BLOCK_SIZE;
+        let expected_blocks = n * num_blocks_per_row;
+
+        if blocks.len() != expected_blocks {
+            return Err(Error::InvalidShape(format!(
+                "Expected {} Q8_1 blocks, got {}",
+                expected_blocks,
+                blocks.len()
+            )));
+        }
+
+        let mut dequantized_weights = vec![0.0f32; n * k];
+        for out_idx in 0..n {
+            for k_block in 0..num_blocks_per_row {
+                let block_idx = out_idx * num_blocks_per_row + k_block;
+                let block = &blocks[block_idx];
+                let dequant_offset = out_idx * k + k_block * Q8_BLOCK_SIZE;
+                let dequant_slice =
+                    &mut dequantized_weights[dequant_offset..dequant_offset + Q8_BLOCK_SIZE];
+                dequantize_q8_1(block, dequant_slice)?;
+            }
+        }
+
+        self.matmul(
+            input,
+            &dequantized_weights,
+            batch_size as u32,
+            k as u32,
+            n as u32,
+        )
     }
 
     fn name(&self) -> &'static str {

@@ -18,6 +18,9 @@ pub mod weight_format;
 #[cfg(feature = "memory64-host")]
 pub mod memory64_host;
 
+#[cfg(all(test, feature = "memory64-host"))]
+mod memory64_host_tests;
+
 // Host function context API
 #[cfg(feature = "memory64-host")]
 pub mod host_functions;
@@ -53,6 +56,9 @@ pub mod attention;
 
 // Continuous batching for dynamic request batching
 pub mod batching;
+
+// Batch forward pass for parallel GPU processing
+pub mod batch_forward;
 
 // LoRA adapter support for per-tenant fine-tuning
 pub mod lora;

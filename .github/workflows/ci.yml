@@ -2,9 +2,14 @@ name: 🚀 CI
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [main]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev]
+
+# Cancel previous runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,23 +45,23 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-ci-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-clippy-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-clippy-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run clippy (libraries only)
         run: cargo clippy --workspace --lib -- -D warnings
-      
+
       - name: Run clippy (working bins)
         run: cargo clippy --bin paris-generation --bin multi-tenant -- -D warnings
         continue-on-error: true
@@ -66,7 +71,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         rust: [stable, 1.75.0]
     steps:
       - uses: actions/checkout@v4
@@ -80,19 +85,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-ci-test-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-test-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-test-${{ matrix.rust }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run library tests
         run: cargo test --workspace --lib --all-targets
@@ -113,6 +118,7 @@ jobs:
   build:
     name: 🏗️  Build
     runs-on: ${{ matrix.os }}
+    needs: [fmt, clippy, test]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -135,19 +141,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-ci-build-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-build-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-build-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Build workspace
         run: cargo build --release --workspace
@@ -178,19 +184,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-ci-wasm-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-wasm-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-wasm-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Build WASM
         working-directory: crates/realm-wasm
@@ -216,13 +222,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-ci-examples-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-examples-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-examples-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Download WASM artifact
         uses: actions/download-artifact@v4
@@ -235,6 +241,8 @@ jobs:
           echo "Building examples..."
           cargo build --release --bin paris-generation || echo "⚠️  paris-generation build skipped"
           cargo build --release --bin multi-tenant || echo "⚠️  multi-tenant build skipped"
+          # Build lora-demo (will skip actual generation in CI, only tests configuration)
+          cargo build --bin lora-demo || echo "⚠️  lora-demo build skipped (may require WASM)"
           echo "✅ Example builds completed"
         continue-on-error: true
 
@@ -265,7 +273,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-integration-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-integration-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Download WASM artifact
         uses: actions/download-artifact@v4
@@ -293,6 +301,138 @@ jobs:
           fi
           echo "✅ WASM module size acceptable"
 
+  e2e:
+    name: 🧪 E2E Tests
+    if: false # Disabled for now due to flakiness
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 20
+    env:
+      MODEL_NAME: tinyllama-1.1b.Q4_K_M.gguf
+      # Try the exact filename first, fallback to chat version
+      MODEL_URL: https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-ci-e2e-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-e2e-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Cache model file
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: ${{ runner.os }}-tinyllama-model-${{ env.MODEL_NAME }}
+          restore-keys: |
+            ${{ runner.os }}-tinyllama-model-
+
+      - name: Download model if not cached
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        run: |
+          mkdir -p models
+          MODEL_PATH="models/${{ env.MODEL_NAME }}"
+          echo "📥 Downloading model from HuggingFace..."
+          echo "   URL: ${{ env.MODEL_URL }}"
+          echo "   Destination: $MODEL_PATH"
+
+          # Download with the chat version name, then rename to match expected name
+          TEMP_PATH="models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+          curl -L --progress-bar -o "$TEMP_PATH" "${{ env.MODEL_URL }}" || {
+            echo "⚠️  curl failed, trying wget..."
+            wget --no-verbose --show-progress -O "$TEMP_PATH" "${{ env.MODEL_URL }}"
+          }
+
+          # Rename to match expected filename
+          if [ -f "$TEMP_PATH" ]; then
+            mv "$TEMP_PATH" "$MODEL_PATH"
+          fi
+
+          if [ ! -f "$MODEL_PATH" ]; then
+            echo "❌ Model file not created after download!"
+            exit 1
+          fi
+
+          FILE_SIZE=$(stat -c%s "$MODEL_PATH" 2>/dev/null || stat -f%z "$MODEL_PATH")
+          FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
+          echo "✅ Model downloaded: ${FILE_SIZE_MB}MB"
+
+          if [ $FILE_SIZE -lt 500000000 ]; then
+            echo "❌ Model file seems too small: $FILE_SIZE bytes (expected > 500MB)"
+            exit 1
+          fi
+
+      - name: Verify model exists
+        run: |
+          MODEL_PATH="models/${{ env.MODEL_NAME }}"
+          if [ ! -f "$MODEL_PATH" ]; then
+            echo "❌ Model file not found: $MODEL_PATH"
+            ls -la models/ || echo "models/ directory does not exist"
+            exit 1
+          fi
+          echo "✅ Model file verified: $MODEL_PATH"
+          ls -lh "$MODEL_PATH"
+
+      - name: Build WASM for server (with server feature)
+        run: |
+          echo "🌐 Building WASM with server feature for E2E tests..."
+          cd crates/realm-wasm && wasm-pack build --target web --no-default-features --features server --out-dir pkg-server && cd ../..
+          echo "✅ Server WASM build complete"
+
+      - name: Build server
+        run: |
+          echo "🏗️ Building server..."
+          cargo build --release --bin realm
+          echo "✅ Server build complete"
+
+      - name: Install e2e dependencies
+        run: |
+          echo "📦 Installing e2e test dependencies..."
+          cd e2e && npm ci && cd ..
+          echo "✅ E2E dependencies installed"
+
+      - name: Run E2E tests
+        run: |
+          echo "🧪 Running E2E tests..."
+          make e2e-full
+          echo "✅ E2E tests completed"
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-server-logs
+          path: /tmp/realm-e2e-server.log
+          retention-days: 7
+
   benchmarks:
     name: ⚡ Benchmark Validation
     runs-on: ubuntu-latest
@@ -306,7 +446,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-bench-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-bench-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Build benchmarks
         run: cargo bench --workspace --no-run
@@ -330,15 +470,15 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Run security audit
-        run: cargo audit
-        continue-on-error: true
+        run: cargo audit --deny warnings
+        continue-on-error: false  # Fail on vulnerabilities
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 
       - name: Check dependencies with cargo-deny
         run: cargo deny check
-        continue-on-error: true
+        continue-on-error: false  # Fail on denied dependencies
 
   sdk-validation:
     name: 📦 SDK Validation
@@ -349,12 +489,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Validate TypeScript SDKs
         run: |
           echo "Validating TypeScript SDKs..."
-          
+
           # Validate nodejs-ws SDK
           if [ -d "sdks/nodejs-ws" ]; then
             echo "Validating nodejs-ws SDK..."
@@ -364,24 +504,24 @@ jobs:
             echo "✅ nodejs-ws SDK validated"
             cd ../..
           fi
-          
+
           # Validate js SDK
           if [ -d "sdks/js" ]; then
             echo "Validating js SDK..."
             cd sdks/js
-            npm ci || npm install
+            npm ci 2>/dev/null || npm install  # npm ci requires package-lock.json (gitignored)
             npm run build || echo "⚠️  js SDK build skipped (may need WASM)"
             echo "✅ js SDK validated"
             cd ../..
           fi
-          
+
           echo "✅ All TypeScript SDKs validated"
         continue-on-error: true
 
       - name: Validate Python SDKs
         run: |
           echo "Validating Python SDKs..."
-          
+
           # Check Python syntax
           if [ -d "sdks/python-ws" ]; then
             echo "Checking Python syntax..."
@@ -396,7 +536,7 @@ jobs:
               echo "✅ Python SDK tests completed"
             fi
           fi
-          
+
           echo "✅ All Python SDKs validated"
         continue-on-error: true
 
@@ -413,7 +553,15 @@ jobs:
         run: cargo install cargo-tarpaulin
 
       - name: Run tests with coverage
-        run: cargo tarpaulin --workspace --out Xml --timeout 300 --exclude-files 'crates/realm-compute-cpu/src/*'
+        run: |
+          # Only run coverage on core packages (exclude compute crates due to pulp compilation issues)
+          cargo tarpaulin --out Xml --timeout 300 \
+            -p realm-core \
+            -p realm-runtime \
+            -p realm-metrics \
+            -p realm-server \
+            --avoid-cfg-tarpaulin \
+            || echo "⚠️  Coverage collection failed"
         continue-on-error: true
 
       - name: Upload coverage to Codecov

@@ -2,6 +2,7 @@
 name = "multi-tenant"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "multi-tenant"

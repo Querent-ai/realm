@@ -5,7 +5,7 @@
 
 use realm_core::error::{Error, Result};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// LoRA adapter weights
 #[derive(Debug, Clone)]
@@ -156,6 +156,15 @@ impl Default for LoRAManager {
     }
 }
 
+/// Global LoRA manager instance (thread-safe)
+/// Similar to model_storage, this provides a global access point for LoRA adapters
+static GLOBAL_LORA_MANAGER: OnceLock<Arc<Mutex<LoRAManager>>> = OnceLock::new();
+
+/// Get the global LoRA manager instance
+pub fn get_global_lora_manager() -> &'static Arc<Mutex<LoRAManager>> {
+    GLOBAL_LORA_MANAGER.get_or_init(|| Arc::new(Mutex::new(LoRAManager::new())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,5 +222,80 @@ mod tests {
 
         // Note: apply_to_weights requires specific key format (layer_name.lora_a)
         // For full integration test, we'd need to use the correct key format
+    }
+
+    #[test]
+    fn test_lora_apply_to_weights() {
+        let manager = LoRAManager::new();
+
+        let mut adapter = LoRAWeights::new("test_adapter".to_string(), 2, 4.0);
+        // Create LoRA weights: rank=2, in_dim=4, out_dim=4
+        // LoRA A: [rank, in_dim] = [2, 4] = 8 elements
+        // LoRA B: [out_dim, rank] = [4, 2] = 8 elements
+        let lora_a = vec![0.5; 8]; // [2, 4]
+        let lora_b = vec![0.5; 8]; // [4, 2]
+
+        // Store with correct key format
+        adapter
+            .lora_a
+            .insert("layer.0.attn_q.lora_a".to_string(), lora_a);
+        adapter
+            .lora_b
+            .insert("layer.0.attn_q.lora_b".to_string(), lora_b);
+
+        manager.load_adapter(adapter).unwrap();
+
+        // Base weights: [out_dim, in_dim] = [4, 4] = 16 elements
+        let base_weights = vec![1.0; 16];
+
+        // Apply LoRA
+        let result =
+            manager.apply_to_weights("test_adapter", "layer.0.attn_q", &base_weights, 4, 4);
+        assert!(result.is_ok());
+
+        let modified = result.unwrap();
+        assert_eq!(modified.len(), 16);
+        // Verify weights were modified (should be different from base)
+        assert_ne!(modified, base_weights);
+    }
+
+    #[test]
+    fn test_global_lora_manager() {
+        let manager1 = get_global_lora_manager();
+        let manager2 = get_global_lora_manager();
+
+        // Should return the same instance
+        assert!(std::ptr::eq(manager1, manager2));
+
+        // Test loading adapter via global manager
+        let mut adapter = LoRAWeights::new("global_test".to_string(), 4, 8.0);
+        adapter
+            .add_layer_weights("layer.0".to_string(), vec![1.0; 16], vec![1.0; 16])
+            .unwrap();
+
+        match manager1.lock() {
+            Ok(guard) => {
+                guard.load_adapter(adapter).expect("Failed to load adapter");
+                let adapters = guard.list_adapters();
+                assert!(adapters.contains(&"global_test".to_string()));
+            }
+            Err(_) => panic!("Failed to lock global LoRA manager"),
+        }
+    }
+
+    #[test]
+    fn test_lora_unload() {
+        let manager = LoRAManager::new();
+
+        let adapter = LoRAWeights::new("temp".to_string(), 4, 8.0);
+        manager.load_adapter(adapter).unwrap();
+
+        assert_eq!(manager.list_adapters().len(), 1);
+
+        manager.unload_adapter("temp").unwrap();
+        assert_eq!(manager.list_adapters().len(), 0);
+
+        // Unloading non-existent adapter should fail
+        assert!(manager.unload_adapter("nonexistent").is_err());
     }
 }

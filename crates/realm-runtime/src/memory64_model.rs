@@ -369,6 +369,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(target_os = "windows", ignore)] // Skip on Windows CI due to memory limits
     fn test_memory64_initialization() -> Result<()> {
         let config = create_test_config();
         let total_size = 5_000_000_000u64;

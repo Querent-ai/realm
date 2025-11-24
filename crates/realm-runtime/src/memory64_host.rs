@@ -497,7 +497,189 @@ impl Memory64Runtime {
     pub fn get_stats<T>(&self, _store: &Store<T>) -> Result<MemoryStats> {
         Ok(self.state.lock().stats().clone())
     }
+}
 
+/// Helper: Dequantize WeightFormat to f32
+fn dequantize_weight_format_to_f32(
+    weight: &realm_models::WeightFormat,
+) -> std::result::Result<Vec<f32>, anyhow::Error> {
+    use realm_core::quant::{
+        dequantize_q2_k, dequantize_q3_k, dequantize_q4_0, dequantize_q4_1, dequantize_q4_k,
+        dequantize_q5_0, dequantize_q5_1, dequantize_q5_k, dequantize_q6_k, dequantize_q8_0,
+        dequantize_q8_1, dequantize_q8_k, Q4_BLOCK_SIZE, Q8_BLOCK_SIZE, QK_K,
+    };
+
+    match weight {
+        realm_models::WeightFormat::F32(w) => Ok(w.clone()),
+        realm_models::WeightFormat::Q4K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q4_k(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        realm_models::WeightFormat::Q5K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q5_k(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        realm_models::WeightFormat::Q6K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q6_k(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        realm_models::WeightFormat::Q8K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q8_k(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        realm_models::WeightFormat::Q2K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q2_k(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        realm_models::WeightFormat::Q3K(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * QK_K);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; QK_K];
+                dequantize_q3_k(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        realm_models::WeightFormat::Q40(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                dequantize_q4_0(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        realm_models::WeightFormat::Q41(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                dequantize_q4_1(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        realm_models::WeightFormat::Q50(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                dequantize_q5_0(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        realm_models::WeightFormat::Q51(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q4_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q4_BLOCK_SIZE];
+                dequantize_q5_1(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        realm_models::WeightFormat::Q80(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q8_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q8_BLOCK_SIZE];
+                dequantize_q8_0(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+        realm_models::WeightFormat::Q81(blocks) => {
+            let mut output = Vec::with_capacity(blocks.len() * Q8_BLOCK_SIZE);
+            for block in blocks {
+                let mut block_output = vec![0.0f32; Q8_BLOCK_SIZE];
+                dequantize_q8_1(block, &mut block_output)?;
+                output.extend_from_slice(&block_output);
+            }
+            Ok(output)
+        }
+    }
+}
+
+/// Helper: Apply LoRA to WeightFormat if adapter is set
+/// For quantized weights, dequantize to F32, apply LoRA, then use F32
+fn apply_lora_to_weight_format(
+    weight: realm_models::WeightFormat,
+    lora_adapter_id: Option<&str>,
+    layer_name: &str,
+    weight_name: &str,
+    out_dim: usize,
+    in_dim: usize,
+) -> std::result::Result<realm_models::WeightFormat, anyhow::Error> {
+    if let Some(adapter_id) = lora_adapter_id {
+        use crate::lora::get_global_lora_manager;
+
+        // Dequantize to F32 if needed (supports all quantization types)
+        let f32_weights = match dequantize_weight_format_to_f32(&weight) {
+            Ok(w) => w,
+            Err(e) => {
+                debug!(
+                    "LoRA: Failed to dequantize weight {}: {}, skipping LoRA",
+                    weight_name, e
+                );
+                return Ok(weight);
+            }
+        };
+
+        // Apply LoRA
+        let lora_manager = get_global_lora_manager();
+        let full_layer_name = format!("{}.{}", layer_name, weight_name);
+        match lora_manager.lock() {
+            Ok(manager_guard) => {
+                match manager_guard.apply_to_weights(
+                    adapter_id,
+                    &full_layer_name,
+                    &f32_weights,
+                    out_dim,
+                    in_dim,
+                ) {
+                    Ok(modified) => Ok(realm_models::WeightFormat::F32(modified)),
+                    Err(e) => {
+                        debug!(
+                            "LoRA: Failed to apply to {}: {}, using base weights",
+                            weight_name, e
+                        );
+                        Ok(realm_models::WeightFormat::F32(f32_weights)) // Fall back to base weights
+                    }
+                }
+            }
+            Err(_) => {
+                debug!("LoRA: Mutex lock failed, using base weights");
+                Ok(realm_models::WeightFormat::F32(f32_weights)) // Fall back to base weights
+            }
+        }
+    } else {
+        Ok(weight) // No LoRA adapter, use base weights
+    }
+}
+
+impl Memory64Runtime {
     /// Add host functions to linker with WASM pointer validation
     pub fn add_to_linker(&self, linker: &mut Linker<()>) -> Result<()> {
         let state = self.state.clone();
@@ -1193,6 +1375,136 @@ impl Memory64Runtime {
             },
         )?;
 
+        // Host function: Get model metadata (config + tokenizer info) as JSON
+        // Parameters: model_id, out_ptr, out_max_len
+        // Returns: number of bytes written on success, negative on error
+        // The JSON contains: config (TransformerConfig) and tokenizer metadata
+        debug!("Registering host function: env::realm_get_model_metadata");
+        linker.func_wrap(
+            "env",
+            "realm_get_model_metadata",
+            move |mut caller: Caller<'_, ()>,
+                  model_id: u32,
+                  out_ptr: u32,
+                  out_max_len: u32|
+                  -> i32 {
+                info!("🔍 realm_get_model_metadata CALLED: model_id={}, out_ptr={}, out_max_len={}", model_id, out_ptr, out_max_len);
+
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => {
+                        let mem_size = mem.data_size(&caller);
+                        debug!("realm_get_model_metadata: Got WASM memory, size={}", mem_size);
+                        mem
+                    }
+                    _ => {
+                        error!("realm_get_model_metadata: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                let wasm_mem_size = wasm_memory.data_size(&caller);
+
+                // Validate output pointer
+                let out_end = match (out_ptr as usize).checked_add(out_max_len as usize) {
+                    Some(end) => end,
+                    None => {
+                        error!("realm_get_model_metadata: Output pointer overflow");
+                        return -2;
+                    }
+                };
+
+                if out_end > wasm_mem_size {
+                    error!("realm_get_model_metadata: Output pointer out of bounds");
+                    return -3;
+                }
+
+                // Get model from storage
+                use crate::model_storage::get_global_model_storage;
+                let (config, has_tokenizer) = {
+                    let storage = get_global_model_storage().lock();
+                    debug!("realm_get_model_metadata: Looking up model_id {} in storage", model_id);
+                    let model = match storage.get_model(model_id) {
+                        Ok(m) => {
+                            debug!("realm_get_model_metadata: Model {} found in storage", model_id);
+                            m
+                        }
+                        Err(e) => {
+                            error!(
+                                "realm_get_model_metadata: Model {} not found: {}",
+                                model_id, e
+                            );
+                            // List available model IDs for debugging
+                            let available_ids: Vec<u32> = storage.list_models();
+                            error!(
+                                "realm_get_model_metadata: Available model IDs: {:?}",
+                                available_ids
+                            );
+                            return -4;
+                        }
+                    };
+                    let config = model.extract_config();
+                    let has_tokenizer = model.tokenizer().is_some();
+                    debug!(
+                        "realm_get_model_metadata: Model {} has config: vocab_size={}, hidden_size={}, num_layers={}",
+                        model_id, config.vocab_size, config.hidden_size, config.num_layers
+                    );
+                    (config, has_tokenizer)
+                };
+
+                // Serialize config to JSON
+                use serde_json;
+                let metadata_json = serde_json::json!({
+                    "config": {
+                        "vocab_size": config.vocab_size,
+                        "hidden_size": config.hidden_size,
+                        "num_layers": config.num_layers,
+                        "num_heads": config.num_heads,
+                        "num_kv_heads": config.num_kv_heads,
+                        "intermediate_size": config.intermediate_size,
+                        "max_seq_len": config.max_seq_len,
+                        "rope_theta": config.rope_theta,
+                        "rms_norm_eps": config.rms_norm_eps,
+                    },
+                    "has_tokenizer": has_tokenizer,
+                });
+
+                let json_bytes = match serde_json::to_string(&metadata_json) {
+                    Ok(s) => s.into_bytes(),
+                    Err(e) => {
+                        error!("realm_get_model_metadata: Failed to serialize: {}", e);
+                        return -5;
+                    }
+                };
+
+                // Check if output buffer is large enough
+                if json_bytes.len() > out_max_len as usize {
+                    error!(
+                        "realm_get_model_metadata: Buffer too small: need {} bytes, got {}",
+                        json_bytes.len(),
+                        out_max_len
+                    );
+                    return -6;
+                }
+
+                // Write JSON to WASM memory
+                if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, &json_bytes) {
+                    error!("realm_get_model_metadata: Failed to write JSON: {}", e);
+                    return -7;
+                }
+
+                debug!(
+                    "realm_get_model_metadata: Wrote {} bytes of metadata for model {}",
+                    json_bytes.len(),
+                    model_id
+                );
+
+                json_bytes.len() as i32
+            },
+        )
+        .context("Failed to register realm_get_model_metadata host function")?;
+        debug!("Successfully registered env::realm_get_model_metadata");
+
         // Host function: Remove model from storage (cleanup)
         // Parameters: model_id
         // Returns: 0 on success, negative on error
@@ -1216,6 +1528,379 @@ impl Memory64Runtime {
                 }
             },
         )?;
+
+        // ========================================
+        // Text Generation (FULL HOST-SIDE INFERENCE)
+        // ========================================
+        // This is the PRODUCTION PATTERN: WASM orchestrates, HOST computes
+        // - Model stays in HOST memory
+        // - Tokenization, inference, decoding all in HOST
+        // - WASM just passes prompt and receives result
+
+        linker.func_wrap(
+            "env",
+            "realm_host_generate",
+            move |mut caller: Caller<'_, ()>,
+                  model_id: u32,
+                  prompt_ptr: u32,
+                  prompt_len: u32,
+                  options_ptr: u32,
+                  out_ptr: u32,
+                  out_max_len: u32|
+                  -> i32 {
+                eprintln!("[TRACE] realm_host_generate CALLED: model_id={}, prompt_len={}, options_ptr={}, out_max_len={}", 
+                    model_id, prompt_len, options_ptr, out_max_len);
+                info!(
+                    "🎯 realm_host_generate CALLED: model_id={}, prompt_len={}, options_ptr={}, out_max_len={}",
+                    model_id, prompt_len, options_ptr, out_max_len
+                );
+
+                // Get WASM memory
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_host_generate: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                // Read GenOptions from WASM memory
+                use crate::inference::GenOptions;
+                let options = if options_ptr != 0 {
+                    let options_size = std::mem::size_of::<GenOptions>();
+                    let mut options_buffer = vec![0u8; options_size];
+                    if let Err(e) = wasm_memory.read(&caller, options_ptr as usize, &mut options_buffer) {
+                        error!("realm_host_generate: Failed to read GenOptions: {}", e);
+                        return -2;
+                    }
+                    // Convert bytes to GenOptions (safe because GenOptions is #[repr(C)])
+                    unsafe {
+                        std::ptr::read(options_buffer.as_ptr() as *const GenOptions)
+                    }
+                } else {
+                    // Use defaults if options_ptr is null
+                    GenOptions::default()
+                };
+
+                info!(
+                    "realm_host_generate: options = max_tokens={}, temp={}, top_p={}, top_k={}",
+                    options.max_tokens, options.temperature, options.top_p, options.top_k
+                );
+
+                // Read prompt from WASM memory
+                let prompt = {
+                    let data = wasm_memory.data(&caller);
+                    let prompt_bytes =
+                        match data.get(prompt_ptr as usize..(prompt_ptr + prompt_len) as usize) {
+                            Some(bytes) => bytes,
+                            None => {
+                                error!("realm_host_generate: Prompt pointer out of bounds");
+                                return -3;
+                            }
+                        };
+                    match std::str::from_utf8(prompt_bytes) {
+                        Ok(s) => s.to_string(),
+                        Err(e) => {
+                            error!("realm_host_generate: Invalid UTF-8 in prompt: {}", e);
+                            return -4;
+                        }
+                    }
+                };
+
+                info!("realm_host_generate: prompt = '{}'", prompt);
+
+                // Get model from HOST storage
+                use crate::inference::InferenceSession;
+                use crate::model_storage::get_global_model_storage;
+
+                // Step 1: Get tokenizer and tokenize (need read access)
+                let (prompt_tokens, tokenizer) = {
+                    let storage = get_global_model_storage().lock();
+                    let stored_model = match storage.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!("realm_host_generate: Model {} not found: {}", model_id, e);
+                            return -5;
+                        }
+                    };
+
+                    // Get tokenizer
+                    let tokenizer = match stored_model.tokenizer() {
+                        Some(t) => t.clone(), // Clone tokenizer (it's lightweight)
+                        None => {
+                            error!("realm_host_generate: No tokenizer for model {}", model_id);
+                            return -7;
+                        }
+                    };
+
+                    // Tokenize prompt
+                    let prompt_tokens = match tokenizer.encode(&prompt, true) {
+                        Ok(tokens) => tokens,
+                        Err(e) => {
+                            error!("realm_host_generate: Tokenization failed: {}", e);
+                            return -8;
+                        }
+                    };
+
+                    if prompt_tokens.is_empty() {
+                        error!("realm_host_generate: Empty token sequence");
+                        return -9;
+                    }
+
+                    info!(
+                        "realm_host_generate: Tokenized {} prompt tokens",
+                        prompt_tokens.len()
+                    );
+
+                    (prompt_tokens, tokenizer)
+                };
+
+                // Step 2: Get Model instance from cache (OPTIMIZED - uses cache!)
+                // This avoids reloading the model on every request
+                let model_arc = {
+                    let mut storage = get_global_model_storage().lock();
+                    match storage.get_model_for_inference(model_id) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!("realm_host_generate: Failed to get Model instance: {}", e);
+                            return -11;
+                        }
+                    }
+                };
+                // Storage lock is dropped here, but we have Arc<Mutex<Model>> so we can use it
+
+                // Step 3: Create inference session and generate
+                eprintln!("[TRACE] realm_host_generate: Creating InferenceSession...");
+                info!("realm_host_generate: Creating InferenceSession...");
+                let mut session = InferenceSession::new(model_id, prompt_tokens, options);
+                eprintln!("[TRACE] realm_host_generate: InferenceSession created");
+                info!("realm_host_generate: InferenceSession created");
+
+                // Generate tokens using InferenceSession
+                // Lock the model only when needed for inference
+                let mut generated_tokens = Vec::new();
+                let max_iterations = options.max_tokens.max(512) as usize; // Safety limit
+                let mut iterations = 0;
+
+                eprintln!("[TRACE] realm_host_generate: Starting generation loop (max_iterations={})", max_iterations);
+                info!("realm_host_generate: Starting generation loop (max_iterations={})", max_iterations);
+                while !session.is_complete() && iterations < max_iterations {
+                    eprintln!("[TRACE] realm_host_generate: Loop iteration {}, session.is_complete()={}", iterations, session.is_complete());
+                    // Lock model for inference (shared across requests via Arc)
+                    eprintln!("[TRACE] realm_host_generate: Attempting to lock model...");
+                    let mut model = match model_arc.try_lock() {
+                        Some(m) => {
+                            eprintln!("[TRACE] realm_host_generate: Model lock acquired (try_lock)");
+                            m
+                        },
+                        None => {
+                            eprintln!("[TRACE] realm_host_generate: Model lock busy, waiting (blocking)...");
+                            warn!("realm_host_generate: Model lock busy, waiting...");
+                            model_arc.lock() // Block if needed
+                        }
+                    };
+
+                    eprintln!("[TRACE] realm_host_generate: Calling next_token_with_model...");
+                    match session.next_token_with_model(&mut model, None) {
+                        Ok(Some(token_id)) => {
+                            generated_tokens.push(token_id);
+                            iterations += 1;
+                            if iterations % 5 == 0 || iterations <= 5 {
+                                eprintln!("[TRACE] realm_host_generate: Generated {} tokens (token_id={})", iterations, token_id);
+                            }
+                            if iterations % 10 == 0 {
+                                debug!("realm_host_generate: Generated {} tokens so far", iterations);
+                            }
+                        }
+                        Ok(None) => {
+                            // Generation complete
+                            eprintln!("[TRACE] realm_host_generate: Generation complete (session.is_complete())");
+                            info!("realm_host_generate: Generation complete (session.is_complete())");
+                            break;
+                        }
+                        Err(e) => {
+                            eprintln!("[TRACE] realm_host_generate: Inference error at iteration {}: {}", iterations, e);
+                            error!("realm_host_generate: Inference error at iteration {}: {}", iterations, e);
+                            return -10;
+                        }
+                    }
+                    // Model lock is released here, allowing other requests to proceed
+                }
+
+                if iterations >= max_iterations {
+                    warn!("realm_host_generate: Hit max_iterations limit ({})", max_iterations);
+                }
+
+                eprintln!("[TRACE] realm_host_generate: Generated {} tokens total", generated_tokens.len());
+                info!(
+                    "realm_host_generate: Generated {} tokens",
+                    generated_tokens.len()
+                );
+
+                // Decode generated tokens to text
+                eprintln!("[TRACE] realm_host_generate: Decoding {} tokens to text...", generated_tokens.len());
+                eprintln!("[TRACE] realm_host_generate: Starting decode of {} tokens", generated_tokens.len());
+                let result = match tokenizer.decode(&generated_tokens, true) {
+                    Ok(text) => {
+                        if text.is_empty() {
+                            // Fallback if decoding produces empty result
+                            format!("Echo: {}", prompt)
+                        } else {
+                            text
+                        }
+                    }
+                    Err(e) => {
+                        error!("realm_host_generate: Decoding failed: {}", e);
+                        // Fallback to echo
+                        format!("Echo: {}", prompt)
+                    }
+                };
+
+                info!("realm_host_generate: Generated {} bytes", result.len());
+
+                // Write result to WASM memory (null-terminated for server compatibility)
+                eprintln!("[TRACE] realm_host_generate: Writing result to WASM memory (out_ptr={}, out_max_len={})", out_ptr, out_max_len);
+                let result_bytes = result.as_bytes();
+                let result_len = result_bytes.len();
+
+                // Check if result fits (need space for null terminator)
+                if result_len + 1 > out_max_len as usize {
+                    eprintln!("[TRACE] realm_host_generate: Output too large: {} > {}", result_len + 1, out_max_len);
+                    error!(
+                        "realm_host_generate: Output too large: {} > {}",
+                        result_len + 1,
+                        out_max_len
+                    );
+                    return -5;
+                }
+
+                // Write result bytes
+                eprintln!("[TRACE] realm_host_generate: Writing {} bytes to WASM memory at offset {}", result_len, out_ptr);
+                if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, result_bytes) {
+                    eprintln!("[TRACE] realm_host_generate: Failed to write result: {}", e);
+                    error!("realm_host_generate: Failed to write result: {}", e);
+                    return -6;
+                }
+
+                // Write null terminator
+                let null_terminator_ptr = (out_ptr as usize) + result_len;
+                eprintln!("[TRACE] realm_host_generate: Writing null terminator at offset {}", null_terminator_ptr);
+                if let Err(e) = wasm_memory.write(&mut caller, null_terminator_ptr, &[0u8]) {
+                    eprintln!("[TRACE] realm_host_generate: Failed to write null terminator: {}", e);
+                    error!("realm_host_generate: Failed to write null terminator: {}", e);
+                    return -6;
+                }
+
+                eprintln!("[TRACE] realm_host_generate: SUCCESS - wrote {} bytes (null-terminated), returning {}", result_len + 1, (result_len + 1) as i32);
+                info!(
+                    "realm_host_generate: SUCCESS - wrote {} bytes (null-terminated)",
+                    result_len + 1
+                );
+                (result_len + 1) as i32
+            },
+        )?;
+        debug!("Successfully registered env::realm_host_generate");
+
+        // ========================================
+        // realm_host_load_model_by_name
+        // ========================================
+        // Allows WASM to dynamically load models by name
+        // HOST handles file I/O and storage, returns model_id
+        debug!("Registering host function: env::realm_host_load_model_by_name");
+        linker.func_wrap(
+            "env",
+            "realm_host_load_model_by_name",
+            move |mut caller: Caller<'_, ()>, model_name_ptr: u32, model_name_len: u32| -> i32 {
+                info!(
+                    "🎯 realm_host_load_model_by_name CALLED: name_ptr={}, name_len={}",
+                    model_name_ptr, model_name_len
+                );
+
+                let wasm_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => {
+                        error!("realm_host_load_model_by_name: No WASM memory export");
+                        return -1;
+                    }
+                };
+
+                // Read model name from WASM memory
+                let model_name = {
+                    let data = wasm_memory.data(&caller);
+                    let name_bytes = match data
+                        .get(model_name_ptr as usize..(model_name_ptr + model_name_len) as usize)
+                    {
+                        Some(bytes) => bytes,
+                        None => {
+                            error!(
+                                "realm_host_load_model_by_name: Model name pointer out of bounds"
+                            );
+                            return -2;
+                        }
+                    };
+                    match std::str::from_utf8(name_bytes) {
+                        Ok(s) => s.to_string(),
+                        Err(e) => {
+                            error!(
+                                "realm_host_load_model_by_name: Invalid UTF-8 in model name: {}",
+                                e
+                            );
+                            return -3;
+                        }
+                    }
+                };
+
+                info!(
+                    "realm_host_load_model_by_name: Loading model '{}'",
+                    model_name
+                );
+
+                // HOST handles file I/O - construct model path
+                // TODO: Add model registry/name mapping for production
+                let model_path = format!("models/{}.gguf", model_name);
+
+                // Read model file
+                let model_bytes = match std::fs::read(&model_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        error!(
+                            "realm_host_load_model_by_name: Failed to read model file '{}': {}",
+                            model_path, e
+                        );
+                        return -4;
+                    }
+                };
+
+                info!(
+                    "realm_host_load_model_by_name: Read {} bytes from '{}'",
+                    model_bytes.len(),
+                    model_path
+                );
+
+                // Store in HOST storage
+                use crate::model_storage::get_global_model_storage;
+                let model_id = {
+                    let mut storage = get_global_model_storage().lock();
+                    match storage.store_model(&model_bytes, None) {
+                        Ok(id) => id,
+                        Err(e) => {
+                            error!(
+                                "realm_host_load_model_by_name: Failed to store model: {}",
+                                e
+                            );
+                            return -5;
+                        }
+                    }
+                };
+
+                info!(
+                    "realm_host_load_model_by_name: Model stored with ID {}",
+                    model_id
+                );
+                model_id as i32
+            },
+        )?;
+        debug!("Successfully registered env::realm_host_load_model_by_name");
 
         // ========================================
         // Transformer Layer Forward (HOST-SIDE COMPUTATION)
@@ -1272,7 +1957,7 @@ impl Memory64Runtime {
 
                     // Get model and config from storage - extract ALL tensor data while lock is held
                     use crate::model_storage::get_global_model_storage;
-                    let (config, hidden_size, attn_norm_tensor, wq_tensor, wk_tensor, wv_tensor, wo_tensor, ffn_norm_tensor, w_gate_tensor, w_up_tensor, w_down_tensor) = {
+                    let (config, hidden_size, lora_adapter_id, attn_norm_tensor, wq_tensor, wk_tensor, wv_tensor, wo_tensor, ffn_norm_tensor, w_gate_tensor, w_up_tensor, w_down_tensor) = {
                         let storage = get_global_model_storage().lock();
                         let model = match storage.get_model(model_id) {
                             Ok(m) => m,
@@ -1283,6 +1968,7 @@ impl Memory64Runtime {
                         };
                         let config = model.extract_config();
                         let hidden_size = config.hidden_size;
+                        let lora_adapter_id = model.lora_adapter_id().map(|s| s.to_string());
 
                         // Clone all tensors we need while lock is held
                         let attn_norm_tensor = match model.get_tensor(&format!("blk.{}.attn_norm.weight", layer_idx)) {
@@ -1349,7 +2035,7 @@ impl Memory64Runtime {
                             }
                         };
 
-                        (config, hidden_size, attn_norm_tensor, wq_tensor, wk_tensor, wv_tensor, wo_tensor, ffn_norm_tensor, w_gate_tensor, w_up_tensor, w_down_tensor)
+                        (config, hidden_size, lora_adapter_id, attn_norm_tensor, wq_tensor, wk_tensor, wv_tensor, wo_tensor, ffn_norm_tensor, w_gate_tensor, w_up_tensor, w_down_tensor)
                     };
                     let seq_len = hidden_states.len() / hidden_size;
 
@@ -1539,8 +2225,15 @@ impl Memory64Runtime {
                     }
 
                     // Load attention weights (as WeightFormat for fused ops) - using cloned tensors
+                    // Apply LoRA if adapter is configured
+                    let layer_name = format!("layer.{}", layer_idx);
+                    let hidden_size = config.hidden_size;
+
                     let wq = match quantized_to_weight_format(&wq_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            // Function always returns Ok, so unwrap is safe
+                            apply_lora_to_weight_format(w, lora_adapter_id.as_deref(), &layer_name, "attn_q", hidden_size, hidden_size).unwrap()
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wq to WeightFormat: {}", e);
                             return -15;
@@ -1548,7 +2241,10 @@ impl Memory64Runtime {
                     };
 
                     let wk = match quantized_to_weight_format(&wk_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            // Function always returns Ok, so unwrap is safe
+                            apply_lora_to_weight_format(w, lora_adapter_id.as_deref(), &layer_name, "attn_k", hidden_size, hidden_size).unwrap()
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wk to WeightFormat: {}", e);
                             return -17;
@@ -1556,7 +2252,10 @@ impl Memory64Runtime {
                     };
 
                     let wv = match quantized_to_weight_format(&wv_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            // Function always returns Ok, so unwrap is safe
+                            apply_lora_to_weight_format(w, lora_adapter_id.as_deref(), &layer_name, "attn_v", hidden_size, hidden_size).unwrap()
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wv to WeightFormat: {}", e);
                             return -19;
@@ -1564,7 +2263,10 @@ impl Memory64Runtime {
                     };
 
                     let wo = match quantized_to_weight_format(&wo_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            // Function always returns Ok, so unwrap is safe
+                            apply_lora_to_weight_format(w, lora_adapter_id.as_deref(), &layer_name, "attn_output", hidden_size, hidden_size).unwrap()
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert wo to WeightFormat: {}", e);
                             return -21;
@@ -1641,8 +2343,12 @@ impl Memory64Runtime {
                     };
 
                     // Load FFN weights - using cloned tensors
+                    // Apply LoRA if adapter is configured
                     let w_gate = match quantized_to_weight_format(&w_gate_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            // Function always returns Ok, so unwrap is safe
+                            apply_lora_to_weight_format(w, lora_adapter_id.as_deref(), &layer_name, "ffn_gate", config.intermediate_size, hidden_size).unwrap()
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert w_gate to WeightFormat: {}", e);
                             return -23;
@@ -1650,7 +2356,10 @@ impl Memory64Runtime {
                     };
 
                     let w_up = match quantized_to_weight_format(&w_up_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            // Function always returns Ok, so unwrap is safe
+                            apply_lora_to_weight_format(w, lora_adapter_id.as_deref(), &layer_name, "ffn_up", config.intermediate_size, hidden_size).unwrap()
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert w_up to WeightFormat: {}", e);
                             return -25;
@@ -1658,7 +2367,10 @@ impl Memory64Runtime {
                     };
 
                     let w_down = match quantized_to_weight_format(&w_down_tensor) {
-                        Ok(w) => w,
+                        Ok(w) => {
+                            // Function always returns Ok, so unwrap is safe
+                            apply_lora_to_weight_format(w, lora_adapter_id.as_deref(), &layer_name, "ffn_down", hidden_size, config.intermediate_size).unwrap()
+                        }
                         Err(e) => {
                             error!("realm_forward_layer: Failed to convert w_down to WeightFormat: {}", e);
                             return -27;
@@ -2260,6 +2972,186 @@ impl Memory64Runtime {
                     }
 
                     0 // Success
+                },
+            )?;
+
+            // Host function: Encode text to token IDs
+            // Parameters: model_id, text_ptr, text_len, out_ptr, out_max_len
+            // Returns: number of tokens written on success, negative on error
+            linker.func_wrap(
+                "env",
+                "realm_encode_tokens",
+                move |mut caller: Caller<'_, ()>,
+                      model_id: u32,
+                      text_ptr: u32,
+                      text_len: u32,
+                      out_ptr: u32,
+                      out_max_len: u32|
+                      -> i32 {
+                    use crate::model_storage::get_global_model_storage;
+
+                    // Get WASM memory
+                    let wasm_memory = match caller.get_export("memory") {
+                        Some(Extern::Memory(mem)) => mem,
+                        _ => {
+                            error!("realm_encode_tokens: No WASM memory export");
+                            return -1;
+                        }
+                    };
+
+                    // Read text from WASM
+                    let mut text_bytes = vec![0u8; text_len as usize];
+                    if let Err(e) = wasm_memory.read(&caller, text_ptr as usize, &mut text_bytes) {
+                        error!("realm_encode_tokens: Failed to read text: {}", e);
+                        return -2;
+                    }
+
+                    let text = match String::from_utf8(text_bytes) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            error!("realm_encode_tokens: Invalid UTF-8: {}", e);
+                            return -3;
+                        }
+                    };
+
+                    // Get tokenizer from model storage
+                    let storage = get_global_model_storage().lock();
+                    let model = match storage.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(_) => {
+                            error!("realm_encode_tokens: Model {} not found", model_id);
+                            return -4;
+                        }
+                    };
+
+                    let tokenizer = match model.tokenizer() {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_encode_tokens: No tokenizer for model {}", model_id);
+                            return -5;
+                        }
+                    };
+
+                    // Encode text to tokens
+                    let tokens = match tokenizer.encode(&text, true) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            error!("realm_encode_tokens: Encoding failed: {}", e);
+                            return -6;
+                        }
+                    };
+
+                    // Check output buffer size
+                    let tokens_bytes = tokens.len() * 4; // u32 = 4 bytes
+                    if tokens_bytes > out_max_len as usize {
+                        error!(
+                            "realm_encode_tokens: Output buffer too small: need {}, have {}",
+                            tokens_bytes, out_max_len
+                        );
+                        return -7;
+                    }
+
+                    // Write tokens to WASM memory
+                    let mut tokens_bytes_vec = Vec::with_capacity(tokens_bytes);
+                    for token_id in &tokens {
+                        tokens_bytes_vec.extend_from_slice(&token_id.to_le_bytes());
+                    }
+
+                    if let Err(e) =
+                        wasm_memory.write(&mut caller, out_ptr as usize, &tokens_bytes_vec)
+                    {
+                        error!("realm_encode_tokens: Failed to write tokens: {}", e);
+                        return -8;
+                    }
+
+                    tokens.len() as i32
+                },
+            )?;
+
+            // Host function: Decode token IDs to text
+            // Parameters: model_id, token_ids_ptr, token_ids_len, out_ptr, out_max_len
+            // Returns: number of bytes written on success, negative on error
+            linker.func_wrap(
+                "env",
+                "realm_decode_tokens",
+                move |mut caller: Caller<'_, ()>,
+                      model_id: u32,
+                      token_ids_ptr: u32,
+                      token_ids_len: u32,
+                      out_ptr: u32,
+                      out_max_len: u32|
+                      -> i32 {
+                    use crate::model_storage::get_global_model_storage;
+
+                    // Get WASM memory
+                    let wasm_memory = match caller.get_export("memory") {
+                        Some(Extern::Memory(mem)) => mem,
+                        _ => {
+                            error!("realm_decode_tokens: No WASM memory export");
+                            return -1;
+                        }
+                    };
+
+                    // Read token IDs from WASM
+                    let token_ids_bytes = (token_ids_len as usize) * 4; // u32 = 4 bytes
+                    let mut token_ids_buffer = vec![0u8; token_ids_bytes];
+                    if let Err(e) =
+                        wasm_memory.read(&caller, token_ids_ptr as usize, &mut token_ids_buffer)
+                    {
+                        error!("realm_decode_tokens: Failed to read token IDs: {}", e);
+                        return -2;
+                    }
+
+                    // Convert to u32 array
+                    let token_ids: Vec<u32> = token_ids_buffer
+                        .chunks_exact(4)
+                        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                        .collect();
+
+                    // Get tokenizer from model storage
+                    let storage = get_global_model_storage().lock();
+                    let model = match storage.get_model(model_id) {
+                        Ok(m) => m,
+                        Err(_) => {
+                            error!("realm_decode_tokens: Model {} not found", model_id);
+                            return -3;
+                        }
+                    };
+
+                    let tokenizer = match model.tokenizer() {
+                        Some(t) => t,
+                        None => {
+                            error!("realm_decode_tokens: No tokenizer for model {}", model_id);
+                            return -4;
+                        }
+                    };
+
+                    // Decode tokens to text
+                    let text = match tokenizer.decode(&token_ids, false) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            error!("realm_decode_tokens: Decoding failed: {}", e);
+                            return -5;
+                        }
+                    };
+
+                    let text_bytes = text.as_bytes();
+                    if text_bytes.len() > out_max_len as usize {
+                        error!(
+                            "realm_decode_tokens: Output buffer too small: need {}, have {}",
+                            text_bytes.len(),
+                            out_max_len
+                        );
+                        return -6;
+                    }
+
+                    // Write text to WASM memory
+                    if let Err(e) = wasm_memory.write(&mut caller, out_ptr as usize, text_bytes) {
+                        error!("realm_decode_tokens: Failed to write text: {}", e);
+                        return -7;
+                    }
+
+                    text_bytes.len() as i32
                 },
             )?;
         }

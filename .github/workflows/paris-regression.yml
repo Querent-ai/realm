@@ -2,35 +2,40 @@ name: 🧪 Paris Generation Regression
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [main, dev]
     paths:
-      - 'crates/**/*.rs'
-      - 'examples/paris/**'
-      - '.github/workflows/paris-regression.yml'
+      - "crates/**/*.rs"
+      - "examples/paris/**"
+      - ".github/workflows/paris-regression.yml"
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev]
     paths:
-      - 'crates/**/*.rs'
-      - 'examples/paris/**'
-      - '.github/workflows/paris-regression.yml'
-  workflow_dispatch:  # Allow manual trigger
+      - "crates/**/*.rs"
+      - "examples/paris/**"
+      - ".github/workflows/paris-regression.yml"
+  workflow_dispatch: # Allow manual trigger
+
+# Cancel previous runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   MODEL_NAME: tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
   MODEL_URL: https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
-  MODEL_SHA256: 6c4c8b6b8c4f4e8b6c4c8b6b8c4f4e8b6c4c8b6b8c4f4e8b6c4c8b6b8c4f4e8b6  # Placeholder - update with actual hash
+  MODEL_SHA256: 6c4c8b6b8c4f4e8b6c4c8b6b8c4f4e8b6c4c8b6b8c4f4e8b6c4c8b6b8c4f4e8b6 # Placeholder - update with actual hash
 
 jobs:
   paris-regression:
     name: 🎯 Paris Generation Regression
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set workspace root
         run: |
           echo "REPO_ROOT=$(pwd)" >> $GITHUB_ENV
@@ -49,30 +54,30 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-paris-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-target-paris-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache model file
         id: model-cache
@@ -94,7 +99,7 @@ jobs:
           echo "   URL: ${{ env.MODEL_URL }}"
           echo "   Destination: $MODEL_PATH"
           echo "   Directory: $MODEL_DIR"
-          
+
           # Try wget first, fallback to curl
           if command -v wget &> /dev/null; then
             echo "   Using wget..."
@@ -112,16 +117,16 @@ jobs:
               -o "$MODEL_PATH" \
               "${{ env.MODEL_URL }}"
           fi
-          
+
           # Check if download succeeded
           if [ ! -f "$MODEL_PATH" ]; then
             echo "❌ Model file not created after download!"
             exit 1
           fi
-          
+
           echo "✅ Model downloaded"
           ls -lh "$MODEL_PATH"
-          
+
           # Verify file size (should be ~640MB)
           FILE_SIZE=$(stat -c%s "$MODEL_PATH" 2>/dev/null || stat -f%z "$MODEL_PATH")
           FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
@@ -131,7 +136,7 @@ jobs:
             echo "   This might indicate a failed or partial download"
             exit 1
           fi
-          
+
           echo "✅ Model download verified"
 
       - name: Verify model exists
@@ -181,42 +186,42 @@ jobs:
           echo "=========================================="
           echo "1️⃣ Testing Native Rust Stack"
           echo "=========================================="
-          
+
           # Initialize output to failed (will be overwritten on success)
           echo "native=failed" >> $GITHUB_OUTPUT
-          
+
           MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
           echo "Model path: $MODEL_PATH"
           echo "Current directory: $(pwd)"
           echo "Model file exists: $([ -f "$MODEL_PATH" ] && echo 'yes' || echo 'no')"
-          
+
           if [ ! -f "$MODEL_PATH" ]; then
             echo "❌ Model file not found: $MODEL_PATH"
             echo "Listing $HOME/.realm/models:"
             ls -la "$HOME/.realm/models" 2>&1 || echo "Directory doesn't exist"
             exit 1
           fi
-          
+
           echo "✅ Model file found, running test..."
-          
+
           # Run test using pre-built binary (faster, no compilation)
           set +e
           timeout 180 ./target/release/paris-native "$MODEL_PATH" "What is the capital of France?" 2>&1 | tee /tmp/native.log
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
-          
+
           echo ""
           echo "Test completed with exit code: $EXIT_CODE"
           echo "Log file size: $(wc -l < /tmp/native.log) lines"
-          
+
           # Show what we're searching for
           echo ""
           echo "Checking for 'Paris' (case-insensitive):"
           grep -i "paris" /tmp/native.log | head -5 || echo "  No 'paris' found"
-          
+
           echo "Checking for 'SUCCESS' (case-insensitive):"
           grep -i "success" /tmp/native.log | head -5 || echo "  No 'success' found"
-          
+
           # Check for Paris in output
           if grep -qi "paris" /tmp/native.log && grep -qi "SUCCESS" /tmp/native.log; then
             echo ""
@@ -248,7 +253,7 @@ jobs:
           set +e
           npx tsc --project tsconfig.json --skipLibCheck 2>&1 | grep -v "error TS" || true
           set -e
-          
+
           # Check if dist/index.js exists (main requirement)
           if [ ! -f "dist/index.js" ]; then
             echo "❌ SDK build failed - dist/index.js not found"
@@ -265,52 +270,52 @@ jobs:
           echo "=========================================="
           echo "2️⃣ Testing Node.js SDK Stack"
           echo "=========================================="
-          
+
           # Initialize output to failed
           echo "nodejs=failed" >> $GITHUB_OUTPUT
-          
+
           # Install Node.js SDK dependencies
           cd "$REPO_ROOT/examples/paris/nodejs-sdk" || {
             echo "❌ Failed to cd to examples/paris/nodejs-sdk"
             exit 1
           }
-          
+
           echo "Installing Node.js dependencies..."
           # Use npm install (npm ci requires package-lock.json which may not exist in CI)
           npm install || {
             echo "❌ Failed to install Node.js dependencies"
             exit 1
           }
-          
+
           # Start server in background (from workspace root)
           # Use absolute paths from workspace root
           if [ -z "$REPO_ROOT" ]; then
             REPO_ROOT="$GITHUB_WORKSPACE"
           fi
-          
+
           MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
           SERVER_BIN="$REPO_ROOT/target/release/realm"
           WASM_FILE="$REPO_ROOT/target/wasm32-unknown-unknown/release/realm_wasm.wasm"
-          
+
           echo "Starting server with model: $MODEL_PATH"
           echo "Workspace root: $REPO_ROOT"
           echo "Current directory: $(pwd)"
           echo "Model exists: $([ -f "$MODEL_PATH" ] && echo 'yes' || echo 'no')"
           echo "Server binary: $SERVER_BIN"
           echo "Server binary exists: $([ -f "$SERVER_BIN" ] && echo 'yes' || echo 'no')"
-          
+
           if [ ! -f "$MODEL_PATH" ]; then
             echo "❌ Model file not found: $MODEL_PATH"
             exit 1
           fi
-          
+
           if [ ! -f "$SERVER_BIN" ]; then
             echo "❌ Server binary not found at $SERVER_BIN"
             echo "Looking for binary in $REPO_ROOT/target/release/:"
             ls -la "$REPO_ROOT/target/release/" 2>/dev/null | head -5 || echo "Directory does not exist"
             exit 1
           fi
-          
+
           echo "✅ Starting server..."
           timeout 180 "$SERVER_BIN" serve \
             --host 127.0.0.1 \
@@ -320,7 +325,7 @@ jobs:
             > /tmp/server_node.log 2>&1 &
           SERVER_PID=$!
           echo "Server PID: $SERVER_PID"
-          
+
           # Wait for server to be ready
           echo "⏳ Waiting for server to be ready..."
           SERVER_READY=false
@@ -341,7 +346,7 @@ jobs:
             echo "  Attempt $i/30: Server not ready yet..."
             sleep 2
           done
-          
+
           if [ "$SERVER_READY" != "true" ]; then
             echo "❌ Server failed to start after 60 seconds"
             echo "Server log:"
@@ -349,9 +354,9 @@ jobs:
             kill $SERVER_PID 2>/dev/null || true
             exit 1
           fi
-          
+
           sleep 3
-          
+
           # Run Node.js SDK test (from correct directory)
           set +e
           cd "$REPO_ROOT/examples/paris/nodejs-sdk" || {
@@ -363,18 +368,18 @@ jobs:
           timeout 60 node index.js 2>&1 | tee /tmp/nodejs.log
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
-          
+
           # Stop server
           kill $SERVER_PID 2>/dev/null || true
           wait $SERVER_PID 2>/dev/null || true
-          
+
           echo ""
           echo "Test completed with exit code: $EXIT_CODE"
           echo "Checking for 'Paris':"
           grep -i "paris" /tmp/nodejs.log | head -3 || echo "  No 'paris' found"
           echo "Checking for 'SUCCESS':"
           grep -i "success" /tmp/nodejs.log | head -3 || echo "  No 'success' found"
-          
+
           if grep -qi "paris" /tmp/nodejs.log && grep -qi "SUCCESS" /tmp/nodejs.log; then
             echo ""
             echo "✅ Node.js SDK: PASSED - Produces 'Paris'"
@@ -396,64 +401,64 @@ jobs:
           echo "=========================================="
           echo "3️⃣ Testing Python SDK Stack"
           echo "=========================================="
-          
+
           # Initialize output to failed
           echo "python=failed" >> $GITHUB_OUTPUT
-          
+
           # Install Python SDK
           cd sdks/python-ws || {
             echo "❌ Failed to cd to sdks/python-ws"
             exit 1
           }
-          
+
           echo "Installing Python SDK..."
           pip install -e . || {
             echo "❌ Failed to install Python SDK"
             exit 1
           }
           cd ../..
-          
+
           # Install Python dependencies
           cd examples/paris/python-sdk || {
             echo "❌ Failed to cd to examples/paris/python-sdk"
             exit 1
           }
-          
+
           echo "Installing Python dependencies..."
           pip install -r requirements.txt || {
             echo "❌ Failed to install Python dependencies"
             exit 1
           }
-          
+
           # Start server in background (from workspace root)
           # Use absolute paths from workspace root
           if [ -z "$REPO_ROOT" ]; then
             REPO_ROOT="$GITHUB_WORKSPACE"
           fi
-          
+
           MODEL_PATH="$HOME/.realm/models/${{ env.MODEL_NAME }}"
           SERVER_BIN="$REPO_ROOT/target/release/realm"
           WASM_FILE="$REPO_ROOT/target/wasm32-unknown-unknown/release/realm_wasm.wasm"
-          
+
           echo "Starting server with model: $MODEL_PATH"
           echo "Workspace root: $REPO_ROOT"
           echo "Current directory: $(pwd)"
           echo "Model exists: $([ -f "$MODEL_PATH" ] && echo 'yes' || echo 'no')"
           echo "Server binary: $SERVER_BIN"
           echo "Server binary exists: $([ -f "$SERVER_BIN" ] && echo 'yes' || echo 'no')"
-          
+
           if [ ! -f "$MODEL_PATH" ]; then
             echo "❌ Model file not found: $MODEL_PATH"
             exit 1
           fi
-          
+
           if [ ! -f "$SERVER_BIN" ]; then
             echo "❌ Server binary not found at $SERVER_BIN"
             echo "Looking for binary in $REPO_ROOT/target/release/:"
             ls -la "$REPO_ROOT/target/release/" 2>/dev/null | head -5 || echo "Directory does not exist"
             exit 1
           fi
-          
+
           echo "✅ Starting server..."
           timeout 180 "$SERVER_BIN" serve \
             --host 127.0.0.1 \
@@ -463,7 +468,7 @@ jobs:
             > /tmp/server_python.log 2>&1 &
           SERVER_PID=$!
           echo "Server PID: $SERVER_PID"
-          
+
           # Wait for server to be ready
           echo "⏳ Waiting for server to be ready..."
           SERVER_READY=false
@@ -484,7 +489,7 @@ jobs:
             echo "  Attempt $i/30: Server not ready yet..."
             sleep 2
           done
-          
+
           if [ "$SERVER_READY" != "true" ]; then
             echo "❌ Server failed to start after 60 seconds"
             echo "Server log:"
@@ -492,9 +497,9 @@ jobs:
             kill $SERVER_PID 2>/dev/null || true
             exit 1
           fi
-          
+
           sleep 3
-          
+
           # Run Python SDK test
           set +e
           cd examples/paris/python-sdk
@@ -503,18 +508,18 @@ jobs:
           timeout 60 python3 main.py 2>&1 | tee /tmp/python.log
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
-          
+
           # Stop server
           kill $SERVER_PID 2>/dev/null || true
           wait $SERVER_PID 2>/dev/null || true
-          
+
           echo ""
           echo "Test completed with exit code: $EXIT_CODE"
           echo "Checking for 'Paris':"
           grep -i "paris" /tmp/python.log | head -3 || echo "  No 'paris' found"
           echo "Checking for 'SUCCESS':"
           grep -i "success" /tmp/python.log | head -3 || echo "  No 'success' found"
-          
+
           if grep -qi "paris" /tmp/python.log && grep -qi "SUCCESS" /tmp/python.log; then
             echo ""
             echo "✅ Python SDK: PASSED - Produces 'Paris'"
@@ -536,16 +541,16 @@ jobs:
           echo "📊 Paris Generation Regression Summary"
           echo "=========================================="
           echo ""
-          
+
           NATIVE_STATUS="${{ steps.test-native.outputs.native }}"
           NODEJS_STATUS="${{ steps.test-nodejs.outputs.nodejs }}"
           PYTHON_STATUS="${{ steps.test-python.outputs.python }}"
-          
+
           echo "Native Rust: ${NATIVE_STATUS:-unknown}"
           echo "Node.js SDK: ${NODEJS_STATUS:-unknown}"
           echo "Python SDK:  ${PYTHON_STATUS:-unknown}"
           echo ""
-          
+
           # Check if all passed
           if [ "${NATIVE_STATUS}" = "passed" ] && \
              [ "${NODEJS_STATUS}" = "passed" ] && \
@@ -574,4 +579,3 @@ jobs:
             /tmp/server_node.log
             /tmp/server_python.log
           retention-days: 7
-

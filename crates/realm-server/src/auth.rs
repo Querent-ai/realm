@@ -135,7 +135,10 @@ impl ApiKeyStore {
 
     /// Add an API key to the store
     pub fn add_key(&self, key: ApiKey) -> Result<()> {
-        let mut keys = self.keys.write().unwrap();
+        let mut keys = self
+            .keys
+            .write()
+            .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))?;
 
         if keys.contains_key(&key.key) {
             return Err(anyhow!("API key already exists: {}", key.key));
@@ -159,7 +162,10 @@ impl ApiKeyStore {
 
     /// Remove an API key
     pub fn remove_key(&self, key: &str) -> Result<()> {
-        let mut keys = self.keys.write().unwrap();
+        let mut keys = self
+            .keys
+            .write()
+            .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))?;
 
         keys.remove(key)
             .ok_or_else(|| anyhow!("API key not found: {}", key))?;
@@ -177,7 +183,10 @@ impl ApiKeyStore {
 
     /// Validate an API key and return tenant ID
     pub fn validate(&self, key: &str) -> Result<String> {
-        let mut keys = self.keys.write().unwrap();
+        let mut keys = self
+            .keys
+            .write()
+            .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))?;
 
         let api_key = keys
             .get_mut(key)
@@ -198,28 +207,41 @@ impl ApiKeyStore {
 
     /// Get API key details
     pub fn get_key(&self, key: &str) -> Option<ApiKey> {
-        let keys = self.keys.read().unwrap();
-        keys.get(key).cloned()
+        self.keys
+            .read()
+            .ok()
+            .and_then(|keys| keys.get(key).cloned())
     }
 
     /// List all API keys for a tenant
     pub fn list_tenant_keys(&self, tenant_id: &str) -> Vec<ApiKey> {
-        let keys = self.keys.read().unwrap();
-        keys.values()
-            .filter(|k| k.tenant_id == tenant_id)
-            .cloned()
-            .collect()
+        self.keys
+            .read()
+            .ok()
+            .map(|keys| {
+                keys.values()
+                    .filter(|k| k.tenant_id == tenant_id)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Get all API keys (admin only)
     pub fn list_all_keys(&self) -> Vec<ApiKey> {
-        let keys = self.keys.read().unwrap();
-        keys.values().cloned().collect()
+        self.keys
+            .read()
+            .ok()
+            .map(|keys| keys.values().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Disable an API key
     pub fn disable_key(&self, key: &str) -> Result<()> {
-        let mut keys = self.keys.write().unwrap();
+        let mut keys = self
+            .keys
+            .write()
+            .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))?;
 
         let api_key = keys
             .get_mut(key)
@@ -239,7 +261,10 @@ impl ApiKeyStore {
 
     /// Enable an API key
     pub fn enable_key(&self, key: &str) -> Result<()> {
-        let mut keys = self.keys.write().unwrap();
+        let mut keys = self
+            .keys
+            .write()
+            .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))?;
 
         let api_key = keys
             .get_mut(key)
@@ -262,7 +287,10 @@ impl ApiKeyStore {
         let content = std::fs::read_to_string(path)?;
         let keys: Vec<ApiKey> = serde_json::from_str(&content)?;
 
-        let mut store = self.keys.write().unwrap();
+        let mut store = self
+            .keys
+            .write()
+            .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))?;
         for key in keys {
             store.insert(key.key.clone(), key);
         }
@@ -275,7 +303,10 @@ impl ApiKeyStore {
     /// Save keys to JSON file
     fn save_to_file(&self) -> Result<()> {
         if let Some(ref keys_file) = self.config.keys_file {
-            let keys = self.keys.read().unwrap();
+            let keys = self
+                .keys
+                .read()
+                .map_err(|e| anyhow!("Failed to acquire read lock: {}", e))?;
             let keys_vec: Vec<&ApiKey> = keys.values().collect();
 
             let content = serde_json::to_string_pretty(&keys_vec)?;
@@ -332,7 +363,7 @@ mod tests {
         let store = ApiKeyStore::in_memory();
 
         let key = ApiKey::new("sk_test_123", "tenant1");
-        store.add_key(key).unwrap();
+        store.add_key(key).expect("Failed to add test key");
 
         // Valid key
         let tenant_id = store.validate("sk_test_123").unwrap();
@@ -347,7 +378,7 @@ mod tests {
         let store = ApiKeyStore::in_memory();
 
         let key = ApiKey::new("sk_test_456", "tenant2");
-        store.add_key(key).unwrap();
+        store.add_key(key).expect("Failed to add test key");
 
         // Valid initially
         assert!(store.validate("sk_test_456").is_ok());

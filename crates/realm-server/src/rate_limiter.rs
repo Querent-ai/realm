@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 /// Rate limiter configuration
 #[derive(Debug, Clone)]
@@ -181,7 +181,13 @@ impl RateLimiter {
     /// Set custom rate limit for a tenant
     pub fn set_tenant_limit(&self, tenant_id: impl Into<String>, requests_per_minute: usize) {
         let tenant_id = tenant_id.into();
-        let mut limiters = self.limiters.lock().unwrap();
+        let mut limiters = match self.limiters.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                error!("Failed to acquire limiters lock: {}", e);
+                return;
+            }
+        };
 
         if let Some(limiter) = limiters.get_mut(&tenant_id) {
             limiter.custom_limit = Some(requests_per_minute);
@@ -203,7 +209,10 @@ impl RateLimiter {
     /// Check rate limit with custom token cost
     pub fn check_rate_limit_with_cost(&self, tenant_id: impl AsRef<str>, cost: f64) -> Result<()> {
         let tenant_id = tenant_id.as_ref();
-        let mut limiters = self.limiters.lock().unwrap();
+        let mut limiters = self
+            .limiters
+            .lock()
+            .map_err(|e| anyhow!("Failed to acquire limiters lock: {}", e))?;
 
         let limiter = limiters.entry(tenant_id.to_string()).or_insert_with(|| {
             TenantRateLimiter::new(self.config.requests_per_minute, self.config.burst_size)
@@ -238,39 +247,50 @@ impl RateLimiter {
 
     /// Get rate limit statistics for a tenant
     pub fn get_stats(&self, tenant_id: impl AsRef<str>) -> Option<RateLimitStats> {
-        let limiters = self.limiters.lock().unwrap();
-        limiters.get(tenant_id.as_ref()).map(|l| l.stats.clone())
+        self.limiters
+            .lock()
+            .ok()
+            .and_then(|limiters| limiters.get(tenant_id.as_ref()).map(|l| l.stats.clone()))
     }
 
     /// Get available tokens for a tenant
     pub fn get_available_tokens(&self, tenant_id: impl AsRef<str>) -> Option<f64> {
-        let mut limiters = self.limiters.lock().unwrap();
-        limiters
-            .get_mut(tenant_id.as_ref())
-            .map(|l| l.bucket.available())
+        self.limiters.lock().ok().and_then(|mut limiters| {
+            limiters
+                .get_mut(tenant_id.as_ref())
+                .map(|l| l.bucket.available())
+        })
     }
 
     /// Reset rate limit for a tenant
     pub fn reset_tenant(&self, tenant_id: impl AsRef<str>) {
-        let mut limiters = self.limiters.lock().unwrap();
-
-        if let Some(limiter) = limiters.get_mut(tenant_id.as_ref()) {
-            limiter.bucket.tokens = limiter.bucket.capacity;
-            limiter.bucket.last_refill = Instant::now();
-            limiter.stats = RateLimitStats::default();
+        if let Ok(mut limiters) = self.limiters.lock() {
+            if let Some(limiter) = limiters.get_mut(tenant_id.as_ref()) {
+                limiter.bucket.tokens = limiter.bucket.capacity;
+                limiter.bucket.last_refill = Instant::now();
+                limiter.stats = RateLimitStats::default();
+            }
+        } else {
+            error!("Failed to acquire limiters lock for reset_tenant");
         }
     }
 
     /// Remove tenant rate limiter
     pub fn remove_tenant(&self, tenant_id: impl AsRef<str>) {
-        let mut limiters = self.limiters.lock().unwrap();
-        limiters.remove(tenant_id.as_ref());
+        if let Ok(mut limiters) = self.limiters.lock() {
+            limiters.remove(tenant_id.as_ref());
+        } else {
+            error!("Failed to acquire limiters lock for remove_tenant");
+        }
     }
 
     /// Get all tenant IDs
     pub fn list_tenants(&self) -> Vec<String> {
-        let limiters = self.limiters.lock().unwrap();
-        limiters.keys().cloned().collect()
+        self.limiters
+            .lock()
+            .ok()
+            .map(|limiters| limiters.keys().cloned().collect())
+            .unwrap_or_default()
     }
 }
 
