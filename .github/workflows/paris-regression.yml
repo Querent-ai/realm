@@ -15,6 +15,11 @@ on:
       - ".github/workflows/paris-regression.yml"
   workflow_dispatch: # Allow manual trigger
 
+# Cancel previous runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -60,19 +65,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-paris-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-target-paris-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache model file
         id: model-cache

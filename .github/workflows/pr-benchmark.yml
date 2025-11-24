@@ -10,6 +10,11 @@ on:
       - ".github/workflows/pr-benchmark.yml"
       - ".github/benchmark-baselines.json"
 
+# Cancel previous runs for the same PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write
@@ -39,7 +44,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-bench-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run integration tests with performance checks
         run: |
@@ -159,7 +164,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-integration-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-integration-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run core integration tests
         run: |

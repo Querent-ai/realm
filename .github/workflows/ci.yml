@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main, dev]
 
+# Cancel previous runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -40,19 +45,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-ci-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-clippy-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-target-clippy-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run clippy (libraries only)
         run: cargo clippy --workspace --lib -- -D warnings
@@ -80,19 +85,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-ci-test-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-test-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-test-${{ matrix.rust }}-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-target-test-${{ matrix.rust }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run library tests
         run: cargo test --workspace --lib --all-targets
@@ -136,19 +141,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-ci-build-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-build-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-build-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-target-build-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Build workspace
         run: cargo build --release --workspace
@@ -179,19 +184,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-ci-wasm-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-wasm-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-wasm-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-target-wasm-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Build WASM
         working-directory: crates/realm-wasm
@@ -217,13 +222,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-ci-examples-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-examples-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-examples-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-target-examples-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Download WASM artifact
         uses: actions/download-artifact@v4
@@ -266,7 +271,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-integration-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-target-integration-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Download WASM artifact
         uses: actions/download-artifact@v4
@@ -323,19 +328,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-ci-e2e-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-registry-ci-e2e-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache target directory
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-e2e-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-target-e2e-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Cache model file
         id: model-cache
@@ -438,7 +443,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-target-bench-${{ hashFiles('Cargo.toml', 'crates/*/Cargo.toml') }}
+          key: ${{ runner.os }}-target-bench-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Build benchmarks
         run: cargo bench --workspace --no-run
@@ -462,15 +467,15 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Run security audit
-        run: cargo audit
-        continue-on-error: true
+        run: cargo audit --deny warnings
+        continue-on-error: false  # Fail on vulnerabilities
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 
       - name: Check dependencies with cargo-deny
         run: cargo deny check
-        continue-on-error: true
+        continue-on-error: false  # Fail on denied dependencies
 
   sdk-validation:
     name: 📦 SDK Validation
@@ -501,7 +506,7 @@ jobs:
           if [ -d "sdks/js" ]; then
             echo "Validating js SDK..."
             cd sdks/js
-            npm ci || npm install
+            npm ci 2>/dev/null || npm install  # npm ci requires package-lock.json (gitignored)
             npm run build || echo "⚠️  js SDK build skipped (may need WASM)"
             echo "✅ js SDK validated"
             cd ../..
@@ -545,7 +550,15 @@ jobs:
         run: cargo install cargo-tarpaulin
 
       - name: Run tests with coverage
-        run: cargo tarpaulin --workspace --out Xml --timeout 300 --exclude-files 'crates/realm-compute-cpu/src/*'
+        run: |
+          # Only run coverage on core packages (exclude compute crates due to pulp compilation issues)
+          cargo tarpaulin --out Xml --timeout 300 \
+            -p realm-core \
+            -p realm-runtime \
+            -p realm-metrics \
+            -p realm-server \
+            --avoid-cfg-tarpaulin \
+            || echo "⚠️  Coverage collection failed"
         continue-on-error: true
 
       - name: Upload coverage to Codecov
