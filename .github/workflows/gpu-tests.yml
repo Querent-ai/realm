@@ -2,7 +2,7 @@ name: GPU Tests
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - "crates/realm-compute-gpu/**"
       - "crates/realm-runtime/src/attention/**"
@@ -11,7 +11,7 @@ on:
       - "examples/paris/**"
       - ".github/workflows/gpu-tests.yml"
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev]
     paths:
       - "crates/realm-compute-gpu/**"
       - "crates/realm-runtime/src/attention/**"
