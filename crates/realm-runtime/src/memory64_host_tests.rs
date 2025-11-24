@@ -6,6 +6,7 @@ mod tests {
     use wasmtime::{Config, Engine, Linker, Module, Store};
 
     #[test]
+    #[cfg_attr(target_os = "windows", ignore)] // Skip on Windows CI due to memory limits (8GB allocation)
     fn test_realm_get_model_metadata_registered() {
         // Test that realm_get_model_metadata is registered in the linker
         let mut config = Config::new();
@@ -51,6 +52,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(target_os = "windows", ignore)] // Skip on Windows CI due to memory limits (8GB allocation)
     fn test_all_model_functions_registered() {
         // Test that all model-related host functions are registered
         let mut config = Config::new();

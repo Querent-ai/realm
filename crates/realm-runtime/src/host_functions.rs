@@ -178,6 +178,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(target_os = "windows", ignore)] // Skip on Windows CI due to memory limits (16GB allocation)
     fn test_host_context_with_custom_layout() {
         // Create custom 16GB layout
         let layout = MemoryLayout::single(16, "custom_storage").expect("Failed to create layout");
@@ -186,6 +187,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(target_os = "windows", ignore)] // Skip on Windows CI due to memory limits (8GB allocation via HostContext::new)
     fn test_host_context_initialize() {
         use wasmtime::{Config, Engine, Store};
 
