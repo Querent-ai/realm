@@ -19,6 +19,7 @@ members = [
     "examples/wasm-host-runner",
     "examples/websocket-server",
     "examples/test-gpu-features",
+    "examples/test-webgpu",
 ]
 
 resolver = "2"
