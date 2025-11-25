@@ -4,12 +4,13 @@
   "description": "End-to-end tests for Realm WASM runtime with server integration",
   "type": "module",
   "scripts": {
-    "test": "node test.js",
+    "test": "node test-runner.js",
     "test:lora": "node test-lora.js",
     "test:speculative": "node test-speculative.js",
     "test:batching": "node test-batching.js",
     "test:paris": "node test-paris.js",
-    "test:all": "npm run test:paris && npm run test:lora && npm run test:speculative && npm run test:batching"
+    "test:all": "node test-runner.js",
+    "test:manual": "npm run test:paris && npm run test:lora && npm run test:speculative && npm run test:batching"
   },
   "dependencies": {
     "node-fetch": "^3.3.2"

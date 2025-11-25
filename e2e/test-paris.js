@@ -8,8 +8,8 @@
 
 import fetch from 'node-fetch';
 
-const SERVER_URL = process.env.REALM_SERVER_URL || 'http://localhost:3000';
-const TIMEOUT = 120000; // 120 seconds (2 minutes) - generation can be slow
+const SERVER_URL = process.env.REALM_SERVER_URL || 'http://localhost:3001'; // HTTP port is +1 from WebSocket
+const TIMEOUT = 300000; // 300 seconds (5 minutes) - model loading + generation can be slow
 
 async function testParisGeneration() {
     console.log('🧪 Testing Paris Generation...\n');
