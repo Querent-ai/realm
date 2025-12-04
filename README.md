@@ -6,7 +6,10 @@
 
 **Enterprise-Grade Multi-Tenant LLM Inference Orchestration**
 
-**Imagine the realm of possibilities**
+[**Imagine the realm of possibilities**](https://github.com/Querent-ai/realm/blob/main/file_000000007b6471fdb861d1a01af3d040%20(1).png)
+
+<img src="file_000000007b6471fdb861d1a01af3d040%20(1).png" alt="Realm Logo" width="120"/>
+
 
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](LICENSE-MIT)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange)](https://www.rust-lang.org/)
