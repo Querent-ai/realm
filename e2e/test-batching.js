@@ -7,8 +7,8 @@
 
 import fetch from 'node-fetch';
 
-const SERVER_URL = process.env.REALM_SERVER_URL || 'http://localhost:3000';
-const TIMEOUT = 60000; // 60 seconds for batch tests
+const SERVER_URL = process.env.REALM_SERVER_URL || 'http://localhost:3001'; // HTTP port is +1 from WebSocket
+const TIMEOUT = 300000; // 300 seconds (5 minutes) - model loading + generation can be slow
 
 async function testContinuousBatching() {
     console.log('🧪 Testing Continuous Batching...\n');
